@@ -33,6 +33,7 @@ from bt.risk.stop_spec import normalize_stop_spec
 from bt.risk.margin_math import compute_snapshot, initial_margin_required
 from bt.risk.spec import parse_risk_spec
 from bt.risk.stop_distance import resolve_stop_distance
+from bt.orders.side import side_from_signed_qty
 
 
 class RiskEngine:
@@ -413,6 +414,7 @@ class RiskEngine:
 
         if close_only and cur_qty != 0:
             order_qty = -cur_qty
+            order_side = side_from_signed_qty(order_qty)
             if not self._qty_sign_invariant_ok(
                 signal_side=signal.side,
                 current_qty=cur_qty,
@@ -447,7 +449,7 @@ class RiskEngine:
             order_intent = OrderIntent(
                 ts=ts,
                 symbol=signal.symbol,
-                side=signal.side,
+                side=order_side,
                 qty=order_qty,
                 order_type=OrderType.MARKET,
                 limit_price=None,
@@ -654,11 +656,12 @@ class RiskEngine:
             }
         )
         signal_with_metadata = replace(signal, metadata=metadata)
+        order_side = side_from_signed_qty(order_qty)
 
         order_intent = OrderIntent(
             ts=ts,
             symbol=signal.symbol,
-            side=signal.side,
+            side=order_side,
             qty=order_qty,
             order_type=OrderType.MARKET,
             limit_price=None,

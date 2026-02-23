@@ -9,6 +9,7 @@ from typing import Any
 
 import pandas as pd
 
+from bt.orders.side import coerce_side, validate_order_side_consistency
 
 def _is_fill_record(record: dict[str, Any]) -> bool:
     return "order_id" in record and "qty" in record and "price" in record
@@ -47,6 +48,43 @@ def _with_canonical_fill_costs(record: dict[str, Any]) -> dict[str, Any]:
     return enriched
 
 
+
+
+def _extract_field(container: Any, name: str) -> Any:
+    if isinstance(container, dict):
+        return container.get(name)
+    return getattr(container, name, None)
+
+
+def _validate_order_record(record: dict[str, Any], *, where: str) -> None:
+    order_obj = record.get("order")
+    if order_obj is None:
+        return
+
+    side = coerce_side(_extract_field(order_obj, "side"))
+    qty = _extract_field(order_obj, "qty")
+    if side is None or qty is None:
+        return
+
+    signed_qty = record.get("order_qty")
+    signal_side = None
+    signal = record.get("signal")
+    signal_side = coerce_side(_extract_field(signal, "side"))
+
+    reduce_only = False
+    metadata = _extract_field(order_obj, "metadata")
+    if isinstance(metadata, dict):
+        reduce_only = bool(metadata.get("close_only") or metadata.get("reduce_only"))
+
+    validate_order_side_consistency(
+        side=side,
+        qty=float(qty),
+        signed_qty=None if signed_qty is None else float(signed_qty),
+        signal_side=signal_side,
+        reduce_only=reduce_only,
+        where=where,
+    )
+
 def to_jsonable(obj: Any) -> Any:
     """Convert Python objects into JSON-serializable equivalents."""
     if is_dataclass(obj):
@@ -72,6 +110,7 @@ class JsonlWriter:
 
     def write(self, record: dict[str, Any]) -> None:
         """Append one JSON line."""
+        _validate_order_record(record, where=f"JsonlWriter.write[{self._path.name}]")
         json_record = to_jsonable(_with_canonical_fill_costs(record))
         json.dump(json_record, self._file, ensure_ascii=False)
         self._file.write("\n")
