@@ -15,6 +15,7 @@ from bt.indicators.atr import ATR
 from bt.indicators.ema import EMA
 from bt.indicators.vwap import VWAP
 from bt.logging.jsonl import JsonlWriter
+from bt.orders.side import side_from_signed_qty
 from bt.logging.sanity import SanityCounters
 from bt.logging.trades import TradesCsvWriter
 from bt.portfolio.constants import QTY_EPSILON
@@ -148,19 +149,16 @@ class BacktestEngine:
         for symbol, position in self._portfolio.position_book.all_positions().items():
             if position.side is None or abs(float(position.qty)) < QTY_EPSILON:
                 continue
-            if position.side == Side.BUY:
-                close_side = Side.SELL
-            elif position.side == Side.SELL:
-                close_side = Side.BUY
-            else:
-                continue
+            signed_position_qty = float(position.qty) if position.side == Side.BUY else -float(position.qty)
+            close_qty = -signed_position_qty
+            close_side = side_from_signed_qty(close_qty)
             liquidation_orders.append(
                 Order(
                     id=self._next_order_id(),
                     ts_submitted=ts,
                     symbol=symbol,
                     side=close_side,
-                    qty=float(position.qty),
+                    qty=abs(close_qty),
                     order_type=OrderType.MARKET,
                     limit_price=None,
                     state=OrderState.NEW,
@@ -336,11 +334,12 @@ class BacktestEngine:
                             self._sanity_counters.record_decision(approved=False, reason=decision_reason)
                         continue
 
+                    order_side = side_from_signed_qty(order_intent.qty)
                     order = Order(
                         id=self._next_order_id(),
                         ts_submitted=ts,
                         symbol=order_intent.symbol,
-                        side=order_intent.side,
+                        side=order_side,
                         qty=abs(order_intent.qty),
                         order_type=order_intent.order_type,
                         limit_price=order_intent.limit_price,
