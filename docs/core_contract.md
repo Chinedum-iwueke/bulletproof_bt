@@ -11,6 +11,8 @@ This document defines the **core invariants** that must remain stable while addi
   - timestamps normalized to ISO-8601 UTC,
   - JSON compared with canonical key ordering.
 - **Artifact contract:** each run directory must contain required Stage-F artifacts. Optional benchmark artifacts are present only when benchmark is enabled.
+  - Required: `config_used.yaml`, `equity.csv`, `trades.csv`, `performance.json`, `fills.jsonl`, `decisions.jsonl`, `performance_by_bucket.csv`.
+  - `run_status.json` may be produced by the orchestrating flow and is treated as conditionally required when enabled in that flow.
 
 ## Instrument-agnostic core surface
 
@@ -20,6 +22,7 @@ The following areas are core and must remain instrument-agnostic:
 - Feed interface / iteration contract.
 - Artifact writers and schema stability policy:
   - required artifact filenames stay stable,
+  - field names/types for established artifacts remain stable for existing crypto behavior,
   - schema changes are additive/backward-compatible when possible,
   - breaking schema changes must be explicit and versioned.
 
