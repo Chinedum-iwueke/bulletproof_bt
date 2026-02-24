@@ -145,6 +145,26 @@ class BacktestEngine:
             if self._sanity_counters is not None:
                 self._sanity_counters.closed_trades += 1
 
+    def _drop_stale_close_reduce_orders(self, open_orders: list[Order]) -> list[Order]:
+        valid_orders: list[Order] = []
+        for order in open_orders:
+            metadata = order.metadata if isinstance(order.metadata, dict) else {}
+            is_close_reduce = bool(metadata.get("close_only") or metadata.get("reduce_only"))
+            if not is_close_reduce:
+                valid_orders.append(order)
+                continue
+
+            signed_position_qty = self._signed_position_qty(self._portfolio.position_book.get(order.symbol))
+            if signed_position_qty == 0.0:
+                continue
+
+            signed_order_qty = float(order.qty) if order.side == Side.BUY else -float(order.qty)
+            if signed_position_qty * signed_order_qty >= 0:
+                continue
+
+            valid_orders.append(order)
+        return valid_orders
+
 
     def _assert_post_fill_margin_invariants(self, fills: list[Any]) -> None:
         if self._risk.allows_may_liquidate():
@@ -476,6 +496,7 @@ class BacktestEngine:
                     if self._sanity_counters is not None:
                         self._sanity_counters.record_decision(approved=True, reason=decision_reason)
 
+                open_orders = self._drop_stale_close_reduce_orders(open_orders)
                 open_orders, fills = self._execution.process(
                     ts=ts,
                     bars_by_symbol=bars_by_symbol,
