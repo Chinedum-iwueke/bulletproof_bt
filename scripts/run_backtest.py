@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 import argparse
+import tempfile
 from pathlib import Path
 
+import yaml
+
 from bt.api import run_backtest
+from bt.audit.gate import evaluate_gate
 from bt.config import load_yaml
+from bt.logging.artifacts_manifest import write_artifacts_manifest
 from bt.logging.cli_footer import print_run_footer
 from bt.logging.run_contract import validate_run_artifacts
-from bt.logging.artifacts_manifest import write_artifacts_manifest
 from bt.logging.run_manifest import write_run_manifest
 from bt.logging.summary import write_summary_txt
 
@@ -20,11 +24,32 @@ def main() -> None:
     parser.add_argument("--run-id")
     parser.add_argument("--override", action="append", default=[])
     parser.add_argument("--local-config")
+    parser.add_argument("--audit-enabled", action="store_true")
+    parser.add_argument("--audit-level", choices=("basic", "full"))
+    parser.add_argument("--audit-gate", action="store_true")
+    parser.add_argument("--audit-required", help="Comma-separated required audit layers")
     args = parser.parse_args()
 
     override_paths = list(args.override)
     if args.local_config:
         override_paths.append(args.local_config)
+
+    required_layers = [layer.strip() for layer in (args.audit_required or "").split(",") if layer.strip()]
+    audit_override_path: Path | None = None
+    if args.audit_enabled or args.audit_level or required_layers:
+        payload: dict[str, object] = {"audit": {}}
+        audit_cfg = payload["audit"]
+        assert isinstance(audit_cfg, dict)
+        if args.audit_enabled:
+            audit_cfg["enabled"] = True
+        if args.audit_level:
+            audit_cfg["level"] = args.audit_level
+        if required_layers:
+            audit_cfg["required_layers"] = required_layers
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as tmp:
+            yaml.safe_dump(payload, tmp, sort_keys=True)
+            audit_override_path = Path(tmp.name)
+        override_paths.append(str(audit_override_path))
 
     resolved_run_dir: Path | None = None
     config: dict | None = None
@@ -53,7 +78,26 @@ def main() -> None:
         write_run_manifest(resolved_run_dir, config=config, data_path=args.data)
         write_artifacts_manifest(resolved_run_dir, config=config)
         print_run_footer(resolved_run_dir)
+
+        if args.audit_gate:
+            code, details = evaluate_gate(
+                resolved_run_dir,
+                required_override=required_layers if required_layers else None,
+                strict=True,
+            )
+            if code == 0:
+                print("PASS: 0 violations, coverage OK")
+            elif code == 2:
+                print(f"FAIL: violations in layers: {details.get('violating_layers', [])}")
+            elif code == 3:
+                print(f"FAIL: missing required layers: {details.get('missing_required_layers', [])}")
+            else:
+                print("FAIL: coverage.json missing or unreadable")
+            if code != 0:
+                raise SystemExit(code)
     finally:
+        if audit_override_path is not None and audit_override_path.exists():
+            audit_override_path.unlink()
         if resolved_run_dir is not None and config is not None:
             write_artifacts_manifest(resolved_run_dir, config=config)
 

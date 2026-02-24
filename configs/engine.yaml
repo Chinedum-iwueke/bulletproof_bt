@@ -72,6 +72,15 @@ htf_resampler:
   timeframes: ["5m", "15m", "1h"]
   strict: true
 
+
+# Optional audit harness. Disabled by default for near-zero overhead.
+audit:
+  enabled: false
+  level: basic
+  max_events_per_file: 5000
+  determinism_check: false
+  required_layers: []
+
 # Strategy defaults to a deterministic baseline that runs on any dataset.
 strategy:
   name: coinflip
