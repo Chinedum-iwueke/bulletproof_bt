@@ -369,8 +369,10 @@ class BacktestEngine:
                 }
                 signals = self._strategy.on_bars(ts, bars_by_symbol, tradeable, self._ctx_with_positions(ctx))
                 if self._audit is not None and self._audit.enabled:
+                    self._audit.mark_layer_executed("alignment_audit")
                     for violation in inspect_alignment(ts=ts, bars_by_symbol=bars_by_symbol):
                         self._audit.record_event("alignment_audit", violation, violation=True)
+                    self._audit.mark_layer_executed("signal_audit")
                     for symbol, indicators in indicators_snapshot.items():
                         for violation in inspect_signal_context(symbol=symbol, ts=ts, indicators=indicators):
                             self._audit.record_event("signal_audit", violation, violation=True)
@@ -492,6 +494,7 @@ class BacktestEngine:
 
                 self._handle_fills(fills)
                 if self._audit is not None and self._audit.enabled:
+                    self._audit.mark_layer_executed("fill_audit")
                     for fill in fills:
                         bar = bars_by_symbol.get(fill.symbol)
                         for violation in inspect_fill(ts=ts, fill=fill, bar=bar):
@@ -527,9 +530,11 @@ class BacktestEngine:
                 handle.flush()
 
                 if self._audit is not None and self._audit.enabled:
+                    self._audit.mark_layer_executed("position_audit")
                     for symbol, position in self._portfolio.position_book.all_positions().items():
                         for violation in inspect_position(symbol, position):
                             self._audit.record_event("position_audit", violation, violation=True)
+                    self._audit.mark_layer_executed("portfolio_audit")
                     for violation in inspect_portfolio(
                         cash=self._portfolio.cash,
                         equity=self._portfolio.equity,

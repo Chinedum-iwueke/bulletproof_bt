@@ -447,6 +447,10 @@ def run_backtest(
             sanity_counters,
             data_scope=_read_data_scope_for_sanity(run_dir),
         )
+        try:
+            audit_manager.write_coverage_json()
+        except Exception:
+            pass
 
     return str(run_dir)
 
