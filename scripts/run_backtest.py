@@ -15,6 +15,7 @@ from bt.logging.cli_footer import print_run_footer
 from bt.logging.run_contract import validate_run_artifacts
 from bt.logging.run_manifest import write_run_manifest
 from bt.logging.summary import write_summary_txt
+from bt.metrics.per_symbol import write_per_symbol_metrics
 
 
 def main() -> None:
@@ -64,6 +65,7 @@ def main() -> None:
         resolved_run_dir = Path(run_dir)
 
         validate_run_artifacts(resolved_run_dir)
+        write_per_symbol_metrics(resolved_run_dir)
 
         config_path = resolved_run_dir / "config_used.yaml"
         try:

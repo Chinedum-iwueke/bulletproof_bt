@@ -12,6 +12,7 @@ from bt.logging.run_contract import validate_run_artifacts
 from bt.logging.artifacts_manifest import write_artifacts_manifest
 from bt.logging.run_manifest import write_run_manifest
 from bt.logging.summary import write_summary_txt
+from bt.metrics.per_symbol import write_per_symbol_metrics
 
 
 def main() -> None:
@@ -67,6 +68,7 @@ def main() -> None:
             config = loaded_config
             if row.get("status") == "PASS":
                 validate_run_artifacts(run_dir)
+                write_per_symbol_metrics(run_dir)
                 write_summary_txt(run_dir)
                 write_run_manifest(run_dir, config=config, data_path=args.data)
                 run_dirs.append(run_dir)
