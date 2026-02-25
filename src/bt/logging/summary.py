@@ -321,8 +321,22 @@ def write_summary_txt(run_dir: Path) -> Path:
     else:
         lines.append("Benchmark: disabled")
 
+    costs_payload = perf.get("costs") if isinstance(perf.get("costs"), dict) else {}
+    margin_payload = perf.get("margin") if isinstance(perf.get("margin"), dict) else {}
+
     lines.extend(
         [
+            "",
+            "COST DRAG",
+            f"- Spread Total: {_fmt(costs_payload.get('spread_total', perf.get('spread_total', 0.0)))}",
+            f"- Slippage Total: {_fmt(costs_payload.get('slippage_total', perf.get('slippage_total', 0.0)))}",
+            f"- Fees Total: {_fmt(costs_payload.get('fees_total', perf.get('fee_total', 0.0)))}",
+            f"- Commission Total: {_fmt(costs_payload.get('commission_total', 0.0))}",
+            "",
+            "MARGIN UTILIZATION",
+            f"- Peak Utilization %: {_fmt(margin_payload.get('peak_utilization_pct'))}",
+            f"- Avg Utilization %: {_fmt(margin_payload.get('avg_utilization_pct'))}",
+            f"- Min Free Margin %: {_fmt(margin_payload.get('min_free_margin_pct'))}",
             "",
             "MOST IMPORTANT CONCLUSION",
             derive_conclusion(perf, comparison if (comparison is not None or benchmark_metrics is not None) else None),

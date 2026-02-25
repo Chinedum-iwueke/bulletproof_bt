@@ -56,6 +56,14 @@ def _artifact_definitions() -> list[ArtifactEntry]:
             conditional_on="benchmark.enabled",
         ),
         ArtifactEntry(
+            name="cost_breakdown.json",
+            required=False,
+            present=False,
+            description="Machine-readable cost totals and reporting notes.",
+            schema_version=1,
+            conditional_on=None,
+        ),
+        ArtifactEntry(
             name="config_used.yaml",
             required=True,
             present=False,

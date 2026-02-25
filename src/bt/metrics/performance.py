@@ -13,6 +13,7 @@ import yaml
 from bt.metrics.r_metrics import summarize_r
 from bt.logging.formatting import FLOAT_DECIMALS_CSV, write_json_deterministic
 from bt.contracts.schema_versions import PERFORMANCE_SCHEMA_VERSION
+from bt.logging.cost_breakdown import write_cost_breakdown_json
 
 
 @dataclass(frozen=True)
@@ -190,6 +191,44 @@ def compute_cost_attribution(
         "spread_total": float(spread_total),
     }
 
+
+
+
+def _safe_ratio(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
+    denominator_numeric = _coerce_numeric(denominator)
+    numerator_numeric = _coerce_numeric(numerator)
+    ratio = pd.Series(1.0, index=denominator_numeric.index, dtype=float)
+    positive = denominator_numeric > 0
+    ratio.loc[positive] = numerator_numeric.loc[positive] / denominator_numeric.loc[positive]
+    return ratio
+
+
+def _compute_margin_summary(equity_df: pd.DataFrame) -> dict[str, float]:
+    if equity_df.empty or "equity" not in equity_df.columns:
+        return {
+            "peak_used_margin": 0.0,
+            "avg_used_margin": 0.0,
+            "peak_utilization_pct": 0.0,
+            "avg_utilization_pct": 0.0,
+            "min_free_margin": 0.0,
+            "min_free_margin_pct": 0.0,
+        }
+
+    used_margin = _coerce_numeric(equity_df["used_margin"]) if "used_margin" in equity_df.columns else pd.Series(0.0, index=equity_df.index)
+    free_margin = _coerce_numeric(equity_df["free_margin"]) if "free_margin" in equity_df.columns else pd.Series(0.0, index=equity_df.index)
+    equity = _coerce_numeric(equity_df["equity"])
+
+    utilization_pct = _safe_ratio(used_margin, equity)
+    free_margin_pct = _safe_ratio(free_margin, equity)
+
+    return {
+        "peak_used_margin": float(used_margin.max()) if not used_margin.empty else 0.0,
+        "avg_used_margin": float(used_margin.mean()) if not used_margin.empty else 0.0,
+        "peak_utilization_pct": float(utilization_pct.max()) if not utilization_pct.empty else 0.0,
+        "avg_utilization_pct": float(utilization_pct.mean()) if not utilization_pct.empty else 0.0,
+        "min_free_margin": float(free_margin.min()) if not free_margin.empty else 0.0,
+        "min_free_margin_pct": float(free_margin_pct.min()) if not free_margin_pct.empty else 0.0,
+    }
 
 def _max_drawdown_duration(dd: pd.Series) -> int:
     if dd.empty:
@@ -674,7 +713,22 @@ def write_performance_artifacts(report: PerformanceReport, run_dir: str | Path) 
 
     performance_payload = asdict(report)
     performance_payload["schema_version"] = PERFORMANCE_SCHEMA_VERSION
+    performance_payload["costs"] = {
+        "fees_total": float(performance_payload.get("fee_total", 0.0)),
+        "slippage_total": float(performance_payload.get("slippage_total", 0.0)),
+        "spread_total": float(performance_payload.get("spread_total", 0.0)),
+        "commission_total": 0.0,
+    }
+
+    equity_path = run_path / "equity.csv"
+    try:
+        equity_df = pd.read_csv(equity_path)
+    except pd.errors.EmptyDataError:
+        equity_df = pd.DataFrame()
+    performance_payload["margin"] = _compute_margin_summary(equity_df)
+
     write_json_deterministic(performance_path, performance_payload)
+    write_cost_breakdown_json(run_path, performance_payload)
 
     rows = []
     for bucket in sorted(report.ev_by_bucket.keys()):
