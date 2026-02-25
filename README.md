@@ -39,10 +39,10 @@ data:
 Then run:
 
 ```bash
-python -u scripts/run_experiment_grid.py   --config configs/engine.yaml   --experiment configs/experiments/h1_volfloor_donchian.yaml   --data /home/omenka/research_data/bt/curated/stable_data_1m_canonical   --out outputs/grids   --local-config configs/local/engine.volfloor_donchian.locked_btc_audit.yaml
+python -u scripts/run_experiment_grid.py   --config configs/engine.yaml   --experiment configs/experiments/h1_volfloor_donchian.yaml   --data <PATH>   --out outputs/grids   --local-config configs/local/engine.volfloor_donchian.yaml
 ```
 
-That command is correct. Keep `--local-config` for single-asset / short-window checks, and remove or swap it when running full-universe experiments.
+Keep `--local-config` for single-asset / short-window checks, and remove or swap it when running full-universe experiments.
 
 ## Overrides (recommended workflow)
 
