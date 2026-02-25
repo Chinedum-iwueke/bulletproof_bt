@@ -23,6 +23,27 @@ python scripts/run_backtest.py --data <PATH> --config configs/engine.yaml
 python scripts/run_experiment_grid.py --config configs/engine.yaml --experiment configs/experiments/h1_volfloor_donchian.yaml --data <PATH> --out <OUT_DIR>
 ```
 
+### Quick-slice workflow (e.g., 6 months on BTC only)
+
+Use a local overlay with data-scope controls:
+
+```yaml
+data:
+  symbols_subset: ["BTCUSDT"]
+  max_symbols: 1
+  date_range:
+    start: "2023-01-01T00:00:00Z"  # inclusive
+    end: "2023-07-01T00:00:00Z"    # exclusive
+```
+
+Then run:
+
+```bash
+python -u scripts/run_experiment_grid.py   --config configs/engine.yaml   --experiment configs/experiments/h1_volfloor_donchian.yaml   --data /home/omenka/research_data/bt/curated/stable_data_1m_canonical   --out outputs/grids   --local-config configs/local/engine.volfloor_donchian.locked_btc_audit.yaml
+```
+
+That command is correct. Keep `--local-config` for single-asset / short-window checks, and remove or swap it when running full-universe experiments.
+
 ## Overrides (recommended workflow)
 
 - Add one or more overlays with `--override path/to/override.yaml` (flag is repeatable).
