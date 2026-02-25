@@ -7,6 +7,7 @@ from pathlib import Path
 import yaml
 
 from bt.api import run_backtest
+from bt.contracts.schema_versions import PERFORMANCE_SCHEMA_VERSION
 from bt.core import reason_codes
 from bt.risk import risk_engine
 
@@ -44,7 +45,7 @@ def test_run_status_contains_schema_version(tmp_path: Path) -> None:
 def test_performance_contains_schema_version(tmp_path: Path) -> None:
     run_dir = _run_minimal_backtest(tmp_path, "perf_schema")
     payload = json.loads((run_dir / "performance.json").read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == PERFORMANCE_SCHEMA_VERSION
 
 
 def test_reason_codes_are_centralized() -> None:

@@ -38,6 +38,7 @@ Repo Evidence: `src/bt/logging/artifacts_manifest.py::_artifact_definitions`, `s
 | `decisions.jsonl` | per-step strategy/risk decisions | per-line JSON records |
 | `performance.json` | aggregate metrics | includes `schema_version` and key top-level metrics |
 | `performance_by_bucket.csv` | bucketed EV view | columns: `bucket,n_trades,ev_net` |
+| `cost_breakdown.json` | machine-readable cost totals for reporting | includes `schema_version`, `totals`, and `notes` |
 
 Repo Evidence: `src/bt/logging/trades.py::TradesCsvWriter`, `src/bt/core/engine.py::_write_equity_header`, `src/bt/logging/jsonl.py::JsonlWriter.write`, `src/bt/metrics/performance.py::write_performance_artifacts`.
 
@@ -69,12 +70,15 @@ Writer `_columns` contract:
 Repo Evidence: `src/bt/logging/trades.py::TradesCsvWriter._columns`, `src/bt/logging/trades.py::TradesCsvWriter.write_trade`.
 
 ### JSON schema versioning status
-- `performance.json`: has `schema_version` (`PERFORMANCE_SCHEMA_VERSION`).
+- `performance.json`: has `schema_version` (`PERFORMANCE_SCHEMA_VERSION`, now `2`) with additive extensions:
+  - `costs.{fees_total,slippage_total,spread_total,commission_total}`
+  - `margin.{peak_used_margin,avg_used_margin,peak_utilization_pct,avg_utilization_pct,min_free_margin,min_free_margin_pct}`
+- `cost_breakdown.json`: has `schema_version` (`1`) with stable totals + reporting notes.
 - `run_status.json`: has `schema_version` (`RUN_STATUS_SCHEMA_VERSION`).
 - `benchmark_metrics.json` and `comparison_summary.json`: have schema versions.
-- Some JSON artifacts still have no schema version field (best-effort contract; rely on docs + tests).
+- Schema bump policy: additive-only payload changes are preferred; bump schema only when adding a contract-level block or making a non-backward-compatible change.
 
-Repo Evidence: `src/bt/contracts/schema_versions.py`, `src/bt/metrics/performance.py::write_performance_artifacts`, `src/bt/experiments/grid_runner.py::_write_run_status`, `tests/test_schema_versions_in_artifacts.py`.
+Repo Evidence: `src/bt/contracts/schema_versions.py`, `src/bt/metrics/performance.py::write_performance_artifacts`, `src/bt/logging/cost_breakdown.py::write_cost_breakdown_json`, `src/bt/experiments/grid_runner.py::_write_run_status`, `tests/test_output_extensions_costs_and_margin.py`.
 
 ## FAQ / common failure modes
 - **Artifact validator fails for missing files**  

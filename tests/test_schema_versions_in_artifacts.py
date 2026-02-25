@@ -7,6 +7,7 @@ import pandas as pd
 import yaml
 
 from bt.api import run_backtest
+from bt.contracts.schema_versions import PERFORMANCE_SCHEMA_VERSION
 
 
 def _write_basic_config(path: Path, *, benchmark_enabled: bool = False) -> None:
@@ -85,7 +86,7 @@ def test_performance_has_schema_version(tmp_path: Path) -> None:
 
     payload = json.loads((run_dir / "performance.json").read_text(encoding="utf-8"))
     assert "total_trades" in payload
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == PERFORMANCE_SCHEMA_VERSION
 
 
 def test_benchmark_artifacts_have_schema_version_when_enabled(tmp_path: Path) -> None:
