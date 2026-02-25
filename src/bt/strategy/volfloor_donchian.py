@@ -166,6 +166,9 @@ class VolFloorDonchianStrategy(Strategy):
             if htf_bar is None:
                 continue
 
+            live_bar = bars_by_symbol.get(symbol)
+            entry_ref_price = float(live_bar.close) if live_bar is not None else float(htf_bar.close)
+
             symbol_state = self._state_for(symbol)
             if symbol_state.last_htf_ts is not None and htf_bar.ts <= symbol_state.last_htf_ts:
                 continue
@@ -250,11 +253,10 @@ class VolFloorDonchianStrategy(Strategy):
                 short_bias_ok = plus_di is None or minus_di is None or minus_di > plus_di
 
                 if entry_high is not None and htf_bar.close > entry_high and long_bias_ok:
-                    entry_price = float(htf_bar.close)
                     structural_stop = self._compute_structural_stop(Side.BUY, exit_high=exit_high, exit_low=exit_low)
                     atr_stop = self._compute_atr_stop(
                         Side.BUY,
-                        entry_price=entry_price,
+                        entry_price=entry_ref_price,
                         atr_value=atr_value,
                         atr_stop_multiple=self._atr_stop_multiple,
                     )
@@ -264,12 +266,12 @@ class VolFloorDonchianStrategy(Strategy):
                         structural_stop=structural_stop,
                         atr_stop=atr_stop,
                     )
-                    if not self._is_valid_stop(Side.BUY, entry_price=entry_price, stop_price=stop_price):
+                    if not self._is_valid_stop(Side.BUY, entry_price=entry_ref_price, stop_price=stop_price):
                         pass
                     else:
                         stop_source = f"donchian_{self._stop_mode}"
                         stop_details = {
-                            "entry_price": entry_price,
+                            "entry_price": entry_ref_price,
                             "structural_stop": structural_stop,
                             "atr_value": atr_value,
                             "atr_stop_multiple": self._atr_stop_multiple,
@@ -294,16 +296,16 @@ class VolFloorDonchianStrategy(Strategy):
                                     "stop_price": stop_price,
                                     "stop_source": stop_source,
                                     "stop_details": stop_details,
+                                    "entry_reference_price": entry_ref_price,
                                 },
                             )
                         )
                         symbol_state.position = Side.BUY
                 elif entry_low is not None and htf_bar.close < entry_low and short_bias_ok:
-                    entry_price = float(htf_bar.close)
                     structural_stop = self._compute_structural_stop(Side.SELL, exit_high=exit_high, exit_low=exit_low)
                     atr_stop = self._compute_atr_stop(
                         Side.SELL,
-                        entry_price=entry_price,
+                        entry_price=entry_ref_price,
                         atr_value=atr_value,
                         atr_stop_multiple=self._atr_stop_multiple,
                     )
@@ -313,12 +315,12 @@ class VolFloorDonchianStrategy(Strategy):
                         structural_stop=structural_stop,
                         atr_stop=atr_stop,
                     )
-                    if not self._is_valid_stop(Side.SELL, entry_price=entry_price, stop_price=stop_price):
+                    if not self._is_valid_stop(Side.SELL, entry_price=entry_ref_price, stop_price=stop_price):
                         pass
                     else:
                         stop_source = f"donchian_{self._stop_mode}"
                         stop_details = {
-                            "entry_price": entry_price,
+                            "entry_price": entry_ref_price,
                             "structural_stop": structural_stop,
                             "atr_value": atr_value,
                             "atr_stop_multiple": self._atr_stop_multiple,
@@ -343,6 +345,7 @@ class VolFloorDonchianStrategy(Strategy):
                                     "stop_price": stop_price,
                                     "stop_source": stop_source,
                                     "stop_details": stop_details,
+                                    "entry_reference_price": entry_ref_price,
                                 },
                             )
                         )

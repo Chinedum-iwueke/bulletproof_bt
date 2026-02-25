@@ -275,6 +275,7 @@ def run_grid(
     force: bool = False,
 ) -> Path:
     from bt.api import _build_engine
+    from bt.audit.audit_manager import AuditManager
 
     _validate_experiment(experiment_cfg)
 
@@ -338,6 +339,7 @@ def run_grid(
         run_dir = runs_dir / run_name
         run_dir.mkdir(parents=True, exist_ok=False)
         sanity_counters = SanityCounters(run_id=run_name)
+        audit_manager: AuditManager | None = None
 
         try:
             if run_name_error is not None:
@@ -345,6 +347,7 @@ def run_grid(
 
             run_cfg = resolve_config(copy.deepcopy(merged_cfg))
             validate_resolved_config_completeness(run_cfg)
+            audit_manager = AuditManager(run_dir=run_dir, config=run_cfg, run_id=run_name)
 
             with (run_dir / "config_used.yaml").open("w", encoding="utf-8") as handle:
                 yaml.safe_dump(run_cfg, handle, sort_keys=False)
@@ -370,7 +373,13 @@ def run_grid(
             if benchmark_tracker is not None:
                 datafeed = BenchmarkTrackingFeed(inner_feed=datafeed, tracker=benchmark_tracker)
 
-            engine = _build_engine(run_cfg, datafeed, run_dir, sanity_counters=sanity_counters)
+            engine = _build_engine(
+                run_cfg,
+                datafeed,
+                run_dir,
+                sanity_counters=sanity_counters,
+                audit_manager=audit_manager,
+            )
             engine.run()
 
             benchmark_metrics: dict[str, Any] | None = None
@@ -471,6 +480,11 @@ def run_grid(
                             "data_end_ts": date_range.get("end"),
                         }
             write_sanity_json(run_dir, sanity_counters, data_scope=data_scope_payload)
+            if audit_manager is not None:
+                try:
+                    audit_manager.write_summary()
+                except Exception:
+                    pass
 
     with (out_path / "summary.csv").open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=_SUMMARY_COLUMNS)

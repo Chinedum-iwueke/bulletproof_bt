@@ -56,6 +56,7 @@ def test_grid_runner_records_failures_and_continues(tmp_path: Path, monkeypatch:
         "maker_fee_bps": 0.0,
         "taker_fee_bps": 0.0,
         "slippage_k": 0.0,
+        "audit": {"enabled": True, "level": "full"},
     }
 
     exp = {
@@ -92,3 +93,9 @@ def test_grid_runner_records_failures_and_continues(tmp_path: Path, monkeypatch:
     assert pass_run.exists()
     payload_pass = json.loads(pass_run.read_text(encoding="utf-8"))
     assert payload_pass["status"] == "PASS"
+
+
+    pass_stability = out_path / "runs" / "run_001__seed1" / "audit" / "stability_report.json"
+    fail_stability = out_path / "runs" / "run_002__seed2" / "audit" / "stability_report.json"
+    assert pass_stability.exists()
+    assert fail_stability.exists()

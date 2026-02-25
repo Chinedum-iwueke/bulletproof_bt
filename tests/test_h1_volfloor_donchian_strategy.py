@@ -248,3 +248,38 @@ def test_exit_takes_precedence_over_same_bar_entry() -> None:
     assert emitted[0].signal_type == "h1_volfloor_donchian_exit"
     assert emitted[0].side == Side.SELL
     assert state.position is None
+
+
+def test_entry_stop_uses_live_entry_reference_price() -> None:
+    strategy = VolFloorDonchianStrategy(
+        timeframe="15m",
+        donchian_entry_lookback=1,
+        donchian_exit_lookback=1,
+        adx_min=0.0,
+        vol_floor_pct=0.0,
+        atr_period=1,
+        vol_lookback_bars=1,
+        stop_mode="atr",
+        atr_stop_multiple=1.0,
+    )
+    _pin_trend_gate(strategy)
+    state = strategy._state_for("AAA")
+    state.highs.extend([120.0])
+    state.lows.extend([118.0])
+    state.natr_history = deque([0.01], maxlen=1)
+    state.atr._prev_close = 130.0
+
+    htf_bar = _htf_bar("2024-01-01 01:00:00", high=131.0, low=129.0, close=130.0)
+    live_bar = _bar("2024-01-01 01:00:00", high=101.0, low=99.0, close=100.0)
+
+    emitted = strategy.on_bars(
+        htf_bar.ts,
+        {"AAA": live_bar},
+        {"AAA"},
+        {"htf": {"15m": {"AAA": htf_bar}}},
+    )
+
+    assert len(emitted) == 1
+    assert emitted[0].signal_type == "h1_volfloor_donchian_entry"
+    assert emitted[0].metadata["entry_reference_price"] == 100.0
+    assert emitted[0].metadata["stop_price"] == 98.0
