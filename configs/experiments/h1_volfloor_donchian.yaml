@@ -11,12 +11,10 @@ fixed:
     variant: "B"
     entry_lookback: 20
     exit_lookback: 10
-    stop_mode: atr
     atr_stop_multiple: 2.0
     vol_window_days: 30
   risk:
     r_per_trade: 0.005
-    max_positions: 1
 grid:
   strategy.vol_floor_pct: [60, 70, 80, 85, 90]
   strategy.adx_min: [18, 22, 25]
