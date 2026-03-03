@@ -1,8 +1,8 @@
+## Copyright
+
+Copyright © 2026 Chinedum Iwueke.
+
 # Bulletproof BT
-
-📘 Institutional / Premium README Description
-
-## Bulletproof_bt
 
 Bulletproof_bt is a deterministic, event-driven quantitative research engine designed for institutional-grade strategy validation across crypto, foreign exchange, equities, and basic futures modeling.
 
@@ -11,8 +11,7 @@ It is built around a strict invariant:
 > Same data + same configuration = identical outputs.  
 > No lookahead. No interpolation. No silent assumptions.
 
-Bulletproof_bt is not a notebook experiment framework.  
-It is a reproducible research system.
+Bulletproof_bt is a reproducible research system.
 
 ---
 
@@ -190,6 +189,35 @@ Bulletproof_bt V1 is a single-strategy institutional research OS.
 
 ---
 
+## Project Structure
+
+```text
+src/bt/
+  core/            # Engine loop, configuration resolution
+  data/            # Dataset loading, validation, resampling
+  execution/       # Execution profiles, pricing, slippage, spread
+  risk/            # Position sizing, margin, stop handling
+  portfolio/       # Cash, positions, liquidation logic
+  metrics/         # Performance computation, attribution
+  logging/         # Artifact writers, summary, run status
+  benchmark/       # Benchmark modes and comparison layer
+  instruments/     # Instrument abstraction layer (FX/equity/crypto)
+
+configs/
+  engine.yaml      # Stable system defaults
+  packs/           # Market-specific packs (crypto, fx_trad_v1)
+  overrides/       # Strategy experiment overrides
+
+scripts/
+  run_backtest.py
+  run_experiment_grid.py
+
+tests/
+  Deterministic regression + contract validation
+```
+
+Core engine modules remain instrument-agnostic. Market differences are handled through instrument specs and execution adapters.
+
 ## Prerequisites
 
 ### System Requirements
@@ -209,10 +237,6 @@ Recommended:
 
 ## Release Status
 
-Bulletproof_bt has achieved:
-
-**FX / Traditional Markets V1 Feature Freeze**
-
 The engine is:
 - Instrument-aware
 - Spread-aware
@@ -221,8 +245,6 @@ The engine is:
 - Benchmark-contextualized
 - Deterministic
 - Regression-locked
-
-Crypto workflows remain fully supported and backward-compatible.
 
 ---
 ## Install
