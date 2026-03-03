@@ -1,7 +1,230 @@
 # Bulletproof BT
 
-Scaffold for an event-driven, bar-by-bar backtesting engine.
+📘 Institutional / Premium README Description
 
+## Bulletproof_bt
+
+Bulletproof_bt is a deterministic, event-driven quantitative research engine designed for institutional-grade strategy validation across crypto, foreign exchange, equities, and basic futures modeling.
+
+It is built around a strict invariant:
+
+> Same data + same configuration = identical outputs.  
+> No lookahead. No interpolation. No silent assumptions.
+
+Bulletproof_bt is not a notebook experiment framework.  
+It is a reproducible research system.
+
+---
+
+## System Philosophy
+
+Bulletproof_bt enforces explicit contracts between:
+- Strategy
+- Risk Engine
+- Execution Model
+- Portfolio
+- Data Feed
+- Benchmark Layer
+- Artifact Outputs
+
+Each layer is deterministic, validated, and version-stable.
+
+Every run produces a structured artifact bundle suitable for audit, client delivery, or regression locking.
+
+---
+
+## Market Support (V1 Feature Freeze)
+
+### Crypto (24/7 Markets)
+- Tiered execution profiles (tier1 / tier2 / tier3 / custom)
+- Spread, slippage, and fee modeling
+- Deterministic intrabar pricing
+- Stop-distance based risk normalization
+- Buy & hold benchmark
+
+---
+
+### Foreign Exchange (24x5)
+- Mandatory spread modeling (entry and exit)
+- Commission per lot (configurable)
+- Lot-size rounding (micro / mini / standard)
+- Risk-percentage position sizing
+- Basic leverage and margin modeling
+- Weekend enforcement
+- Flat or baseline-strategy benchmark
+
+---
+
+### Equities (Session-Based)
+- Commission per share or per trade
+- Market hours enforcement
+- Gap-preserving behavior
+- Cash-account modeling (no implicit leverage)
+- Buy & hold or baseline benchmark
+
+---
+
+## Core Design Principles
+
+### Determinism
+- Fully reproducible runs
+- Config resolution canonicalization
+- Schema-versioned artifacts
+- No stochastic execution components
+
+---
+
+### Strict No-Lookahead
+- Strategies receive closed bars only
+- Higher-timeframe resampling enforces strict completeness
+- No future leakage permitted
+
+---
+
+### Explicit Cost Modeling
+
+Execution modeling includes:
+- Spread (entry + exit)
+- Slippage
+- Fees
+- Commissions
+- Margin usage
+
+All cost components are surfaced in output artifacts.
+
+---
+
+### Risk Normalization
+
+Strategies are evaluated using:
+- % equity risk per trade
+- Stop-distance based sizing
+- R-multiple normalization
+- Margin-aware execution constraints
+
+---
+
+## Instrument Abstraction Layer
+
+All markets are modeled via explicit instrument specifications:
+
+```yaml
+instrument:
+  type: forex | equity | crypto | futures
+  symbol: EURUSD
+  tick_size: 0.0001
+  contract_size: 100000
+  pip_value: auto
+```
+
+This eliminates hardcoded crypto assumptions and ensures execution and risk logic adapt correctly per asset class.
+
+---
+
+## Benchmark Framework
+
+Supported benchmark modes:
+- buy_hold
+- flat (no-trade baseline)
+- baseline_strategy (e.g., MA cross)
+
+Benchmark artifacts include:
+- benchmark_equity.csv
+- benchmark_metrics.json
+- comparison_summary.json
+
+---
+
+## Data Contract
+
+Supported input modes:
+- Single-file dataset
+- Dataset directory with manifest (recommended)
+
+Validation guarantees:
+- UTC tz-aware timestamps
+- Strict monotonic ordering
+- OHLC consistency checks
+- Duplicate detection
+- Session enforcement (FX/equity)
+- No interpolation of missing bars
+
+---
+
+## Run Artifact Contract
+
+Every run produces:
+
+```text
+run_xxx/
+  config_used.yaml
+  performance.json
+  equity.csv
+  trades.csv
+  fills.jsonl
+  decisions.jsonl
+  performance_by_bucket.csv
+  cost_breakdown.json
+  summary.txt
+  run_manifest.json
+  run_status.json
+  benchmark_* (if enabled)
+```
+
+Artifacts are stable and schema-versioned.
+
+---
+
+## Explicitly Out of Scope (V1)
+
+To preserve rigor and reproducibility, V1 intentionally excludes:
+- Multi-strategy blending
+- Portfolio allocation engines
+- Tick-level simulation
+- Order book modeling
+- Swap/rollover modeling
+- Multi-broker comparison
+- Web dashboards
+
+Bulletproof_bt V1 is a single-strategy institutional research OS.
+
+---
+
+## Prerequisites
+
+### System Requirements
+- Python 3.10+
+- Linux, macOS, or WSL recommended
+- 8GB+ RAM (16GB+ recommended for multi-asset research)
+
+---
+
+### Required CLI Tools
+
+Recommended:
+- git
+- rg (ripgrep) for repository inspection
+- tree (optional)
+- make (if Makefile commands are used)
+
+## Release Status
+
+Bulletproof_bt has achieved:
+
+**FX / Traditional Markets V1 Feature Freeze**
+
+The engine is:
+- Instrument-aware
+- Spread-aware
+- Margin-aware
+- Risk-normalized
+- Benchmark-contextualized
+- Deterministic
+- Regression-locked
+
+Crypto workflows remain fully supported and backward-compatible.
+
+---
 ## Install
 
 Bulletproof_bt uses modern PEP 621 packaging. All dependencies are defined in pyproject.toml.
