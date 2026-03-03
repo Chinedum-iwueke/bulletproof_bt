@@ -16,7 +16,7 @@ fixed:
   risk:
     r_per_trade: 0.005
 grid:
-  strategy.vol_floor_pct: [60, 70, 80, 85, 90]
-  strategy.adx_min: [18, 22, 25]
+  strategy.vol_floor_pct: [60, 70, 80, 85]
+  strategy.adx_min: [25]
 run_naming:
   template: "adx{strategy.adx_min}_vol{strategy.vol_floor_pct}"
