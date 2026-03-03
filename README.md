@@ -4,6 +4,8 @@ Scaffold for an event-driven, bar-by-bar backtesting engine.
 
 ## Install
 
+Bulletproof_bt uses modern PEP 621 packaging. All dependencies are defined in pyproject.toml.
+
 ```bash
 git clone https://github.com/Chinedum-iwueke/Bulletproof_bt.git
 cd Bulletproof_bt
