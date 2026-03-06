@@ -23,6 +23,7 @@ def main() -> None:
     parser.add_argument("--config", default="configs/engine.yaml")
     parser.add_argument("--data", required=True)
     parser.add_argument("--run-id")
+    parser.add_argument("--out-dir", default="outputs/runs")
     parser.add_argument("--override", action="append", default=[])
     parser.add_argument("--local-config")
     parser.add_argument("--audit-enabled", action="store_true")
@@ -58,7 +59,7 @@ def main() -> None:
         run_dir = run_backtest(
             config_path=args.config,
             data_path=args.data,
-            out_dir="outputs/runs",
+            out_dir=args.out_dir,
             override_paths=override_paths or None,
             run_name=args.run_id,
         )
