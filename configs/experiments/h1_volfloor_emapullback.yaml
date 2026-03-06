@@ -13,6 +13,7 @@ fixed:
     r_per_trade: 0.005
 grid:
   strategy.vol_floor_pct: [60, 70, 80, 85]
-  strategy.adx_min: [25]
+  strategy.adx_min: [18, 22, 25]
+  strategy.er_min: [0.35, 0.45, 0.55]
 run_naming:
-  template: "adx{strategy.adx_min}_vol{strategy.vol_floor_pct}"
+  template: "adx{strategy.adx_min}_vol{strategy.vol_floor_pct}_er{strategy.er_min}"

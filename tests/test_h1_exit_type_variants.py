@@ -129,3 +129,65 @@ def test_volfloor_ema_pullback_exit_types() -> None:
     assert len(out) == 1
     assert out[0].signal_type == "h1_volfloor_ema_pullback_exit"
     assert out[0].metadata["exit_type"] == "ema_trend_end"
+
+
+def test_volfloor_ema_pullback_entry_requires_efficiency_ratio_threshold() -> None:
+    strategy = VolFloorEmaPullbackStrategy(
+        atr_period=1,
+        vol_lookback_bars=1,
+        ema_fast_period=2,
+        ema_slow_period=3,
+        adx_min=0.0,
+        vol_floor_pct=0.0,
+        er_lookback=3,
+        er_min=0.8,
+    )
+    state = strategy._state_for("AAA")
+    state.ema_fast.update = lambda bar: None  # type: ignore[method-assign]
+    state.ema_slow.update = lambda bar: None  # type: ignore[method-assign]
+    state.ema_fast._ema.value = 101.0
+    state.ema_slow._ema.value = 100.0
+    state.adx.update = lambda bar: None  # type: ignore[method-assign]
+    state.adx._values = {"adx": 30.0, "plus_di": 30.0, "minus_di": 10.0}
+    state.natr_history = deque([0.01], maxlen=1)
+    state.closes.extend([100.0, 101.0, 100.0])
+    state.atr._prev_close = 101.0
+
+    out = strategy.on_bars(
+        pd.Timestamp("2024-01-01 01:00:00", tz="UTC"),
+        {"AAA": _bar("2024-01-01 01:00:00", high=102.0, low=100.5, close=101.2)},
+        {"AAA"},
+        {"htf": {"15m": {"AAA": _htf_bar("2024-01-01 01:00:00", high=102.0, low=100.5, close=101.2)}}},
+    )
+    assert out == []
+
+    strategy_ok = VolFloorEmaPullbackStrategy(
+        atr_period=1,
+        vol_lookback_bars=1,
+        ema_fast_period=2,
+        ema_slow_period=3,
+        adx_min=0.0,
+        vol_floor_pct=0.0,
+        er_lookback=3,
+        er_min=0.8,
+    )
+    state_ok = strategy_ok._state_for("AAA")
+    state_ok.ema_fast.update = lambda bar: None  # type: ignore[method-assign]
+    state_ok.ema_slow.update = lambda bar: None  # type: ignore[method-assign]
+    state_ok.ema_fast._ema.value = 101.0
+    state_ok.ema_slow._ema.value = 100.0
+    state_ok.adx.update = lambda bar: None  # type: ignore[method-assign]
+    state_ok.adx._values = {"adx": 30.0, "plus_di": 30.0, "minus_di": 10.0}
+    state_ok.natr_history = deque([0.01], maxlen=1)
+    state_ok.closes.extend([100.0, 101.0, 102.0])
+    state_ok.atr._prev_close = 101.0
+
+    out_ok = strategy_ok.on_bars(
+        pd.Timestamp("2024-01-01 01:15:00", tz="UTC"),
+        {"AAA": _bar("2024-01-01 01:15:00", high=103.5, low=100.5, close=103.0)},
+        {"AAA"},
+        {"htf": {"15m": {"AAA": _htf_bar("2024-01-01 01:15:00", high=103.5, low=100.5, close=103.0)}}},
+    )
+    assert len(out_ok) == 1
+    assert out_ok[0].signal_type == "h1_volfloor_ema_pullback_entry"
+    assert out_ok[0].metadata["efficiency_ratio"] == 1.0

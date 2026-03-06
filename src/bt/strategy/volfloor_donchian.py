@@ -31,6 +31,7 @@ class _TradeState:
 class _SymbolState:
     highs: deque[float]
     lows: deque[float]
+    closes: deque[float]
     natr_history: deque[float]
     atr: ATR
     adx: DMIADX
@@ -52,6 +53,8 @@ class VolFloorDonchianStrategy(Strategy):
         vol_floor_pct: float = 60.0,
         atr_period: int = 14,
         vol_lookback_bars: int = 2880,
+        er_lookback: int = 10,
+        er_min: float | None = None,
         stop_mode: str = "hybrid",
         atr_stop_multiple: float = 2.5,
         symbols: list[str] | None = None,
@@ -81,6 +84,8 @@ class VolFloorDonchianStrategy(Strategy):
         self._vol_floor_pct = vol_floor_pct
         self._atr_period = atr_period
         self._vol_lookback_bars = vol_lookback_bars
+        self._er_lookback = er_lookback
+        self._er_min = er_min
         self._stop_mode = stop_mode
         self._atr_stop_multiple = atr_stop_multiple
         self._symbols = set(symbols) if symbols is not None else None
@@ -102,6 +107,8 @@ class VolFloorDonchianStrategy(Strategy):
                 "vol_floor_pct": 0.0,
                 "atr_period": 3,
                 "vol_lookback_bars": 10,
+                "er_lookback": 3,
+                "er_min": 0.0,
                 "stop_mode": "hybrid",
                 "atr_stop_multiple": 1.2,
                 "exit_type": "donchian_reversal",
@@ -169,6 +176,7 @@ class VolFloorDonchianStrategy(Strategy):
             current = _SymbolState(
                 highs=deque(maxlen=max(self._entry_lookback, self._exit_lookback, self._chandelier_lookback)),
                 lows=deque(maxlen=max(self._entry_lookback, self._exit_lookback, self._chandelier_lookback)),
+                closes=deque(maxlen=self._er_lookback + 1),
                 natr_history=deque(maxlen=self._vol_lookback_bars),
                 atr=ATR(self._atr_period),
                 adx=DMIADX(14),
@@ -191,6 +199,18 @@ class VolFloorDonchianStrategy(Strategy):
         if side == Side.BUY:
             return max(highs[-self._chandelier_lookback :]) - (self._chandelier_mult * atr_value)
         return min(lows[-self._chandelier_lookback :]) + (self._chandelier_mult * atr_value)
+
+    def _efficiency_ratio(self, prev_closes: tuple[float, ...], current_close: float) -> float | None:
+        if self._er_lookback <= 0:
+            return None
+        if len(prev_closes) < self._er_lookback:
+            return None
+        window = prev_closes[-self._er_lookback :] + (current_close,)
+        directional_move = abs(window[-1] - window[0])
+        path_length = sum(abs(window[i] - window[i - 1]) for i in range(1, len(window)))
+        if path_length == 0:
+            return 0.0
+        return directional_move / path_length
 
     def _emit_exit(self, *, ts: pd.Timestamp, symbol: str, side: Side, metadata: dict[str, Any]) -> Signal:
         return Signal(
@@ -229,6 +249,7 @@ class VolFloorDonchianStrategy(Strategy):
 
             prev_highs = tuple(symbol_state.highs)
             prev_lows = tuple(symbol_state.lows)
+            prev_closes = tuple(symbol_state.closes)
 
             symbol_state.atr.update(htf_bar)
             symbol_state.adx.update(htf_bar)
@@ -250,6 +271,7 @@ class VolFloorDonchianStrategy(Strategy):
             entry_low = min(prev_lows[-self._entry_lookback :]) if len(prev_lows) >= self._entry_lookback else None
             exit_high = max(prev_highs[-self._exit_lookback :]) if len(prev_highs) >= self._exit_lookback else None
             exit_low = min(prev_lows[-self._exit_lookback :]) if len(prev_lows) >= self._exit_lookback else None
+            er_value = self._efficiency_ratio(prev_closes, float(htf_bar.close))
 
             base_metadata = {
                 "strategy": "volfloor_donchian",
@@ -258,6 +280,8 @@ class VolFloorDonchianStrategy(Strategy):
                 "vol_pct_rank": vol_rank,
                 "vol_floor_pct": self._vol_floor_pct,
                 "adx": adx_value,
+                "efficiency_ratio": er_value,
+                "er_min": self._er_min,
                 "donchian_entry": {"high": entry_high, "low": entry_low},
                 "donchian_exit": {"high": exit_high, "low": exit_low},
                 "chandelier": {"lookback": self._chandelier_lookback, "mult": self._chandelier_mult},
@@ -326,7 +350,8 @@ class VolFloorDonchianStrategy(Strategy):
                 and len(symbol_state.natr_history) >= self._vol_lookback_bars
                 and vol_rank >= self._vol_floor_pct
             )
-            if not action_this_bar and symbol_state.position is None and adx_ok and vol_ok:
+            er_ok = self._er_min is None or (er_value is not None and er_value > self._er_min)
+            if not action_this_bar and symbol_state.position is None and adx_ok and vol_ok and er_ok:
                 long_bias_ok = plus_di is None or minus_di is None or plus_di > minus_di
                 short_bias_ok = plus_di is None or minus_di is None or minus_di > plus_di
 
@@ -423,6 +448,7 @@ class VolFloorDonchianStrategy(Strategy):
 
             symbol_state.highs.append(htf_bar.high)
             symbol_state.lows.append(htf_bar.low)
+            symbol_state.closes.append(float(htf_bar.close))
             if natr_value is not None:
                 symbol_state.natr_history.append(natr_value)
 

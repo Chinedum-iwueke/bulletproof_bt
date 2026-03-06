@@ -20,6 +20,7 @@ from bt.strategy.base import Strategy
 class _SymbolState:
     highs: deque[float]
     lows: deque[float]
+    closes: deque[float]
     natr_history: deque[float]
     atr: ATR
     adx: DMIADX
@@ -40,6 +41,8 @@ class VolFloorEmaPullbackStrategy(Strategy):
         vol_floor_pct: float = 60.0,
         atr_period: int = 14,
         vol_lookback_bars: int = 2880,
+        er_lookback: int = 10,
+        er_min: float | None = None,
         ema_fast_period: int = 20,
         ema_slow_period: int = 50,
         stop_atr_mult: float = 2.0,
@@ -56,6 +59,8 @@ class VolFloorEmaPullbackStrategy(Strategy):
         self._vol_floor_pct = vol_floor_pct
         self._atr_period = atr_period
         self._vol_lookback_bars = vol_lookback_bars
+        self._er_lookback = er_lookback
+        self._er_min = er_min
         self._ema_fast_period = ema_fast_period
         self._ema_slow_period = ema_slow_period
         self._stop_atr_mult = stop_atr_mult
@@ -74,6 +79,8 @@ class VolFloorEmaPullbackStrategy(Strategy):
                 "vol_floor_pct": 0.0,
                 "atr_period": 3,
                 "vol_lookback_bars": 10,
+                "er_lookback": 3,
+                "er_min": 0.0,
                 "ema_fast_period": 3,
                 "ema_slow_period": 5,
                 "stop_atr_mult": 2.0,
@@ -89,6 +96,7 @@ class VolFloorEmaPullbackStrategy(Strategy):
             current = _SymbolState(
                 highs=deque(maxlen=self._chandelier_lookback),
                 lows=deque(maxlen=self._chandelier_lookback),
+                closes=deque(maxlen=self._er_lookback + 1),
                 natr_history=deque(maxlen=self._vol_lookback_bars),
                 atr=ATR(self._atr_period),
                 adx=DMIADX(14),
@@ -112,6 +120,19 @@ class VolFloorEmaPullbackStrategy(Strategy):
             return max(highs[-self._chandelier_lookback :]) - (self._chandelier_mult * atr_value)
         return min(lows[-self._chandelier_lookback :]) + (self._chandelier_mult * atr_value)
 
+
+    def _efficiency_ratio(self, prev_closes: tuple[float, ...], current_close: float) -> float | None:
+        if self._er_lookback <= 0:
+            return None
+        if len(prev_closes) < self._er_lookback:
+            return None
+        window = prev_closes[-self._er_lookback :] + (current_close,)
+        directional_move = abs(window[-1] - window[0])
+        path_length = sum(abs(window[i] - window[i - 1]) for i in range(1, len(window)))
+        if path_length == 0:
+            return 0.0
+        return directional_move / path_length
+
     def on_bars(self, ts: pd.Timestamp, bars_by_symbol: dict[str, Bar], tradeable: set[str], ctx: Mapping[str, Any]) -> list[Signal]:
         signals: list[Signal] = []
         htf_ctx = ctx.get("htf", {})
@@ -132,6 +153,7 @@ class VolFloorEmaPullbackStrategy(Strategy):
 
             prev_highs = tuple(state.highs)
             prev_lows = tuple(state.lows)
+            prev_closes = tuple(state.closes)
             state.atr.update(htf_bar)
             state.adx.update(htf_bar)
             state.ema_fast.update(htf_bar)
@@ -148,6 +170,7 @@ class VolFloorEmaPullbackStrategy(Strategy):
                 natr_value = atr_value / htf_bar.close
                 if len(state.natr_history) >= self._vol_lookback_bars:
                     vol_rank = self._percentile_rank(tuple(state.natr_history), natr_value)
+            er_value = self._efficiency_ratio(prev_closes, float(htf_bar.close))
 
             base_meta = {
                 "strategy": "volfloor_ema_pullback",
@@ -156,6 +179,8 @@ class VolFloorEmaPullbackStrategy(Strategy):
                 "ema_fast": ema_fast,
                 "ema_slow": ema_slow,
                 "adx": adx_value,
+                "efficiency_ratio": er_value,
+                "er_min": self._er_min,
                 "vol_pct_rank": vol_rank,
                 "vol_floor_pct": self._vol_floor_pct,
                 "chandelier": {"lookback": self._chandelier_lookback, "mult": self._chandelier_mult},
@@ -188,7 +213,8 @@ class VolFloorEmaPullbackStrategy(Strategy):
             adx_ok = adx_value is not None and adx_value >= self._adx_min
             vol_ok = vol_rank is not None and len(state.natr_history) >= self._vol_lookback_bars and vol_rank >= self._vol_floor_pct
             trend_ready = ema_fast is not None and ema_slow is not None
-            if not action and state.position is None and adx_ok and vol_ok and trend_ready and atr_value is not None:
+            er_ok = self._er_min is None or (er_value is not None and er_value > self._er_min)
+            if not action and state.position is None and adx_ok and vol_ok and er_ok and trend_ready and atr_value is not None:
                 long_bias = ema_fast > ema_slow
                 short_bias = ema_fast < ema_slow
                 long_pullback = htf_bar.low <= ema_fast and htf_bar.close > ema_fast
@@ -249,6 +275,7 @@ class VolFloorEmaPullbackStrategy(Strategy):
 
             state.highs.append(htf_bar.high)
             state.lows.append(htf_bar.low)
+            state.closes.append(float(htf_bar.close))
             if natr_value is not None:
                 state.natr_history.append(natr_value)
 

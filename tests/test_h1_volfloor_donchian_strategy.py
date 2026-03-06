@@ -283,3 +283,70 @@ def test_entry_stop_uses_live_entry_reference_price() -> None:
     assert emitted[0].signal_type == "h1_volfloor_donchian_entry"
     assert emitted[0].metadata["entry_reference_price"] == 100.0
     assert emitted[0].metadata["stop_price"] == 98.0
+
+
+def test_entry_requires_efficiency_ratio_threshold() -> None:
+    strategy = VolFloorDonchianStrategy(
+        timeframe="15m",
+        donchian_entry_lookback=1,
+        donchian_exit_lookback=1,
+        adx_min=0.0,
+        vol_floor_pct=0.0,
+        atr_period=1,
+        vol_lookback_bars=1,
+        er_lookback=3,
+        er_min=0.8,
+        stop_mode="atr",
+        atr_stop_multiple=1.0,
+    )
+    _pin_trend_gate(strategy)
+    state = strategy._state_for("AAA")
+    state.highs.extend([100.0])
+    state.lows.extend([98.0])
+    state.natr_history = deque([0.01], maxlen=1)
+    state.closes.extend([100.0, 101.0, 100.0])
+    state.atr._prev_close = 102.0
+
+    htf_bar = _htf_bar("2024-01-01 01:00:00", high=103.0, low=101.0, close=102.0)
+    emitted = strategy.on_bars(
+        htf_bar.ts,
+        {"AAA": _bar("2024-01-01 01:00:00", high=103.0, low=101.0, close=102.0)},
+        {"AAA"},
+        {"htf": {"15m": {"AAA": htf_bar}}},
+    )
+
+    assert emitted == []
+
+    # ER for [100, 101, 102, 103] is 1.0 > 0.8, so the same breakout can now trigger.
+    strategy_ok = VolFloorDonchianStrategy(
+        timeframe="15m",
+        donchian_entry_lookback=1,
+        donchian_exit_lookback=1,
+        adx_min=0.0,
+        vol_floor_pct=0.0,
+        atr_period=1,
+        vol_lookback_bars=1,
+        er_lookback=3,
+        er_min=0.8,
+        stop_mode="atr",
+        atr_stop_multiple=1.0,
+    )
+    _pin_trend_gate(strategy_ok)
+    state_ok = strategy_ok._state_for("AAA")
+    state_ok.highs.extend([100.0])
+    state_ok.lows.extend([98.0])
+    state_ok.natr_history = deque([0.01], maxlen=1)
+    state_ok.closes.extend([100.0, 101.0, 102.0])
+    state_ok.atr._prev_close = 103.0
+
+    htf_bar_ok = _htf_bar("2024-01-01 01:15:00", high=104.0, low=102.0, close=103.0)
+    out_ok = strategy_ok.on_bars(
+        htf_bar_ok.ts,
+        {"AAA": _bar("2024-01-01 01:15:00", high=104.0, low=102.0, close=103.0)},
+        {"AAA"},
+        {"htf": {"15m": {"AAA": htf_bar_ok}}},
+    )
+
+    assert len(out_ok) == 1
+    assert out_ok[0].signal_type == "h1_volfloor_donchian_entry"
+    assert out_ok[0].metadata["efficiency_ratio"] == 1.0
