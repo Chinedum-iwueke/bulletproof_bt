@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import os
 import json
 from pathlib import Path
 
@@ -167,3 +168,30 @@ def test_cli_default_max_workers_is_6(monkeypatch: pytest.MonkeyPatch) -> None:
     exit_code = parallel_grid.cli_run_parallel_grid(args)
     assert exit_code == 0
     assert captured["max_workers"] == 6
+
+
+def test_build_subprocess_env_includes_repo_src(monkeypatch: pytest.MonkeyPatch) -> None:
+    from bt.experiments.parallel_grid import _build_subprocess_env
+
+    monkeypatch.setenv("PYTHONPATH", "alpha:beta")
+    env = _build_subprocess_env()
+
+    assert "PYTHONPATH" in env
+    assert str((Path.cwd() / "src").resolve()) in env["PYTHONPATH"]
+
+
+def test_cli_rejects_missing_data_path() -> None:
+    from bt.experiments.parallel_grid import cli_run_parallel_grid
+
+    with pytest.raises(ValueError, match=r"--data path does not exist"):
+        cli_run_parallel_grid([
+            "--experiment-root",
+            "outputs/x",
+            "--manifest",
+            "outputs/x/manifests/a.csv",
+            "--base-config",
+            "configs/engine.yaml",
+            "--data",
+            "home/not/real",
+            "--dry-run",
+        ])

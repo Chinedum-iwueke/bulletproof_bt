@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import subprocess
 import sys
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
@@ -301,12 +302,27 @@ def build_run_command(
     ]
 
 
+def _build_subprocess_env() -> dict[str, str]:
+    env = dict(os.environ)
+    repo_src = (Path.cwd() / "src").resolve()
+    if repo_src.exists():
+        existing = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = f"{repo_src}:{existing}" if existing else str(repo_src)
+    return env
+
+
 def _execute_command(command: list[str], log_path: Path, dry_run: bool) -> int:
     if dry_run:
         return 0
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w", encoding="utf-8") as handle:
-        completed = subprocess.run(command, stdout=handle, stderr=subprocess.STDOUT, check=False)
+        completed = subprocess.run(
+            command,
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            check=False,
+            env=_build_subprocess_env(),
+        )
     return int(completed.returncode)
 
 
@@ -519,12 +535,19 @@ def cli_run_parallel_grid(argv: list[str] | None = None) -> int:
     if args.max_workers <= 0:
         raise ValueError("--max-workers must be > 0")
 
+    data_path = Path(args.data)
+    if not data_path.exists():
+        raise ValueError(
+            f"--data path does not exist: {data_path}. "
+            "Use an absolute path (e.g., /home/...) or a valid repo-relative path."
+        )
+
     rows = read_manifest_csv(Path(args.manifest))
     status_rows, failures = run_manifest_in_parallel(
         rows=rows,
         experiment_root=Path(args.experiment_root),
         base_config=Path(args.base_config),
-        data_path=Path(args.data),
+        data_path=data_path,
         max_workers=args.max_workers,
         skip_completed=bool(args.skip_completed),
         retry_failed=bool(args.retry_failed),
