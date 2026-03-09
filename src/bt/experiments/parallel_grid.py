@@ -26,7 +26,7 @@ class GridSpec:
     execution_tier: str = "tier2"
     vol_floors: tuple[int, ...] = (60, 70, 80, 85)
     adx_mins: tuple[int, ...] = (22, 25)
-    er_mins: tuple[float, ...] = (0.55)
+    er_mins: tuple[float, ...] | float = (0.55,)
     er_lookback: int = 16
 
 
@@ -72,9 +72,10 @@ def _format_er_slug(er_min: float) -> str:
 def build_grid_rows(spec: GridSpec) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     run_index = 1
+    er_mins = (spec.er_mins,) if isinstance(spec.er_mins, float) else spec.er_mins
     for vol_floor in spec.vol_floors:
         for adx_min in spec.adx_mins:
-            for er_min in spec.er_mins:
+            for er_min in er_mins:
                 run_id = (
                     f"run_{run_index:03d}__vol{vol_floor}_adx{adx_min}_"
                     f"er{_format_er_slug(er_min)}_n{spec.er_lookback}"
