@@ -1,0 +1,29 @@
+hypothesis_id: "EX-BLUEPRINT"
+title: "Blueprint Gate Example"
+description: "Example gate-only hypothesis contract for blueprint integration tests."
+research_layer: "EX"
+hypothesis_family: "example"
+version: "1.0.0"
+author: "Bulletproof_bt"
+created_at: "2026-03-09T00:00:00Z"
+
+required_indicators: [session_vwap, bb_width, adx, efficiency_ratio]
+
+parameter_grid:
+  bb_width_min: [0.02]
+  adx_min: [20]
+  er_min: [0.2, 0.3]
+
+gates:
+  - field: "close"
+    op: ">"
+    indicator: "session_vwap"
+  - field: "bb_width"
+    op: ">="
+    param: "bb_width_min"
+
+evaluation:
+  required_tiers: ["Tier2", "Tier3"]
+
+logging:
+  schema_version: "1.0"

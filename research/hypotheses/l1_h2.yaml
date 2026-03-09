@@ -1,0 +1,41 @@
+hypothesis_id: "L1-H2"
+title: "Volatility Floor Trend Continuation"
+description: "Continuation qualifies only when volatility and directional efficiency are elevated."
+research_layer: "L1"
+hypothesis_family: "trend_continuation"
+version: "1.0.0"
+author: "Bulletproof_bt"
+created_at: "2026-03-09T00:00:00Z"
+
+required_indicators:
+  - session_vwap
+  - anchored_vwap
+  - bb_width
+  - adx
+  - efficiency_ratio
+
+parameter_grid:
+  donchian_lookback: [20, 30]
+  bb_width_min: [0.03, 0.05]
+  adx_min: [18, 22]
+  er_min: [0.25, 0.35]
+
+gates:
+  - field: "bb_width"
+    op: ">="
+    param: "bb_width_min"
+  - field: "adx"
+    op: ">="
+    param: "adx_min"
+  - field: "efficiency_ratio"
+    op: ">="
+    param: "er_min"
+  - field: "close"
+    op: ">"
+    indicator: "session_vwap"
+
+evaluation:
+  required_tiers: ["Tier2", "Tier3"]
+
+logging:
+  schema_version: "1.0"
