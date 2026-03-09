@@ -18,6 +18,7 @@ def run_hypothesis_contract(
     end_ts: str,
     available_tiers: set[str],
     execution_model_name: str = "engine_default",
+<<<<<<< codex/implement-engine-capabilities-for-hypothesis-testing-jqv1dd
     execution_workflow: str = "all_tiers",
     promotion_predicate: Callable[[dict[str, Any]], bool] | None = None,
 ) -> list[dict[str, Any]]:
@@ -69,6 +70,17 @@ def run_hypothesis_contract(
                 )
                 continue
 
+=======
+) -> list[dict[str, Any]]:
+    """Execute all variants across all required tiers with strict enforcement."""
+    missing = [tier for tier in contract.required_tiers() if tier not in available_tiers]
+    if missing:
+        raise MissingRequiredTierError(f"missing required tiers: {missing}")
+
+    rows: list[dict[str, Any]] = []
+    for spec in contract.to_run_specs():
+        for tier in contract.required_tiers():
+>>>>>>> main
             result = executor(spec, tier)
             base = {
                 "run_id": f"{spec['hypothesis_id']}::{spec['grid_id']}::{tier}",
@@ -88,6 +100,9 @@ def run_hypothesis_contract(
                 "gates_json": list(contract.schema.gates),
             }
             rows.append(make_log_row(base, result))
+<<<<<<< codex/implement-engine-capabilities-for-hypothesis-testing-jqv1dd
             if execution_workflow == "sequential" and tier_index < len(contract.required_tiers()) - 1:
                 should_continue = bool(promotion_predicate(result))
+=======
+>>>>>>> main
     return rows
