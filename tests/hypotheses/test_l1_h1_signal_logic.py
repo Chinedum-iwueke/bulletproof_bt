@@ -35,3 +35,14 @@ def test_trend_and_gate_generate_entry() -> None:
     assert seen
     assert seen[-1].metadata["gate_pass"] is True
     assert seen[-1].metadata["trend_dir_t"] in (1, -1)
+
+
+def test_missing_two_clock_context_fails_loudly() -> None:
+    strategy = L1H1VolFloorTrendStrategy(timeframe="15m")
+    bar = _bar(0, 100.0)
+    try:
+        strategy.on_bars(bar.ts, {"BTCUSDT": bar}, {"BTCUSDT"}, {})
+    except RuntimeError as exc:
+        assert "two-clock semantics" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")

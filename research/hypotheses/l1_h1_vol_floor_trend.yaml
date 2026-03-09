@@ -35,17 +35,36 @@ parameter_grid:
 
 entry:
   strategy: "l1_h1_vol_floor_trend"
+  signal_timeframe: "15m"
   timeframe: "15m"
+  base_execution_timeframe: "1m"
   order_timing: "bar_close_submit_next_bar_execution"
   disallow_flip: true
 
 exit:
   stop_kind: "atr_multiple"
+  stop_model: "fixed_atr_multiple"
   stop_atr_param: "k_atr"
+  stop_update_policy: "frozen_at_entry"
+  atr_source_timeframe: "signal_timeframe"
   time_stop_param: "T_hold"
+  hold_time_unit: "signal_bars"
+  exit_monitoring_timeframe: "1m"
   take_profit:
     enabled_param: "tp_enabled"
     atr_multiple_param: "m_atr"
+    tp_update_policy: "frozen_at_entry"
+
+execution_semantics:
+  signal_timeframe: "15m"
+  base_execution_timeframe: "1m"
+  base_data_frequency_expected: "1m"
+  stop_model: "fixed_atr_multiple"
+  stop_update_policy: "frozen_at_entry"
+  tp_update_policy: "frozen_at_entry"
+  hold_time_unit: "signal_bars"
+  exit_monitoring_timeframe: "1m"
+  atr_source_timeframe: "signal_timeframe"
 
 sizing:
   mode: "constant_r"

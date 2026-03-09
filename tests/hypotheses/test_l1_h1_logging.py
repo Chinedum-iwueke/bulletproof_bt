@@ -27,5 +27,18 @@ def test_signal_metadata_contains_required_l1_h1_fields(tmp_path: Path) -> None:
     rows = [json.loads(line) for line in (tmp_path / "decisions.jsonl").read_text().splitlines() if line.strip()]
     assert rows
     meta = rows[-1]["signal"]["metadata"]
-    for key in ["rv_t", "vol_pct_t", "gate_pass", "trend_dir_t", "stop_distance"]:
+    for key in [
+        "rv_t",
+        "vol_pct_t",
+        "gate_pass",
+        "trend_dir_t",
+        "atr_entry",
+        "stop_distance",
+        "stop_price",
+        "signal_timeframe",
+        "exit_monitoring_timeframe",
+        "hold_time_unit",
+        "stop_update_policy",
+        "tp_enabled",
+    ]:
         assert key in meta

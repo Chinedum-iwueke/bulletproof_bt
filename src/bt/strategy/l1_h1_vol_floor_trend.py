@@ -23,7 +23,14 @@ class _State:
     gate: RollingPercentileGate
     position: Side | None = None
     entry_price: float | None = None
-    bars_held: int = 0
+    entry_signal_ts: pd.Timestamp | None = None
+    entry_execution_ts: pd.Timestamp | None = None
+    atr_entry: float | None = None
+    stop_distance_frozen: float | None = None
+    stop_price_frozen: float | None = None
+    tp_distance_frozen: float | None = None
+    tp_price_frozen: float | None = None
+    signal_bars_held: int = 0
     last_signal_ts: pd.Timestamp | None = None
 
 
@@ -77,16 +84,36 @@ class L1H1VolFloorTrendStrategy(Strategy):
                 return Side.SELL
         return None
 
+    @staticmethod
+    def _clear_position_state(st: _State) -> None:
+        st.position = None
+        st.entry_price = None
+        st.entry_signal_ts = None
+        st.entry_execution_ts = None
+        st.atr_entry = None
+        st.stop_distance_frozen = None
+        st.stop_price_frozen = None
+        st.tp_distance_frozen = None
+        st.tp_price_frozen = None
+        st.signal_bars_held = 0
+
     def on_bars(self, ts: pd.Timestamp, bars_by_symbol: dict[str, Bar], tradeable: set[str], ctx: Mapping[str, Any]) -> list[Signal]:
         signals: list[Signal] = []
         htf_root = ctx.get("htf") if isinstance(ctx, Mapping) else None
-        htf_for_tf = htf_root.get(self._timeframe) if isinstance(htf_root, Mapping) else None
+        if not isinstance(htf_root, Mapping):
+            raise RuntimeError(f"L1-H1 requires ctx['htf']['{self._timeframe}'] for two-clock semantics.")
+        htf_for_tf = htf_root.get(self._timeframe)
+        if htf_for_tf is None:
+            htf_for_tf = {}
+        if not isinstance(htf_for_tf, Mapping):
+            raise RuntimeError(f"L1-H1 requires mapping ctx['htf']['{self._timeframe}'] for two-clock semantics.")
+
         for symbol in sorted(tradeable):
             bar = bars_by_symbol.get(symbol)
             if bar is None:
                 continue
             st = self._state_for(symbol)
-            signal_bar = htf_for_tf.get(symbol) if isinstance(htf_for_tf, Mapping) else None
+            signal_bar = htf_for_tf.get(symbol)
             has_new_signal_bar = signal_bar is not None and signal_bar.ts != st.last_signal_ts
             if has_new_signal_bar:
                 signal_bar_as_base = Bar(
@@ -102,45 +129,48 @@ class L1H1VolFloorTrendStrategy(Strategy):
                 st.ema_fast.update(signal_bar_as_base)
                 st.ema_slow.update(signal_bar_as_base)
                 st.last_signal_ts = signal_bar.ts
+
             atr_v = st.atr.value
             ema_f = st.ema_fast.value
             ema_s = st.ema_slow.value
-            rv_t = None if atr_v is None or (signal_bar.close if signal_bar is not None else bar.close) <= 0 else float(atr_v / (signal_bar.close if signal_bar is not None else bar.close))
+            signal_close = signal_bar.close if signal_bar is not None else bar.close
+            rv_t = None if atr_v is None or signal_close <= 0 else float(atr_v / signal_close)
             vol_pct_t = st.gate.update(rv_t) if has_new_signal_bar else None
 
             current = self._ctx_position_side(ctx, symbol)
             if current is not None:
                 st.position = current
+                if st.entry_execution_ts is None:
+                    st.entry_execution_ts = ts
                 if has_new_signal_bar:
-                    st.bars_held += 1
-                if st.bars_held >= self._t_hold and has_new_signal_bar:
-                    signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL if current == Side.BUY else Side.BUY, signal_type="l1_h1_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "time_stop"}))
-                    st.bars_held = 0
+                    st.signal_bars_held += 1
+                if st.signal_bars_held >= self._t_hold and has_new_signal_bar:
+                    signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL if current == Side.BUY else Side.BUY, signal_type="l1_h1_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "time_stop", "signal_bars_held": st.signal_bars_held, "hold_time_unit": "signal_bars"}))
+                    self._clear_position_state(st)
                     continue
-                if st.entry_price is not None and atr_v is not None:
-                    stop_distance = self._k_atr * atr_v
-                    if current == Side.BUY and bar.low <= st.entry_price - stop_distance:
-                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l1_h1_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "atr_stop"}))
-                        st.bars_held = 0
+
+                if st.stop_price_frozen is not None:
+                    if current == Side.BUY and bar.low <= st.stop_price_frozen:
+                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l1_h1_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "atr_stop", "stop_price": st.stop_price_frozen, "stop_distance": st.stop_distance_frozen, "atr_entry": st.atr_entry, "exit_monitoring_timeframe": "1m"}))
+                        self._clear_position_state(st)
                         continue
-                    if current == Side.SELL and bar.high >= st.entry_price + stop_distance:
-                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l1_h1_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "atr_stop"}))
-                        st.bars_held = 0
+                    if current == Side.SELL and bar.high >= st.stop_price_frozen:
+                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l1_h1_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "atr_stop", "stop_price": st.stop_price_frozen, "stop_distance": st.stop_distance_frozen, "atr_entry": st.atr_entry, "exit_monitoring_timeframe": "1m"}))
+                        self._clear_position_state(st)
                         continue
-                    if self._tp_enabled:
-                        tp = self._m_atr * atr_v
-                        if current == Side.BUY and bar.high >= st.entry_price + tp:
-                            signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l1_h1_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "take_profit"}))
-                            st.bars_held = 0
-                            continue
-                        if current == Side.SELL and bar.low <= st.entry_price - tp:
-                            signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l1_h1_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "take_profit"}))
-                            st.bars_held = 0
-                            continue
+
+                if self._tp_enabled and st.tp_price_frozen is not None:
+                    if current == Side.BUY and bar.high >= st.tp_price_frozen:
+                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l1_h1_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "take_profit", "tp_price": st.tp_price_frozen, "tp_distance": st.tp_distance_frozen, "atr_entry": st.atr_entry, "exit_monitoring_timeframe": "1m"}))
+                        self._clear_position_state(st)
+                        continue
+                    if current == Side.SELL and bar.low <= st.tp_price_frozen:
+                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l1_h1_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "take_profit", "tp_price": st.tp_price_frozen, "tp_distance": st.tp_distance_frozen, "atr_entry": st.atr_entry, "exit_monitoring_timeframe": "1m"}))
+                        self._clear_position_state(st)
+                        continue
                 continue
 
-            st.position = None
-            st.bars_held = 0
+            self._clear_position_state(st)
             if not has_new_signal_bar:
                 continue
             if ema_f is None or ema_s is None or atr_v is None or vol_pct_t is None:
@@ -154,7 +184,19 @@ class L1H1VolFloorTrendStrategy(Strategy):
                 continue
             stop_distance = self._k_atr * atr_v
             stop_price = bar.close - stop_distance if side == Side.BUY else bar.close + stop_distance
+            tp_distance = self._m_atr * atr_v if self._tp_enabled else None
+            tp_price = (bar.close + tp_distance) if (self._tp_enabled and side == Side.BUY and tp_distance is not None) else (bar.close - tp_distance if (self._tp_enabled and side == Side.SELL and tp_distance is not None) else None)
+
             st.entry_price = float(bar.close)
+            st.entry_signal_ts = signal_bar.ts
+            st.entry_execution_ts = None
+            st.atr_entry = float(atr_v)
+            st.stop_distance_frozen = float(stop_distance)
+            st.stop_price_frozen = float(stop_price)
+            st.tp_distance_frozen = float(tp_distance) if tp_distance is not None else None
+            st.tp_price_frozen = float(tp_price) if tp_price is not None else None
+            st.signal_bars_held = 0
+
             signals.append(
                 Signal(
                     ts=ts,
@@ -165,12 +207,24 @@ class L1H1VolFloorTrendStrategy(Strategy):
                     metadata={
                         "strategy": "l1_h1_vol_floor_trend",
                         "timeframe": self._timeframe,
+                        "signal_timeframe": self._timeframe,
+                        "exit_monitoring_timeframe": "1m",
+                        "hold_time_unit": "signal_bars",
+                        "atr_source_timeframe": "signal_timeframe",
+                        "stop_model": "fixed_atr_multiple",
+                        "stop_update_policy": "frozen_at_entry",
+                        "tp_update_policy": "frozen_at_entry",
                         "rv_t": rv_t,
                         "vol_pct_t": vol_pct_t,
                         "gate_pass": gate_pass,
                         "trend_dir_t": trend_dir_t,
-                        "stop_distance": stop_distance,
-                        "stop_price": stop_price,
+                        "entry_signal_ts": str(signal_bar.ts),
+                        "atr_entry": st.atr_entry,
+                        "stop_distance": st.stop_distance_frozen,
+                        "stop_price": st.stop_price_frozen,
+                        "tp_enabled": self._tp_enabled,
+                        "tp_price": st.tp_price_frozen,
+                        "tp_distance": st.tp_distance_frozen,
                     },
                 )
             )

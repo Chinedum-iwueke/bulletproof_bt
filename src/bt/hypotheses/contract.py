@@ -41,6 +41,7 @@ class HypothesisContract:
         evaluation_raw = data.get("evaluation", {})
         logging_raw = data.get("logging", {})
         runtime_raw = data.get("runtime_controls", {})
+        execution_semantics_raw = data.get("execution_semantics", {})
         schema = HypothesisSchema(
             metadata=md,
             required_indicators=required_indicators,
@@ -49,6 +50,7 @@ class HypothesisContract:
             gates=tuple(data.get("gates", [])),
             entry=dict(data.get("entry", {})),
             exit=dict(data.get("exit", {})),
+            execution_semantics=dict(execution_semantics_raw),
             evaluation=EvaluationSpec(required_tiers=tuple(evaluation_raw.get("required_tiers", ["Tier2", "Tier3"]))),
             logging=LoggingSpec(
                 schema_version=str(logging_raw.get("schema_version", "1.0")),
@@ -65,6 +67,26 @@ class HypothesisContract:
         contract.validate()
         return contract
 
+
+    def _validate_two_clock_semantics(self) -> None:
+        sem = self.schema.execution_semantics
+        if not sem:
+            return
+        required = (
+            "signal_timeframe",
+            "base_execution_timeframe",
+            "base_data_frequency_expected",
+            "stop_model",
+            "stop_update_policy",
+            "tp_update_policy",
+            "hold_time_unit",
+            "exit_monitoring_timeframe",
+            "atr_source_timeframe",
+        )
+        missing = [key for key in required if key not in sem]
+        if missing:
+            raise InvalidHypothesisSchemaError(f"execution_semantics missing required keys: {missing}")
+
     def validate(self) -> None:
         if not self.schema.metadata.hypothesis_id:
             raise InvalidHypothesisSchemaError("hypothesis_id is required")
@@ -73,6 +95,7 @@ class HypothesisContract:
         unknown = [name for name in self.schema.required_indicators if name.lower() not in INDICATOR_REGISTRY]
         if unknown:
             raise MissingIndicatorDependencyError(f"unregistered required indicators: {unknown}")
+        self._validate_two_clock_semantics()
 
     def materialize_grid(self) -> list[dict[str, Any]]:
         base = materialize_grid(self.schema.parameter_grid, max_variants=self.schema.runtime.max_variants)

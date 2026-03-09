@@ -96,7 +96,13 @@ def _tier_to_execution_profile(tier: str) -> str:
 
 def _build_runtime_override(contract: HypothesisContract, spec: dict[str, Any], tier: str) -> dict[str, Any]:
     entry = contract.schema.entry
-    signal_timeframe = str(entry.get("timeframe", spec["params"].get("timeframe", "15m"))).lower()
+    signal_timeframe = str(entry.get("signal_timeframe", entry.get("timeframe", spec["params"].get("timeframe", "15m")))).lower()
+    sem = contract.schema.execution_semantics
+    if sem:
+        expected_base = str(sem.get("base_data_frequency_expected", "1m")).lower()
+        exit_tf = str(sem.get("exit_monitoring_timeframe", "1m")).lower()
+        if expected_base != "1m" or exit_tf != "1m":
+            raise ValueError("L1-H1 runner requires canonical 1m base data and 1m exit monitoring.")
 
     return {
         "data": {
@@ -185,7 +191,7 @@ def main() -> None:
         metrics["run_dir"] = str(run_dir)
         return metrics
 
-    signal_tf = str(contract.schema.entry.get("timeframe", "15m")).lower()
+    signal_tf = str(contract.schema.entry.get("signal_timeframe", contract.schema.entry.get("timeframe", "15m"))).lower()
     rows = run_hypothesis_contract(
         contract,
         executor=_executor,

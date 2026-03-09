@@ -9,6 +9,7 @@ Each contract YAML defines:
 - `required_indicators`
 - `parameter_grid` (explicit immutable value lists)
 - optional `gates`, `entry`, and `exit` sections
+- optional `execution_semantics` section for explicit two-clock and stop/TP update policy locks
 - `evaluation.required_tiers` (defaults to `Tier2` + `Tier3`)
 - `logging` schema hints
 - optional `runtime_controls` such as `max_variants`
@@ -19,6 +20,7 @@ Each contract YAML defines:
 - Signal indicators and entry logic run on **resampled closed signal bars**.
 - Exit/risk monitoring (stop/TP) remains on the **base 1m stream**.
 - `T_hold` is interpreted in **signal bars**, not 1m bars.
+- For L1-H1, `execution_semantics` locks: `stop_model=fixed_atr_multiple`, `stop_update_policy=frozen_at_entry`, `tp_update_policy=frozen_at_entry`, `atr_source_timeframe=signal_timeframe`, `exit_monitoring_timeframe=1m`.
 
 ## Deterministic materialization
 Grid expansion uses a stable cartesian product over sorted parameter keys. Each variant receives:

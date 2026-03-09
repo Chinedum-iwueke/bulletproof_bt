@@ -13,3 +13,16 @@ def test_l1_h1_grid_deterministic() -> None:
     two = contract.materialize_grid()
     assert one == two
     assert {v["params"]["tp_enabled"] for v in one} == {False, True}
+
+
+def test_l1_h1_contract_locks_two_clock_and_frozen_stop_semantics() -> None:
+    contract = HypothesisContract.from_yaml("research/hypotheses/l1_h1_vol_floor_trend.yaml")
+    sem = contract.schema.execution_semantics
+    assert sem["base_data_frequency_expected"] == "1m"
+    assert sem["signal_timeframe"] == "15m"
+    assert sem["exit_monitoring_timeframe"] == "1m"
+    assert sem["atr_source_timeframe"] == "signal_timeframe"
+    assert sem["stop_model"] == "fixed_atr_multiple"
+    assert sem["stop_update_policy"] == "frozen_at_entry"
+    assert sem["tp_update_policy"] == "frozen_at_entry"
+    assert sem["hold_time_unit"] == "signal_bars"

@@ -45,6 +45,7 @@ class HypothesisSchema:
     gates: tuple[dict[str, Any], ...] = ()
     entry: dict[str, Any] = field(default_factory=dict)
     exit: dict[str, Any] = field(default_factory=dict)
+    execution_semantics: dict[str, Any] = field(default_factory=dict)
     evaluation: EvaluationSpec = field(default_factory=EvaluationSpec)
     logging: LoggingSpec = field(default_factory=LoggingSpec)
     runtime: RuntimeControls = field(default_factory=RuntimeControls)
