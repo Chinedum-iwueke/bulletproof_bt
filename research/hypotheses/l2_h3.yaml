@@ -1,0 +1,34 @@
+hypothesis_id: "L2-H3"
+title: "Anchored VWAP Pullback Reclaim"
+description: "Pullback setup that only enters when price reclaims anchored VWAP with trend strength."
+research_layer: "L2"
+hypothesis_family: "pullback"
+version: "1.0.0"
+author: "Bulletproof_bt"
+created_at: "2026-03-09T00:00:00Z"
+
+required_indicators:
+  - anchored_vwap
+  - bb_width
+  - adx
+  - efficiency_ratio
+
+parameter_grid:
+  anchor_lookback: [30, 50]
+  reclaim_buffer_bps: [5, 10]
+  adx_min: [20, 25]
+  er_min: [0.3]
+
+gates:
+  - field: "close"
+    op: ">"
+    indicator: "anchored_vwap"
+  - field: "adx"
+    op: ">="
+    param: "adx_min"
+
+evaluation:
+  required_tiers: ["Tier2", "Tier3"]
+
+logging:
+  schema_version: "1.0"

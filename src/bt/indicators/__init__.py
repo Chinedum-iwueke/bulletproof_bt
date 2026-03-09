@@ -14,6 +14,7 @@ from .chaikin_osc import ChaikinOscillator
 from .choppiness import ChoppinessIndex
 from .cmf import CMF
 from .dmi_adx import DMIADX
+from .trend import ADX, EfficiencyRatio
 from .donchian import DonchianChannel
 from .ema import EMA
 from .fisher import FisherTransform
@@ -45,8 +46,9 @@ from .tsi import TSI
 from .ultimate_oscillator import UltimateOscillator
 from .vortex import Vortex
 from .vpt import VPT
-from .vwap import VWAP
+from .vwap import AnchoredVWAP, SessionVWAP, VWAP
 from .vwma import VWMA
+from .volatility import BollingerBandWidth
 from .williams_r import WilliamsR
 from .wma import WMA
 from .dema import DEMA
@@ -54,10 +56,10 @@ from .dema import DEMA
 __all__ = [
     "Indicator","BaseIndicator","MultiValueIndicator",
     "INDICATOR_REGISTRY","register","make_indicator",
-    "EMA","ATR","VWAP","SMA","WMA","DEMA","TEMA","HMA","KAMA","RMA","VWMA","T3",
+    "EMA","ATR","VWAP","SessionVWAP","AnchoredVWAP","SMA","WMA","DEMA","TEMA","HMA","KAMA","RMA","VWMA","T3",
     "RSI","Stochastic","StochRSI","CCI","ROC","Momentum","WilliamsR","TSI","UltimateOscillator","FisherTransform",
-    "TrueRange","BollingerBands","KeltnerChannel","DonchianChannel","ChoppinessIndex","UlcerIndex","HistoricalVolatility",
-    "DMIADX","Aroon","MACD","PPO","TRIX","Vortex",
+    "TrueRange","BollingerBands","BollingerBandWidth","KeltnerChannel","DonchianChannel","ChoppinessIndex","UlcerIndex","HistoricalVolatility",
+    "DMIADX","ADX","EfficiencyRatio","Aroon","MACD","PPO","TRIX","Vortex",
     "OBV","CMF","MFI","VPT","ADL","ChaikinOscillator","ForceIndex",
     "ParabolicSAR","Supertrend","PivotPoints","HeikinAshi","CandleFeatures",
 ]
