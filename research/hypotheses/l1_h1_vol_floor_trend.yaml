@@ -35,6 +35,7 @@ parameter_grid:
 
 entry:
   strategy: "l1_h1_vol_floor_trend"
+  timeframe: "15m"
   order_timing: "bar_close_submit_next_bar_execution"
   disallow_flip: true
 

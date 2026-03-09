@@ -1,7 +1,6 @@
 """L1-H1 Volatility Floor Gates Trend Continuation strategy."""
 from __future__ import annotations
 
-from collections import deque
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -25,6 +24,7 @@ class _State:
     position: Side | None = None
     entry_price: float | None = None
     bars_held: int = 0
+    last_signal_ts: pd.Timestamp | None = None
 
 
 @register_strategy("l1_h1_vol_floor_trend")
@@ -79,25 +79,41 @@ class L1H1VolFloorTrendStrategy(Strategy):
 
     def on_bars(self, ts: pd.Timestamp, bars_by_symbol: dict[str, Bar], tradeable: set[str], ctx: Mapping[str, Any]) -> list[Signal]:
         signals: list[Signal] = []
+        htf_root = ctx.get("htf") if isinstance(ctx, Mapping) else None
+        htf_for_tf = htf_root.get(self._timeframe) if isinstance(htf_root, Mapping) else None
         for symbol in sorted(tradeable):
             bar = bars_by_symbol.get(symbol)
             if bar is None:
                 continue
             st = self._state_for(symbol)
-            st.atr.update(bar)
-            st.ema_fast.update(bar)
-            st.ema_slow.update(bar)
+            signal_bar = htf_for_tf.get(symbol) if isinstance(htf_for_tf, Mapping) else None
+            has_new_signal_bar = signal_bar is not None and signal_bar.ts != st.last_signal_ts
+            if has_new_signal_bar:
+                signal_bar_as_base = Bar(
+                    ts=signal_bar.ts,
+                    symbol=signal_bar.symbol,
+                    open=float(signal_bar.open),
+                    high=float(signal_bar.high),
+                    low=float(signal_bar.low),
+                    close=float(signal_bar.close),
+                    volume=float(signal_bar.volume),
+                )
+                st.atr.update(signal_bar_as_base)
+                st.ema_fast.update(signal_bar_as_base)
+                st.ema_slow.update(signal_bar_as_base)
+                st.last_signal_ts = signal_bar.ts
             atr_v = st.atr.value
             ema_f = st.ema_fast.value
             ema_s = st.ema_slow.value
-            rv_t = None if atr_v is None or bar.close <= 0 else float(atr_v / bar.close)
-            vol_pct_t = st.gate.update(rv_t)
+            rv_t = None if atr_v is None or (signal_bar.close if signal_bar is not None else bar.close) <= 0 else float(atr_v / (signal_bar.close if signal_bar is not None else bar.close))
+            vol_pct_t = st.gate.update(rv_t) if has_new_signal_bar else None
 
             current = self._ctx_position_side(ctx, symbol)
             if current is not None:
                 st.position = current
-                st.bars_held += 1
-                if st.bars_held >= self._t_hold:
+                if has_new_signal_bar:
+                    st.bars_held += 1
+                if st.bars_held >= self._t_hold and has_new_signal_bar:
                     signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL if current == Side.BUY else Side.BUY, signal_type="l1_h1_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "time_stop"}))
                     st.bars_held = 0
                     continue
@@ -125,6 +141,8 @@ class L1H1VolFloorTrendStrategy(Strategy):
 
             st.position = None
             st.bars_held = 0
+            if not has_new_signal_bar:
+                continue
             if ema_f is None or ema_s is None or atr_v is None or vol_pct_t is None:
                 continue
             trend_dir_t = 1 if ema_f > ema_s else -1 if ema_f < ema_s else 0

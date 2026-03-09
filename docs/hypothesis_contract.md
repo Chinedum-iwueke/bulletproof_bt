@@ -13,6 +13,13 @@ Each contract YAML defines:
 - `logging` schema hints
 - optional `runtime_controls` such as `max_variants`
 
+## Runtime model (Bulletproof_bt production mode)
+- Canonical input data is **1m**.
+- Hypothesis signal timeframe can be `5m` / `15m` / `1h`.
+- Signal indicators and entry logic run on **resampled closed signal bars**.
+- Exit/risk monitoring (stop/TP) remains on the **base 1m stream**.
+- `T_hold` is interpreted in **signal bars**, not 1m bars.
+
 ## Deterministic materialization
 Grid expansion uses a stable cartesian product over sorted parameter keys. Each variant receives:
 - `grid_id` (`g00000`, `g00001`, ...)
@@ -24,26 +31,39 @@ No variants are dropped silently; invalid grids fail loudly.
 `HypothesisContract` defaults required tiers to `Tier2` and `Tier3` when unspecified.
 `run_hypothesis_contract` checks available tiers before execution and raises `MissingRequiredTierError` if any required tier is missing.
 
-<<<<<<< codex/implement-engine-capabilities-for-hypothesis-testing-jqv1dd
-The runner supports two deterministic execution workflows:
-- `all_tiers`: run every required tier for every variant.
-- `sequential`: run required tiers in order (for example Tier2 screening then Tier3 confirmation) with explicit promotion gating. Any non-promoted downstream tier is logged as `status=skipped` (never silently dropped).
-
 ## Standard logging schema
 Each run record includes canonical fields such as:
 `run_id`, `hypothesis_id`, `grid_id`, `config_hash`, symbol/timeframe window, tier, params/indicator/gate snapshots, core metrics, status, and failure reason.
 
-## Indicators for blueprint-style gating
-The contract system supports gates using:
-- `session_vwap`: session-reset intraday value anchor
-- `anchored_vwap`: event/index anchored value anchor
-- `bb_width`: normalized volatility regime filter
-- `adx`: directional trend-strength filter
-- `efficiency_ratio`: trend efficiency / noisiness filter
+## CLI
+Use the production runner CLI with explicit runtime paths:
 
-## Workflow
-1. Author YAML contract under `research/hypotheses/`.
-2. Load via `HypothesisContract.from_yaml(...)`.
-3. Materialize deterministic variants (`to_run_specs`).
-4. Execute each variant for all required tiers via `run_hypothesis_contract`.
-5. Consume standardized rows in downstream diagnostics and scanners.
+```bash
+python -m bt.experiments.hypothesis_runner \
+  --config configs/engine.yaml \
+  --local-config configs/local/engine.lab.yaml \
+  --data /home/omenka/research_data/bt/curated/stable_data_1m_canonical \
+  --out outputs/l1_h1_tier2 \
+  --hypothesis research/hypotheses/l1_h1_vol_floor_trend.yaml \
+  --phase tier2
+```
+
+```bash
+python -m bt.experiments.hypothesis_runner \
+  --config configs/engine.yaml \
+  --local-config configs/local/engine.lab.yaml \
+  --data /home/omenka/research_data/bt/curated/stable_data_1m_canonical \
+  --out outputs/l1_h1_tier3 \
+  --hypothesis research/hypotheses/l1_h1_vol_floor_trend.yaml \
+  --phase tier3
+```
+
+```bash
+python -m bt.experiments.hypothesis_runner \
+  --config configs/engine.yaml \
+  --local-config configs/local/engine.lab.yaml \
+  --data /home/omenka/research_data/bt/curated/stable_data_1m_canonical \
+  --out outputs/l1_h1_validate \
+  --hypothesis research/hypotheses/l1_h1_vol_floor_trend.yaml \
+  --phase validate
+```

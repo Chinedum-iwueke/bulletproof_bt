@@ -4,15 +4,20 @@ from pathlib import Path
 import pandas as pd
 
 from bt.core.types import Bar
+from bt.data.resample import TimeframeResampler
 from bt.logging.jsonl import JsonlWriter
+from bt.strategy.htf_context import HTFContextStrategyAdapter
 from bt.strategy.l1_h1_vol_floor_trend import L1H1VolFloorTrendStrategy
 
 
 def test_signal_metadata_contains_required_l1_h1_fields(tmp_path: Path) -> None:
-    strategy = L1H1VolFloorTrendStrategy(timeframe="15m", theta_vol=0.0)
+    strategy = HTFContextStrategyAdapter(
+        inner=L1H1VolFloorTrendStrategy(timeframe="15m", theta_vol=0.0),
+        resampler=TimeframeResampler(timeframes=["15m"], strict=True),
+    )
     writer = JsonlWriter(tmp_path / "decisions.jsonl")
-    for i in range(80):
-        ts = pd.Timestamp("2024-01-01", tz="UTC") + pd.Timedelta(minutes=15 * i)
+    for i in range(900):
+        ts = pd.Timestamp("2024-01-01", tz="UTC") + pd.Timedelta(minutes=i)
         close = 100 + i
         bar = Bar(ts=ts, symbol="BTCUSDT", open=close, high=close + 1, low=close - 1, close=close, volume=1000)
         signals = strategy.on_bars(ts, {"BTCUSDT": bar}, {"BTCUSDT"}, {})
