@@ -495,7 +495,7 @@ def parse_spec_name(strategy_name: str) -> GridSpec:
     if strategy_name == "volfloor_donchian":
         return GridSpec(strategy_name="volfloor_donchian", exit_type="donchian_reversal")
     if strategy_name == "volfloor_ema_pullback":
-        return GridSpec(strategy_name="volfloor_ema_pullback", exit_type="ema_trend_end")
+        return GridSpec(strategy_name="volfloor_ema_pullback", exit_type="chandelier")
     raise ValueError(f"Unsupported strategy_name={strategy_name!r}")
 
 
