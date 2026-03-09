@@ -38,6 +38,7 @@ def make_strategy(name: str, **kwargs: object) -> Strategy:
 from bt.strategy.coinflip import CoinFlipStrategy  # noqa: E402
 from bt.strategy.volfloor_donchian import VolFloorDonchianStrategy  # noqa: E402
 from bt.strategy.volfloor_ema_pullback import VolFloorEmaPullbackStrategy  # noqa: E402
+from bt.strategy.l1_h1_vol_floor_trend import L1H1VolFloorTrendStrategy  # noqa: E402
 
 __all__ = [
     "STRATEGY_REGISTRY",
@@ -46,4 +47,5 @@ __all__ = [
     "CoinFlipStrategy",
     "VolFloorDonchianStrategy",
     "VolFloorEmaPullbackStrategy",
+    "L1H1VolFloorTrendStrategy",
 ]

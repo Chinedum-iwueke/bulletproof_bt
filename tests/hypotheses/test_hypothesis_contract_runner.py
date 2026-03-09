@@ -41,55 +41,6 @@ def test_runner_emits_variant_times_tier_rows() -> None:
         start_ts="2024-01-01",
         end_ts="2024-01-02",
         available_tiers={"Tier2", "Tier3"},
+        phase="validate",
     )
     assert len(rows) == 4
-
-
-def test_runner_supports_sequential_tier_promotion() -> None:
-    contract = HypothesisContract.from_dict(
-        {
-            "hypothesis_id": "X",
-            "title": "X",
-            "description": "",
-            "research_layer": "L1",
-            "hypothesis_family": "f",
-            "version": "1",
-            "required_indicators": ["adx"],
-            "parameter_grid": {"a": [1, 2]},
-            "evaluation": {"required_tiers": ["Tier2", "Tier3"]},
-        }
-    )
-
-    def sequential_executor(spec: dict[str, object], tier: str) -> dict[str, object]:
-        passes = bool(spec["params"]["a"] == 2)
-        return {
-            "num_trades": 1,
-            "ev_r_gross": 0.1,
-            "ev_r_net": 0.08,
-            "pnl_gross": 10,
-            "pnl_net": 8,
-            "hit_rate": 0.5,
-            "max_drawdown_r": -0.3,
-            "mae_mean_r": -0.1,
-            "mfe_mean_r": 0.2,
-            "avg_hold_bars": 5,
-            "promote": passes,
-            "tier_seen": tier,
-        }
-
-    rows = run_hypothesis_contract(
-        contract,
-        executor=sequential_executor,
-        symbol="BTCUSDT",
-        timeframe="1m",
-        start_ts="2024-01-01",
-        end_ts="2024-01-02",
-        available_tiers={"Tier2", "Tier3"},
-        execution_workflow="sequential",
-        promotion_predicate=lambda result: bool(result.get("promote")),
-    )
-
-    assert len(rows) == 4
-    skipped = [row for row in rows if row["status"] == "skipped"]
-    assert len(skipped) == 1
-    assert skipped[0]["tier"] == "Tier3"

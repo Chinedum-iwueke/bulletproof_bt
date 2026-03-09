@@ -1,0 +1,83 @@
+hypothesis_id: "L1-H1"
+title: "Volatility Floor Gates Trend Continuation"
+description: "EMA trend continuation is active only when ATR/close percentile is above a rolling 30-day floor."
+research_layer: "L1"
+hypothesis_family: "trend_continuation"
+version: "1.0.0"
+author: "Bulletproof_bt"
+created_at: "2026-03-09T00:00:00Z"
+
+required_indicators:
+  - ema
+  - atr
+
+indicator_defaults:
+  ema_fast_period: 20
+  ema_slow_period: 50
+  atr_period: 14
+  rv_formula: "atr_14 / close"
+  vol_percentile_window_days: 30
+
+gates:
+  - field: "vol_pct_t"
+    op: ">="
+    param: "theta_vol"
+  - field: "trend_dir_t"
+    op: "!="
+    value: 0
+
+parameter_grid:
+  theta_vol: [0.50, 0.60, 0.70, 0.80, 0.85]
+  k_atr: [2.0, 2.5]
+  T_hold: [24, 48]
+  tp_enabled: [false, true]
+  m_atr: [2.0]
+
+entry:
+  strategy: "l1_h1_vol_floor_trend"
+  order_timing: "bar_close_submit_next_bar_execution"
+  disallow_flip: true
+
+exit:
+  stop_kind: "atr_multiple"
+  stop_atr_param: "k_atr"
+  time_stop_param: "T_hold"
+  take_profit:
+    enabled_param: "tp_enabled"
+    atr_multiple_param: "m_atr"
+
+sizing:
+  mode: "constant_r"
+  formula: "qty = (equity * r_per_trade) / stop_distance"
+
+risk_controls:
+  max_positions: 5
+  margin_buffer_tiers: ["Tier1", "Tier2", "Tier3"]
+
+evaluation:
+  required_tiers: ["Tier2", "Tier3"]
+
+logging:
+  schema_version: "1.0"
+  required_fields:
+    - run_id
+    - hypothesis_id
+    - tier
+    - ev_r_gross
+    - ev_r_net
+    - status
+    - rv_t
+    - vol_pct_t
+    - gate_pass
+    - trend_dir_t
+    - stop_distance
+    - risk_amount
+
+notes:
+  falsification_criteria:
+    - "If EV_r_net <= 0 in high-vol buckets for Tier2 and Tier3, reject hypothesis."
+    - "If only Tier1 is positive, classify as fragile micro-edge."
+  failure_modes:
+    - "Bull-beta masquerading as edge in volatility-selected windows."
+    - "Timeframe/symbol percentile lookback mismatch."
+    - "Spread, slippage, and fees dominating chop regimes."
