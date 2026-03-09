@@ -422,12 +422,17 @@ def main() -> int:
     df.to_csv(outdir / "mfe_diagnostics.csv", index=False)
 
     if not df.empty:
-        cand = df[df["chandelier_salvage_candidate"] == True].copy()
-        if not cand.empty:
-            cand = cand.sort_values(
-                ["mfe_r_p99", "mfe_r_p95", "mfe_r_frac_ge_3R", "capture_ratio_median"],
-                ascending=[False, False, False, True],
-            )
+        if "chandelier_salvage_candidate" in df.columns:
+            cand = df[df["chandelier_salvage_candidate"] == True].copy()
+            sort_cols = [c for c in ["mfe_r_p99", "mfe_r_p95", "mfe_r_frac_ge_3R", "capture_ratio_median"] if c in cand.columns]
+            if not cand.empty and sort_cols:
+                cand = cand.sort_values(
+                    sort_cols,
+                    ascending=[False, False, False, True][:len(sort_cols)],
+                )
+        else:
+            cand = pd.DataFrame()
+
         cand.to_csv(outdir / "mfe_salvage_candidates.csv", index=False)
 
         summary_cols = [
@@ -451,10 +456,18 @@ def main() -> int:
             "chandelier_salvage_reason",
         ]
         existing_summary_cols = [c for c in summary_cols if c in df.columns]
-        df[existing_summary_cols].sort_values(
-            ["chandelier_salvage_candidate", "mfe_r_p99", "mfe_r_p95"],
-            ascending=[False, False, False],
-        ).to_csv(outdir / "mfe_brief.csv", index=False)
+
+        if existing_summary_cols:
+            sort_cols = [c for c in ["chandelier_salvage_candidate", "mfe_r_p99", "mfe_r_p95"] if c in df.columns]
+            if sort_cols:
+                df[existing_summary_cols].sort_values(
+                    sort_cols,
+                    ascending=[False, False, False][:len(sort_cols)],
+                ).to_csv(outdir / "mfe_brief.csv", index=False)
+            else:
+                df[existing_summary_cols].to_csv(outdir / "mfe_brief.csv", index=False)
+        else:
+            pd.DataFrame().to_csv(outdir / "mfe_brief.csv", index=False)
 
     print(f"Wrote: {outdir / 'mfe_diagnostics.csv'}")
     print(f"Wrote: {outdir / 'mfe_salvage_candidates.csv'}")
