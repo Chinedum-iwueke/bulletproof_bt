@@ -14,6 +14,11 @@ from bt.config import load_yaml
 from bt.hypotheses.contract import HypothesisContract
 from bt.hypotheses.exceptions import MissingRequiredTierError
 from bt.hypotheses.logging import make_log_row
+from bt.logging.artifacts_manifest import write_artifacts_manifest
+from bt.logging.run_contract import validate_run_artifacts
+from bt.logging.run_manifest import write_run_manifest
+from bt.logging.summary import write_summary_txt
+from bt.metrics.per_symbol import write_per_symbol_metrics
 
 
 def resolve_phase_tiers(contract: HypothesisContract, phase: str) -> tuple[str, ...]:
@@ -94,7 +99,7 @@ def _tier_to_execution_profile(tier: str) -> str:
     return mapping.get(tier, "tier2")
 
 
-def _build_runtime_override(contract: HypothesisContract, spec: dict[str, Any], tier: str) -> dict[str, Any]:
+def build_runtime_override(contract: HypothesisContract, spec: dict[str, Any], tier: str) -> dict[str, Any]:
     entry = contract.schema.entry
     signal_timeframe = str(entry.get("signal_timeframe", entry.get("timeframe", spec["params"].get("timeframe", "15m")))).lower()
     sem = contract.schema.execution_semantics
@@ -127,6 +132,27 @@ def _build_runtime_override(contract: HypothesisContract, spec: dict[str, Any], 
     }
 
 
+
+
+def _postprocess_run_artifacts(run_dir: Path, *, data_path: str) -> None:
+    validate_run_artifacts(run_dir)
+    write_per_symbol_metrics(run_dir)
+
+    config_path = run_dir / "config_used.yaml"
+    try:
+        loaded_config = load_yaml(config_path)
+    except Exception as exc:  # pragma: no cover - defensive user-facing guard
+        raise ValueError(f"Unable to read config_used.yaml from run_dir={run_dir}: {exc}") from exc
+    if not isinstance(loaded_config, dict):
+        raise ValueError(f"Invalid config_used.yaml format in run_dir={run_dir}; expected mapping.")
+
+    config: dict[str, Any] = loaded_config
+    try:
+        write_summary_txt(run_dir)
+        write_run_manifest(run_dir, config=config, data_path=data_path)
+    finally:
+        write_artifacts_manifest(run_dir, config=config)
+
 def _read_run_metrics(run_dir: Path) -> dict[str, Any]:
     performance_path = run_dir / "performance.json"
     payload = json.loads(performance_path.read_text(encoding="utf-8")) if performance_path.exists() else {}
@@ -142,6 +168,47 @@ def _read_run_metrics(run_dir: Path) -> dict[str, Any]:
         "mfe_mean_r": payload.get("mfe_mean_r", 0.0),
         "avg_hold_bars": payload.get("avg_hold_bars", 0.0),
     }
+
+
+def execute_hypothesis_variant(
+    *,
+    contract: HypothesisContract,
+    spec: dict[str, Any],
+    tier: str,
+    config_path: str,
+    data_path: str,
+    out_root: str,
+    local_config: str | None = None,
+    override_paths: list[str] | None = None,
+    run_slug: str | None = None,
+) -> dict[str, Any]:
+    runtime_override = build_runtime_override(contract, spec, tier)
+    resolved_override_paths = list(override_paths or [])
+    if local_config:
+        resolved_override_paths.append(local_config)
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as tmp:
+        yaml.safe_dump(runtime_override, tmp, sort_keys=True)
+        runtime_override_path = tmp.name
+    resolved_override_paths.append(runtime_override_path)
+    resolved_run_name = run_slug or f"{spec['hypothesis_id'].lower()}_{spec['grid_id']}_{tier.lower()}"
+    try:
+        run_dir = Path(
+            run_backtest(
+                config_path=config_path,
+                data_path=data_path,
+                out_dir=str(out_root),
+                override_paths=resolved_override_paths,
+                run_name=resolved_run_name,
+            )
+        )
+    finally:
+        Path(runtime_override_path).unlink(missing_ok=True)
+
+    _postprocess_run_artifacts(run_dir, data_path=data_path)
+    metrics = _read_run_metrics(run_dir)
+    metrics["run_dir"] = str(run_dir)
+    return metrics
 
 
 def main() -> None:
@@ -165,31 +232,16 @@ def main() -> None:
     rows: list[dict[str, Any]] = []
 
     def _executor(spec: dict[str, Any], tier: str) -> dict[str, Any]:
-        runtime_override = _build_runtime_override(contract, spec, tier)
-        override_paths = list(args.override)
-        if args.local_config:
-            override_paths.append(args.local_config)
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as tmp:
-            yaml.safe_dump(runtime_override, tmp, sort_keys=True)
-            runtime_override_path = tmp.name
-        override_paths.append(runtime_override_path)
-        run_name = f"{spec['hypothesis_id'].lower()}_{spec['grid_id']}_{tier.lower()}"
-        try:
-            run_dir = Path(
-                run_backtest(
-                    config_path=args.config,
-                    data_path=args.data,
-                    out_dir=str(out_root),
-                    override_paths=override_paths,
-                    run_name=run_name,
-                )
-            )
-        finally:
-            Path(runtime_override_path).unlink(missing_ok=True)
-        metrics = _read_run_metrics(run_dir)
-        metrics["run_dir"] = str(run_dir)
-        return metrics
+        return execute_hypothesis_variant(
+            contract=contract,
+            spec=spec,
+            tier=tier,
+            config_path=args.config,
+            data_path=args.data,
+            out_root=str(out_root),
+            local_config=args.local_config,
+            override_paths=list(args.override),
+        )
 
     signal_tf = str(contract.schema.entry.get("signal_timeframe", contract.schema.entry.get("timeframe", "15m"))).lower()
     rows = run_hypothesis_contract(
