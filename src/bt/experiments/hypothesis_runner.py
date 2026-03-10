@@ -94,7 +94,7 @@ def _tier_to_execution_profile(tier: str) -> str:
     return mapping.get(tier, "tier2")
 
 
-def _build_runtime_override(contract: HypothesisContract, spec: dict[str, Any], tier: str) -> dict[str, Any]:
+def build_runtime_override(contract: HypothesisContract, spec: dict[str, Any], tier: str) -> dict[str, Any]:
     entry = contract.schema.entry
     signal_timeframe = str(entry.get("signal_timeframe", entry.get("timeframe", spec["params"].get("timeframe", "15m")))).lower()
     sem = contract.schema.execution_semantics
@@ -144,6 +144,46 @@ def _read_run_metrics(run_dir: Path) -> dict[str, Any]:
     }
 
 
+def execute_hypothesis_variant(
+    *,
+    contract: HypothesisContract,
+    spec: dict[str, Any],
+    tier: str,
+    config_path: str,
+    data_path: str,
+    out_root: str,
+    local_config: str | None = None,
+    override_paths: list[str] | None = None,
+    run_slug: str | None = None,
+) -> dict[str, Any]:
+    runtime_override = build_runtime_override(contract, spec, tier)
+    resolved_override_paths = list(override_paths or [])
+    if local_config:
+        resolved_override_paths.append(local_config)
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as tmp:
+        yaml.safe_dump(runtime_override, tmp, sort_keys=True)
+        runtime_override_path = tmp.name
+    resolved_override_paths.append(runtime_override_path)
+    resolved_run_name = run_slug or f"{spec['hypothesis_id'].lower()}_{spec['grid_id']}_{tier.lower()}"
+    try:
+        run_dir = Path(
+            run_backtest(
+                config_path=config_path,
+                data_path=data_path,
+                out_dir=str(out_root),
+                override_paths=resolved_override_paths,
+                run_name=resolved_run_name,
+            )
+        )
+    finally:
+        Path(runtime_override_path).unlink(missing_ok=True)
+
+    metrics = _read_run_metrics(run_dir)
+    metrics["run_dir"] = str(run_dir)
+    return metrics
+
+
 def main() -> None:
     args = build_parser().parse_args()
     contract = HypothesisContract.from_yaml(args.hypothesis)
@@ -165,31 +205,16 @@ def main() -> None:
     rows: list[dict[str, Any]] = []
 
     def _executor(spec: dict[str, Any], tier: str) -> dict[str, Any]:
-        runtime_override = _build_runtime_override(contract, spec, tier)
-        override_paths = list(args.override)
-        if args.local_config:
-            override_paths.append(args.local_config)
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as tmp:
-            yaml.safe_dump(runtime_override, tmp, sort_keys=True)
-            runtime_override_path = tmp.name
-        override_paths.append(runtime_override_path)
-        run_name = f"{spec['hypothesis_id'].lower()}_{spec['grid_id']}_{tier.lower()}"
-        try:
-            run_dir = Path(
-                run_backtest(
-                    config_path=args.config,
-                    data_path=args.data,
-                    out_dir=str(out_root),
-                    override_paths=override_paths,
-                    run_name=run_name,
-                )
-            )
-        finally:
-            Path(runtime_override_path).unlink(missing_ok=True)
-        metrics = _read_run_metrics(run_dir)
-        metrics["run_dir"] = str(run_dir)
-        return metrics
+        return execute_hypothesis_variant(
+            contract=contract,
+            spec=spec,
+            tier=tier,
+            config_path=args.config,
+            data_path=args.data,
+            out_root=str(out_root),
+            local_config=args.local_config,
+            override_paths=list(args.override),
+        )
 
     signal_tf = str(contract.schema.entry.get("signal_timeframe", contract.schema.entry.get("timeframe", "15m"))).lower()
     rows = run_hypothesis_contract(

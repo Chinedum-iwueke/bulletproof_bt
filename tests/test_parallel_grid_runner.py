@@ -1,197 +1,200 @@
 from __future__ import annotations
 
 import csv
-import os
 import json
 from pathlib import Path
 
 import pytest
-import yaml
 
+from bt.experiments.manifest import decode_params, encode_params, read_manifest_csv, write_manifest_csv
 from bt.experiments.parallel_grid import (
-    GridSpec,
-    build_grid_rows,
-    build_override_payload,
-    build_run_command,
-    detect_run_artifact_status,
-    write_manifest_csv,
+    build_hypothesis_manifest_rows,
+    cli_run_parallel_hypothesis_grid,
+    run_hypothesis_manifest_in_parallel,
 )
+from bt.experiments.status import detect_run_artifact_status
+from bt.hypotheses.contract import HypothesisContract
+from bt.logging.run_contract import REQUIRED_ARTIFACTS
 
 
-def test_manifest_generation_is_deterministic_and_36_rows(tmp_path: Path) -> None:
-    spec = GridSpec(strategy_name="volfloor_donchian", exit_type="donchian_reversal")
-    rows = build_grid_rows(spec)
+def test_l1_h1_manifest_generation_is_deterministic() -> None:
+    contract = HypothesisContract.from_yaml("research/hypotheses/l1_h1_vol_floor_trend.yaml")
+    rows_a = build_hypothesis_manifest_rows(
+        contract=contract,
+        hypothesis_path=Path("research/hypotheses/l1_h1_vol_floor_trend.yaml"),
+        phase="tier2",
+    )
+    rows_b = build_hypothesis_manifest_rows(
+        contract=contract,
+        hypothesis_path=Path("research/hypotheses/l1_h1_vol_floor_trend.yaml"),
+        phase="tier2",
+    )
+    assert rows_a == rows_b
+    assert rows_a[0]["row_id"] == "row_00001"
+    assert rows_a[0]["tier"] == "Tier2"
 
-    assert len(rows) == 36
-    assert rows[0]["run_id"] == "run_001__vol60_adx18_er035_n16"
-    assert rows[1]["run_id"] == "run_002__vol60_adx18_er045_n16"
-    assert rows[-1]["run_id"] == "run_036__vol85_adx25_er055_n16"
 
+def test_params_json_roundtrip() -> None:
+    payload = {"theta_vol": 70, "tp_enabled": True, "k_atr": 2.0}
+    assert decode_params(encode_params(payload)) == payload
+
+
+def test_manifest_read_write_and_validation(tmp_path: Path) -> None:
+    row = {
+        "row_id": "row_00001",
+        "hypothesis_id": "L1-H1",
+        "hypothesis_path": "research/hypotheses/l1_h1_vol_floor_trend.yaml",
+        "phase": "tier2",
+        "tier": "Tier2",
+        "variant_id": "g00000",
+        "config_hash": "abc",
+        "params_json": "{}",
+        "run_slug": "g00000__tier2",
+        "output_dir": "runs/row_00001__g00000__tier2",
+        "expected_status": "pending",
+        "enabled": "true",
+        "notes": "",
+    }
     manifest = tmp_path / "manifest.csv"
-    write_manifest_csv(rows, manifest)
-    with manifest.open("r", encoding="utf-8", newline="") as handle:
-        written_rows = list(csv.DictReader(handle))
-    assert [row["run_id"] for row in written_rows] == [row["run_id"] for row in rows]
+    write_manifest_csv([row], manifest)
+    assert read_manifest_csv(manifest) == [row]
 
 
-def test_override_payload_injects_expected_keys() -> None:
-    row = {
-        "run_id": "run_001__vol60_adx18_er035_n16",
-        "strategy_name": "volfloor_donchian",
-        "exit_type": "donchian_reversal",
-        "timeframe": "15m",
-        "execution_tier": "tier2",
-        "vol_floor": "60",
-        "adx_min": "18",
-        "er_min": "0.35",
-        "er_lookback": "16",
-    }
-    payload = build_override_payload(row)
+def test_completion_detection_requires_required_artifacts(tmp_path: Path) -> None:
+    run_dir = tmp_path / "row"
+    run_dir.mkdir()
+    (run_dir / "run_status.json").write_text(json.dumps({"status": "PASS"}), encoding="utf-8")
+    assert detect_run_artifact_status(run_dir).state == "INCOMPLETE"
 
-    assert payload["data"]["entry_timeframe"] == "15m"
-    assert payload["data"]["date_range"] == {"start": "2023-01-01", "end": None}
-    assert payload["benchmark"]["enabled"] is False
-    assert payload["execution"]["profile"] == "tier2"
-    assert payload["execution"]["intrabar_mode"] == "worst_case"
-    assert payload["strategy"]["name"] == "volfloor_donchian"
-    assert payload["strategy"]["exit_type"] == "donchian_reversal"
-    assert payload["strategy"]["er_lookback"] == 16
-    assert payload["strategy"]["er_min"] == 0.35
-    assert payload["risk"]["stop_resolution"] == "strict"
-    assert payload["audit"]["max_events_per_file"] == 200000
-
-    dumped = yaml.safe_dump(payload)
-    loaded = yaml.safe_load(dumped)
-    assert loaded["strategy"]["vol_floor_pct"] == 60.0
+    for name in REQUIRED_ARTIFACTS:
+        (run_dir / name).write_text("ok", encoding="utf-8")
+    assert detect_run_artifact_status(run_dir).state == "SUCCESS"
 
 
-def test_override_payload_for_ema_contains_htf_and_default_exit() -> None:
-    row = {
-        "run_id": "run_001__vol60_adx18_er035_n16",
-        "strategy_name": "volfloor_ema_pullback",
-        "exit_type": "ema_trend_end",
-        "timeframe": "15m",
-        "execution_tier": "tier2",
-        "vol_floor": "60",
-        "adx_min": "18",
-        "er_min": "0.35",
-        "er_lookback": "16",
-    }
-    payload = build_override_payload(row)
+def test_skip_completed_behavior(tmp_path: Path) -> None:
+    exp_root = tmp_path / "exp"
+    completed = exp_root / "runs/row_00001__g00000__tier2"
+    completed.mkdir(parents=True)
+    (completed / "run_status.json").write_text(json.dumps({"status": "PASS"}), encoding="utf-8")
+    for name in REQUIRED_ARTIFACTS:
+        (completed / name).write_text("ok", encoding="utf-8")
 
-    assert payload["data"]["date_range"] is None
-    assert payload["strategy"]["stop_atr_mult"] == 2.0
-    assert payload["htf_resampler"] == {"timeframes": ["15m"], "strict": True}
-    assert payload["htf_timeframes"] == ["15m"]
+    config = tmp_path / "engine.yaml"
+    config.write_text("{}", encoding="utf-8")
+    data_path = tmp_path / "data"
+    data_path.mkdir()
 
-
-def test_completion_detection_success_failure_incomplete(tmp_path: Path) -> None:
-    success_dir = tmp_path / "success"
-    success_dir.mkdir()
-    (success_dir / "run_status.json").write_text(json.dumps({"status": "PASS"}), encoding="utf-8")
-    for name in [
-        "config_used.yaml",
-        "performance.json",
-        "equity.csv",
-        "trades.csv",
-        "fills.jsonl",
-        "decisions.jsonl",
-        "performance_by_bucket.csv",
-    ]:
-        (success_dir / name).write_text("ok", encoding="utf-8")
-
-    failure_dir = tmp_path / "failure"
-    failure_dir.mkdir()
-    (failure_dir / "run_status.json").write_text(
-        json.dumps({"status": "FAIL", "error_message": "boom"}),
-        encoding="utf-8",
-    )
-
-    incomplete_dir = tmp_path / "incomplete"
-    incomplete_dir.mkdir()
-
-    assert detect_run_artifact_status(success_dir).state == "SUCCESS"
-    assert detect_run_artifact_status(failure_dir).state == "FAILED"
-    assert detect_run_artifact_status(incomplete_dir).state == "INCOMPLETE"
-
-
-def test_runner_command_construction() -> None:
-    command = build_run_command(
-        base_config=Path("configs/engine.yaml"),
-        data_path=Path("data/sample"),
-        out_dir=Path("outputs/exp/runs"),
-        run_id="run_001__vol60_adx18_er035_n16",
-        override_path=Path("outputs/exp/overrides/run_001__vol60_adx18_er035_n16.yaml"),
-        python_executable="python",
-    )
-
-    assert command == [
-        "python",
-        "scripts/run_backtest.py",
-        "--config",
-        "configs/engine.yaml",
-        "--data",
-        "data/sample",
-        "--run-id",
-        "run_001__vol60_adx18_er035_n16",
-        "--out-dir",
-        "outputs/exp/runs",
-        "--override",
-        "outputs/exp/overrides/run_001__vol60_adx18_er035_n16.yaml",
+    rows = [
+        {
+            "row_id": "row_00001",
+            "hypothesis_id": "L1-H1",
+            "hypothesis_path": "research/hypotheses/l1_h1_vol_floor_trend.yaml",
+            "phase": "tier2",
+            "tier": "Tier2",
+            "variant_id": "g00000",
+            "config_hash": "abc",
+            "params_json": "{}",
+            "run_slug": "g00000__tier2",
+            "output_dir": "runs/row_00001__g00000__tier2",
+            "expected_status": "pending",
+            "enabled": "true",
+            "notes": "",
+        }
     ]
 
+    statuses, failures = run_hypothesis_manifest_in_parallel(
+        manifest_rows=rows,
+        experiment_root=exp_root,
+        config_path=config,
+        local_config=None,
+        data_path=data_path,
+        max_workers=1,
+        skip_completed=True,
+        override_paths=[],
+        dry_run=True,
+    )
 
-def test_cli_default_max_workers_is_6(monkeypatch: pytest.MonkeyPatch) -> None:
-    from bt.experiments import parallel_grid
-
-    captured: dict[str, int] = {}
-
-    monkeypatch.setattr(parallel_grid, "read_manifest_csv", lambda _path: [])
-
-    def _fake_run_manifest_in_parallel(**kwargs):
-        captured["max_workers"] = kwargs["max_workers"]
-        return [], []
-
-    monkeypatch.setattr(parallel_grid, "run_manifest_in_parallel", _fake_run_manifest_in_parallel)
-
-    args = [
-        "--experiment-root",
-        "outputs/x",
-        "--manifest",
-        "outputs/x/manifests/a.csv",
-        "--base-config",
-        "configs/engine.yaml",
-        "--data",
-        "data",
-        "--dry-run",
-    ]
-    exit_code = parallel_grid.cli_run_parallel_grid(args)
-    assert exit_code == 0
-    assert captured["max_workers"] == 6
+    assert failures == []
+    assert statuses[0]["status"] == "SKIPPED"
 
 
-def test_build_subprocess_env_includes_repo_src(monkeypatch: pytest.MonkeyPatch) -> None:
-    from bt.experiments.parallel_grid import _build_subprocess_env
-
-    monkeypatch.setenv("PYTHONPATH", "alpha:beta")
-    env = _build_subprocess_env()
-
-    assert "PYTHONPATH" in env
-    assert str((Path.cwd() / "src").resolve()) in env["PYTHONPATH"]
-
-
-def test_cli_rejects_missing_data_path() -> None:
-    from bt.experiments.parallel_grid import cli_run_parallel_grid
+def test_cli_rejects_missing_data_path(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.csv"
+    write_manifest_csv(
+        [
+            {
+                "row_id": "row_00001",
+                "hypothesis_id": "L1-H1",
+                "hypothesis_path": "research/hypotheses/l1_h1_vol_floor_trend.yaml",
+                "phase": "tier2",
+                "tier": "Tier2",
+                "variant_id": "g00000",
+                "config_hash": "abc",
+                "params_json": "{}",
+                "run_slug": "g00000__tier2",
+                "output_dir": "runs/row_00001__g00000__tier2",
+                "expected_status": "pending",
+                "enabled": "true",
+                "notes": "",
+            }
+        ],
+        manifest,
+    )
+    config = tmp_path / "engine.yaml"
+    config.write_text("{}", encoding="utf-8")
 
     with pytest.raises(ValueError, match=r"--data path does not exist"):
-        cli_run_parallel_grid([
-            "--experiment-root",
-            "outputs/x",
-            "--manifest",
-            "outputs/x/manifests/a.csv",
-            "--base-config",
-            "configs/engine.yaml",
-            "--data",
-            "home/not/real",
-            "--dry-run",
-        ])
+        cli_run_parallel_hypothesis_grid(
+            [
+                "--experiment-root",
+                str(tmp_path / "out"),
+                "--manifest",
+                str(manifest),
+                "--config",
+                str(config),
+                "--data",
+                str(tmp_path / "missing_data"),
+                "--dry-run",
+            ]
+        )
+
+
+def test_status_summary_written(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.csv"
+    row = {
+        "row_id": "row_00001",
+        "hypothesis_id": "L1-H1",
+        "hypothesis_path": "research/hypotheses/l1_h1_vol_floor_trend.yaml",
+        "phase": "tier2",
+        "tier": "Tier2",
+        "variant_id": "g00000",
+        "config_hash": "abc",
+        "params_json": "{}",
+        "run_slug": "g00000__tier2",
+        "output_dir": "runs/row_00001__g00000__tier2",
+        "expected_status": "pending",
+        "enabled": "false",
+        "notes": "",
+    }
+    write_manifest_csv([row], manifest)
+    config = tmp_path / "engine.yaml"
+    config.write_text("{}", encoding="utf-8")
+    data_path = tmp_path / "data"
+    data_path.mkdir()
+
+    statuses, _ = run_hypothesis_manifest_in_parallel(
+        manifest_rows=read_manifest_csv(manifest),
+        experiment_root=tmp_path / "exp",
+        config_path=config,
+        local_config=None,
+        data_path=data_path,
+        max_workers=1,
+        skip_completed=False,
+        override_paths=[],
+        dry_run=True,
+    )
+    status_csv = tmp_path / "exp" / "summaries" / "manifest_status.csv"
+    with status_csv.open("r", encoding="utf-8", newline="") as handle:
+        written = list(csv.DictReader(handle))
+    assert len(written) == 1
+    assert statuses[0]["status"] == "SKIPPED"
