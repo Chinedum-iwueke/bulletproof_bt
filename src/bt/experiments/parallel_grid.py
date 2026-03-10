@@ -160,6 +160,59 @@ def _materialize_phase_rollup(experiment_root: Path, manifest_rows: list[dict[st
             writer.writerow(out_row)
 
 
+
+
+def _materialize_phase_segment_rollups(experiment_root: Path, manifest_rows: list[dict[str, str]], status_rows: list[dict[str, Any]]) -> None:
+    status_by_row = {str(row["row_id"]): row for row in status_rows}
+    out_rows: list[dict[str, Any]] = []
+    for row in manifest_rows:
+        if status_by_row.get(row["row_id"], {}).get("status") != "COMPLETED":
+            continue
+        run_dir = experiment_root / row["output_dir"]
+        segment_path = run_dir / "segment_rollups.csv"
+        if not segment_path.exists():
+            continue
+        with segment_path.open("r", encoding="utf-8", newline="") as handle:
+            for payload in csv.DictReader(handle):
+                out_rows.append(
+                    {
+                        "row_id": row["row_id"],
+                        "variant_id": row["variant_id"],
+                        "tier": row["tier"],
+                        "hypothesis_id": row["hypothesis_id"],
+                        "run_dir": str(run_dir),
+                        **payload,
+                    }
+                )
+
+    out_rows = sorted(out_rows, key=lambda item: (item["row_id"], str(item.get("grouping_keys", "")), str(item.get("segment_value_json", ""))))
+    path = experiment_root / "summaries" / "phase_segment_rollups.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields = [
+        "row_id",
+        "variant_id",
+        "tier",
+        "hypothesis_id",
+        "run_dir",
+        "schema_version",
+        "grouping_keys",
+        "segment_value_json",
+        "source_run_dir",
+        "n_trades",
+        "ev_r_net",
+        "win_rate",
+        "avg_win_r",
+        "avg_loss_r",
+        "payoff_ratio",
+        "avg_hold_bars",
+        "pnl_net",
+        "max_loss_r",
+    ]
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for out in out_rows:
+            writer.writerow({field: out.get(field, "") for field in fields})
 def _execute_manifest_row(
     *,
     row: dict[str, str],
@@ -336,6 +389,7 @@ def run_hypothesis_manifest_in_parallel(
     write_status_csv(experiment_root / "summaries" / "manifest_status.csv", status_rows)
     write_status_csv(experiment_root / "summaries" / "failures.csv", failures)
     _materialize_phase_rollup(experiment_root, manifest_rows, status_rows)
+    _materialize_phase_segment_rollups(experiment_root, manifest_rows, status_rows)
     return status_rows, failures
 
 

@@ -51,6 +51,7 @@ Partial directories are treated as `INCOMPLETE` and will rerun.
 - `summaries/manifest_status.csv`
 - `summaries/failures.csv`
 - `summaries/phase_rollup.csv`
+- `summaries/phase_segment_rollups.csv` (aggregated per-run metadata segment metrics)
 
 ## L1-H1 usage
 
@@ -59,3 +60,20 @@ The same workflow supports Tier2, Tier3, and validate phases without strategy ha
 ## Practical worker count
 
 Start with `--max-workers 4..8` depending on CPU and data I/O throughput.
+
+## Reusable metadata segment rollups
+
+Each completed run now emits:
+
+- `segment_rollups.csv`
+- `segment_rollups.jsonl`
+
+These are computed from entry metadata persisted in `fills.jsonl` and joined to closed trades in `trades.csv` by `(symbol, entry_ts, side)`. Segment rollups are generic (not hypothesis-hardcoded) and can group by one or more entry metadata keys (for example `gate_pass`, `q_comp`, `rvhat_pct_t`, `entry_reason`).
+
+Default first-use keys are strategy-aware for immediate usefulness:
+
+- L1-H2: `entry_reason`, `q_comp`
+- L1-H1: `gate_pass`
+- L1-H3: `rvhat_pct_t`
+
+For L1-H2 specifically, `comp_gate_t` is typically constant at entry due to gate filtering, so `entry_reason` and `q_comp` are the first informative production segments.
