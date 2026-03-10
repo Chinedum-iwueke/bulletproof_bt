@@ -19,6 +19,7 @@ def test_execute_hypothesis_variant_runs_full_postprocessing(monkeypatch, tmp_pa
     monkeypatch.setattr(hypothesis_runner, "validate_run_artifacts", lambda _run_dir: called.append("validate_run_artifacts"))
     monkeypatch.setattr(hypothesis_runner, "write_per_symbol_metrics", lambda _run_dir: called.append("write_per_symbol_metrics"))
     monkeypatch.setattr(hypothesis_runner, "write_summary_txt", lambda _run_dir: called.append("write_summary_txt"))
+    monkeypatch.setattr(hypothesis_runner, "build_run_segment_rollups", lambda _run_dir, hypothesis_id=None: called.append(f"build_run_segment_rollups:{hypothesis_id}"))
     monkeypatch.setattr(
         hypothesis_runner,
         "write_run_manifest",
@@ -45,5 +46,6 @@ def test_execute_hypothesis_variant_runs_full_postprocessing(monkeypatch, tmp_pa
         "write_per_symbol_metrics",
         "write_summary_txt",
         "write_run_manifest:/tmp/data:l1_h1_vol_floor_trend",
+        "build_run_segment_rollups:l1_h1_vol_floor_trend",
         "write_artifacts_manifest:l1_h1_vol_floor_trend",
     ]

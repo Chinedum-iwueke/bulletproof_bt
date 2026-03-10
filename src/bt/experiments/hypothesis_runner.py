@@ -10,6 +10,7 @@ from typing import Any, Callable
 import yaml
 
 from bt.api import run_backtest
+from bt.analytics.segment_rollups import build_run_segment_rollups
 from bt.config import load_yaml
 from bt.hypotheses.contract import HypothesisContract
 from bt.hypotheses.exceptions import MissingRequiredTierError
@@ -147,9 +148,15 @@ def _postprocess_run_artifacts(run_dir: Path, *, data_path: str) -> None:
         raise ValueError(f"Invalid config_used.yaml format in run_dir={run_dir}; expected mapping.")
 
     config: dict[str, Any] = loaded_config
+    hypothesis_id = None
+    if isinstance(config.get("strategy"), dict):
+        strategy_name = config["strategy"].get("name")
+        if isinstance(strategy_name, str):
+            hypothesis_id = strategy_name
     try:
         write_summary_txt(run_dir)
         write_run_manifest(run_dir, config=config, data_path=data_path)
+        build_run_segment_rollups(run_dir, hypothesis_id=hypothesis_id)
     finally:
         write_artifacts_manifest(run_dir, config=config)
 
