@@ -1,0 +1,124 @@
+metadata:
+  hypothesis_id: "L1-H4A"
+  title: "Liquidity Uncertainty Gate Applied to Mean Reversion"
+  description: "L1-H2 baseline with a past-only spread-proxy quantile gate to suppress entries during high liquidity uncertainty."
+  research_layer: "L1"
+  hypothesis_family: "mean_reversion"
+  version: "1.0.0"
+  author: "Bulletproof_bt"
+  created_at: "2026-03-11T00:00:00Z"
+
+hypothesis_id: "L1-H4A"
+title: "Liquidity Uncertainty Gate Applied to Mean Reversion"
+description: "L1-H2 baseline with a past-only spread-proxy quantile gate to suppress entries during high liquidity uncertainty."
+research_layer: "L1"
+hypothesis_family: "mean_reversion"
+version: "1.0.0"
+author: "Bulletproof_bt"
+created_at: "2026-03-11T00:00:00Z"
+
+required_indicators:
+  - atr
+  - session_vwap
+
+indicator_defaults:
+  atr_period: 14
+  vwap_mode: "session"
+  signal_timeframe_default: "5m"
+  liquidity_window_days: 30
+  liquidity_proxy_formula: "0.5 * (high - low) / close"
+  z_vwap_formula: "(close - session_vwap) / atr_14"
+
+parameter_grid:
+  q_liq: [0.6, 0.7]
+  z0: [0.8, 1.0]
+  k_atr: [1.5, 2.0]
+  T_hold: [12, 24]
+  size_adjustment_enabled: [false]
+  cap_multiplier: [0.5, 0.75]
+
+gates:
+  - field: "liq_gate_t"
+    op: "=="
+    value: true
+
+entry:
+  strategy: "l1_h4a_liquidity_gate_mean_reversion"
+  signal_timeframe: "5m"
+  timeframe: "5m"
+  base_execution_timeframe: "1m"
+  order_timing: "bar_close_submit_next_bar_execution"
+  no_pyramiding: true
+
+exit:
+  stop_kind: "atr_multiple"
+  stop_model: "fixed_atr_multiple"
+  stop_atr_param: "k_atr"
+  stop_update_policy: "frozen_at_entry"
+  atr_source_timeframe: "signal_timeframe"
+  time_stop_param: "T_hold"
+  hold_time_unit: "signal_bars"
+  profit_exit_model: "vwap_touch"
+  vwap_mode: "session"
+  exit_monitoring_timeframe: "1m"
+
+execution_semantics:
+  signal_timeframe: "5m"
+  base_execution_timeframe: "1m"
+  exit_monitoring_timeframe: "1m"
+  base_data_frequency_expected: "1m"
+  strategy_family: "mean_reversion"
+  baseline_reference: "L1-H2"
+  vwap_mode: "session"
+  liquidity_proxy: "bar_range_half_over_close"
+  gate_model: "spread_proxy_quantile_gate"
+  stop_model: "fixed_atr_multiple"
+  stop_update_policy: "frozen_at_entry"
+  tp_update_policy: "none"
+  hold_time_unit: "signal_bars"
+  atr_source_timeframe: "signal_timeframe"
+  profit_exit_model: "vwap_touch"
+  no_pyramiding: true
+
+sizing:
+  mode: "constant_r"
+  formula: "qty = (equity * r_per_trade) / (k_atr * atr_entry_signal)"
+  notes: "Dynamic size adjustment is schema-supported but disabled in L1-H4A baseline."
+
+risk_controls:
+  max_positions: 5
+  forbid_adding_to_losers: true
+  enforce_min_stop_distance: true
+
+evaluation:
+  required_tiers: ["Tier2", "Tier3"]
+
+logging:
+  schema_version: "1.0"
+  required_fields:
+    - run_id
+    - hypothesis_id
+    - tier
+    - ev_r_gross
+    - ev_r_net
+    - status
+    - spread_proxy_t
+    - liq_gate_t
+    - q_liq
+    - q_threshold_t
+    - vwap_t
+    - z_vwap_t
+    - entry_reason
+    - atr_entry
+    - stop_distance
+    - stop_price
+    - signal_timeframe
+    - exit_monitoring_timeframe
+    - effective_spread_assumptions
+
+notes:
+  falsification_criteria:
+    - "If spread_proxy does not correlate with EV degradation or realized slippage, replace the proxy or move to quote/L2 data."
+  failure_modes:
+    - "Spread proxy can partly track volatility rather than true spread."
+    - "Liquidity gate may collapse into a generic volatility gate if not validated with cost diagnostics."

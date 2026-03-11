@@ -43,6 +43,7 @@ from bt.strategy.l1_h2_compression_mean_reversion import L1H2CompressionMeanReve
 from bt.strategy.l1_h3_har_rv_gate_trend import L1H3HarRVGateTrendStrategy  # noqa: E402
 from bt.strategy.l1_h3b_har_rv_gate_mean_reversion import L1H3BHarRVGateMeanReversionStrategy  # noqa: E402
 from bt.strategy.l1_h3c_har_regime_switch import L1H3CHarRegimeSwitchStrategy  # noqa: E402
+from bt.strategy.l1_h4a_liquidity_gate_mean_reversion import L1H4ALiquidityGateMeanReversionStrategy  # noqa: E402
 
 __all__ = [
     "STRATEGY_REGISTRY",
@@ -56,4 +57,5 @@ __all__ = [
     "L1H3HarRVGateTrendStrategy",
     "L1H3BHarRVGateMeanReversionStrategy",
     "L1H3CHarRegimeSwitchStrategy",
+    "L1H4ALiquidityGateMeanReversionStrategy",
 ]
