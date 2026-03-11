@@ -23,6 +23,7 @@ Each contract YAML defines:
 - For L1-H1, `execution_semantics` locks: `stop_model=fixed_atr_multiple`, `stop_update_policy=frozen_at_entry`, `tp_update_policy=frozen_at_entry`, `atr_source_timeframe=signal_timeframe`, `exit_monitoring_timeframe=1m`.
 - For L1-H3, `execution_semantics` locks: `signal_timeframe=15m`, `base_data_frequency_expected=1m`, `gate_model=har_rv_percentile`, `stop_model=fixed_close_sqrt_rvhat_multiple`, `coefficient_refit_cadence=daily_on_completed_signal_day`, and `fit_method=deterministic_ols`.
 - For L1-H2, `execution_semantics` additionally locks: `signal_timeframe=5m`, `vwap_mode=session`, `profit_exit_model=vwap_touch`, `hold_time_unit=signal_bars`, and `no_pyramiding=true`.
+- For L1-H3B, `execution_semantics` additionally locks: `signal_timeframe=5m`, `base_data_frequency_expected=1m`, `strategy_family=mean_reversion`, `baseline_reference=L1-H2`, `gate_model=har_rv_percentile_low`, `stop_model=fixed_close_sqrt_rvhat_multiple`, `vwap_mode=session`, `profit_exit_model=vwap_touch`, `coefficient_refit_cadence=daily_on_completed_signal_day`, and `fit_method=deterministic_ols`.
 
 ## Deterministic materialization
 Grid expansion uses a stable cartesian product over sorted parameter keys. Each variant receives:
