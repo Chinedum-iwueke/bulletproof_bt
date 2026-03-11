@@ -1,0 +1,123 @@
+hypothesis_id: "L1-H3B"
+title: "HAR-gated L1-H2 Mean Reversion"
+description: "L1-H3B applies L1-H2 SessionVWAP fade entries on 5m, replacing only ATR compression gate/stop with HAR RV_hat low-percentile gating and frozen close*sqrt(RV_hat) stop distance."
+research_layer: "L1"
+hypothesis_family: "mean_reversion"
+version: "1.0.0"
+author: "Bulletproof_bt"
+created_at: "2026-03-11T00:00:00Z"
+
+required_indicators:
+  - atr
+  - session_vwap
+
+indicator_defaults:
+  atr_period: 14
+  vwap_mode: "session"
+  signal_timeframe_default: "5m"
+  rv1_formula: "(ln(close_t/close_t-1))^2"
+  har_features:
+    RV_d_days: 1
+    RV_w_days: 7
+    RV_m_days: 30
+  har_forecast: "RV_hat = a + b*RV_d + c*RV_w + d*RV_m"
+  bars_per_day_5m: 288
+  gate_quantile_interpretation:
+    q30: "strict_low_forecast_vol"
+    q70: "broader_negative_control_threshold"
+
+parameter_grid:
+  fit_window_days: [180, 365]
+  gate_quantile_low: [0.3, 0.7]
+  z0: [0.8, 1.0]
+  k: [1.5, 2.0]
+  T_hold: [12, 24]
+
+gates:
+  - field: "rvhat_pct_t"
+    op: "<="
+    param: "gate_quantile_low"
+
+entry:
+  strategy: "l1_h3b_har_rv_gate_mean_reversion"
+  signal_timeframe: "5m"
+  timeframe: "5m"
+  base_execution_timeframe: "1m"
+  order_timing: "bar_close_submit_next_bar_execution"
+  no_pyramiding: true
+
+exit:
+  stop_kind: "close_sqrt_rvhat_multiple"
+  stop_model: "fixed_close_sqrt_rvhat_multiple"
+  stop_param: "k"
+  stop_update_policy: "frozen_at_entry"
+  atr_source_timeframe: "signal_timeframe"
+  time_stop_param: "T_hold"
+  hold_time_unit: "signal_bars"
+  profit_exit_model: "vwap_touch"
+  vwap_mode: "session"
+  exit_monitoring_timeframe: "1m"
+  take_profit:
+    enabled: false
+
+execution_semantics:
+  signal_timeframe: "5m"
+  base_execution_timeframe: "1m"
+  base_data_frequency_expected: "1m"
+  strategy_family: "mean_reversion"
+  baseline_reference: "L1-H2"
+  vwap_mode: "session"
+  gate_model: "har_rv_percentile_low"
+  stop_model: "fixed_close_sqrt_rvhat_multiple"
+  stop_update_policy: "frozen_at_entry"
+  tp_update_policy: "none"
+  hold_time_unit: "signal_bars"
+  profit_exit_model: "vwap_touch"
+  exit_monitoring_timeframe: "1m"
+  atr_source_timeframe: "signal_timeframe"
+  coefficient_refit_cadence: "daily_on_completed_signal_day"
+  fit_method: "deterministic_ols"
+  fit_window_unit: "calendar_days"
+  no_pyramiding: true
+
+sizing:
+  mode: "constant_r"
+  formula: "qty = (equity * r_per_trade) / (k * close_t * sqrt(RV_hat_t))"
+
+risk_controls:
+  max_positions: 5
+  forbid_adding_to_losers: true
+  enforce_free_margin_constraints: true
+
+evaluation:
+  required_tiers: ["Tier2", "Tier3"]
+
+logging:
+  schema_version: "1.0"
+  required_fields:
+    - run_id
+    - hypothesis_id
+    - tier
+    - ev_r_gross
+    - ev_r_net
+    - status
+    - RV_hat_t
+    - rvhat_pct_t
+    - gate_pass
+    - fit_ts_used
+    - fit_window_days
+    - z_vwap_t
+    - session_vwap_t
+    - entry_reason
+    - stop_distance
+    - risk_amount
+
+notes:
+  refit_discipline:
+    - "Rolling window OLS fit on prior-only signal bars, refit once per completed signal day."
+    - "Forecast at time t is generated using coefficients fit on rows strictly before t."
+  gate_interpretation:
+    - "q=0.3 is the strict low-vol compression gate for mean-reversion."
+    - "q=0.7 is retained as a broader/negative-control threshold and is not a strict compression gate."
+  falsification_criteria:
+    - "Reject if EV_r_net and drawdown-duration do not improve versus L1-H2 across Tier2/Tier3 and fit windows."

@@ -226,6 +226,8 @@ def default_segment_keys_for_run(run_dir: str | Path) -> list[str]:
         return ["gate_pass"]
     if strategy_name == "l1_h3_har_rv_gate_trend":
         return ["rvhat_pct_t"]
+    if strategy_name == "l1_h3b_har_rv_gate_mean_reversion":
+        return ["rvhat_pct_t", "fit_window_days"]
     return ["entry_reason"]
 
 

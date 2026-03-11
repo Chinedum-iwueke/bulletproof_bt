@@ -73,7 +73,7 @@ class HarRVForecaster:
         if self.fit_window_days <= 0:
             raise ValueError("fit_window_days must be > 0")
         if refit_cadence != "daily_on_completed_signal_day":
-            raise ValueError("Only daily_on_completed_signal_day is supported for L1-H3A")
+            raise ValueError("Only daily_on_completed_signal_day is supported for HAR hypotheses")
         self.refit_cadence = refit_cadence
 
         self._bars_per_day = bars_per_day(timeframe)
@@ -155,7 +155,6 @@ class HarRVForecaster:
 
         obs = HarObservation(ts=ts, rv1=rv1, rv_d=rv_d, rv_w=rv_w, rv_m=rv_m)
         self._observations.append(obs)
-        self._refit_if_due(ts)
 
         rv_hat = None
         fit_ts_used = None
@@ -164,6 +163,8 @@ class HarRVForecaster:
             rv_hat = float(max(0.0, a + b * rv_d + c * rv_w + d * rv_m))
             fit_ts_used = str(self._fit_history[-1].fit_ts) if self._fit_history else None
             self._forecast_history.append((ts, rv_hat))
+
+        self._refit_if_due(ts)
 
         return {
             "rv1_t": rv1,
