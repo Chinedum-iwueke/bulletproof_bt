@@ -5,7 +5,7 @@ metadata:
   research_layer: "L1"
   hypothesis_family: "mean_reversion"
   version: "1.0.0"
-  author: "Bulletproof_bt"
+  author: "bulletproof_bt"
   created_at: "2026-03-11T00:00:00Z"
 
 hypothesis_id: "L1-H4A"
@@ -14,7 +14,7 @@ description: "L1-H2 baseline with a past-only spread-proxy quantile gate to supp
 research_layer: "L1"
 hypothesis_family: "mean_reversion"
 version: "1.0.0"
-author: "Bulletproof_bt"
+author: "bulletproof_bt"
 created_at: "2026-03-11T00:00:00Z"
 
 required_indicators:

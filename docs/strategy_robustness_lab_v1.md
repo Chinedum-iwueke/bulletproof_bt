@@ -1,4 +1,4 @@
-# Strategy Robustness Lab V1 (Bulletproof_bt Service Layer)
+# Strategy Robustness Lab V1 (bulletproof_bt Service Layer)
 
 ## What was implemented
 
@@ -103,7 +103,7 @@ run = service.ingest_trade_log("uploads/my_trades.csv", strategy_name="my_strate
 payload = service.build_dashboard_payload(run, seed=42, simulations=1000)
 ```
 
-Or ingest existing Bulletproof_bt run artifacts:
+Or ingest existing bulletproof_bt run artifacts:
 
 ```python
 run = service.ingest_run_artifacts("outputs/runs/run_20260101_120000")

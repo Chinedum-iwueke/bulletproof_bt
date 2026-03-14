@@ -4,20 +4,20 @@ Copyright © 2026 Chinedum Iwueke.
 
 # Bulletproof BT
 
-Bulletproof_bt is a deterministic, event-driven quantitative research engine designed for institutional-grade strategy validation across crypto, foreign exchange, equities, and basic futures modeling.
+bulletproof_bt is a deterministic, event-driven quantitative research engine designed for institutional-grade strategy validation across crypto, foreign exchange, equities, and basic futures modeling.
 
 It is built around a strict invariant:
 
 > Same data + same configuration = identical outputs.  
 > No lookahead. No interpolation. No silent assumptions.
 
-Bulletproof_bt is a reproducible research system.
+bulletproof_bt is a reproducible research system.
 
 ---
 
 ## System Philosophy
 
-Bulletproof_bt enforces explicit contracts between:
+bulletproof_bt enforces explicit contracts between:
 - Strategy
 - Risk Engine
 - Execution Model
@@ -185,7 +185,7 @@ To preserve rigor and reproducibility, V1 intentionally excludes:
 - Multi-broker comparison
 - Web dashboards
 
-Bulletproof_bt V1 is a single-strategy institutional research OS.
+bulletproof_bt V1 is a single-strategy institutional research OS.
 
 ---
 
@@ -251,11 +251,11 @@ The engine is:
 ---
 ## Install
 
-Bulletproof_bt uses modern PEP 621 packaging. All dependencies are defined in pyproject.toml.
+bulletproof_bt uses modern PEP 621 packaging. All dependencies are defined in pyproject.toml.
 
 ```bash
-git clone https://github.com/Chinedum-iwueke/Bulletproof_bt.git
-cd Bulletproof_bt
+git clone https://github.com/Chinedum-iwueke/bulletproof_bt.git
+cd bulletproof_bt
 
 python -m venv .venv
 source .venv/bin/activate

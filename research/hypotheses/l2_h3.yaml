@@ -4,7 +4,7 @@ description: "Pullback setup that only enters when price reclaims anchored VWAP 
 research_layer: "L2"
 hypothesis_family: "pullback"
 version: "1.0.0"
-author: "Bulletproof_bt"
+author: "bulletproof_bt"
 created_at: "2026-03-09T00:00:00Z"
 
 required_indicators:
