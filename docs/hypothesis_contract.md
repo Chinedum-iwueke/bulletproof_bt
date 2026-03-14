@@ -14,7 +14,7 @@ Each contract YAML defines:
 - `logging` schema hints
 - optional `runtime_controls` such as `max_variants`
 
-## Runtime model (Bulletproof_bt production mode)
+## Runtime model (bulletproof_bt production mode)
 - Canonical input data is **1m**.
 - Hypothesis signal timeframe can be `5m` / `15m` / `1h`.
 - Signal indicators and entry logic run on **resampled closed signal bars**.

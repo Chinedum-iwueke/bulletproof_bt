@@ -4,7 +4,7 @@ description: "L1-H3A applies L1-H1 EMA trend entries on 15m, replacing only ATR 
 research_layer: "L1"
 hypothesis_family: "trend_continuation"
 version: "1.0.0"
-author: "Bulletproof_bt"
+author: "bulletproof_bt"
 created_at: "2026-03-10T00:00:00Z"
 
 required_indicators:

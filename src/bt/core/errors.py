@@ -1,9 +1,9 @@
-"""Centralized domain error taxonomy for Bulletproof_bt."""
+"""Centralized domain error taxonomy for bulletproof_bt."""
 from __future__ import annotations
 
 
 class BtBaseError(Exception):
-    """Base class for Bulletproof_bt domain errors."""
+    """Base class for bulletproof_bt domain errors."""
 
 
 class ConfigError(BtBaseError, ValueError):

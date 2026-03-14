@@ -276,7 +276,7 @@ def write_summary_txt(run_dir: Path) -> Path:
 
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
     lines = [
-        "Bulletproof_bt Backtest Summary",
+        "bulletproof_bt Backtest Summary",
         f"Run Dir: {run_dir.name}",
         f"Generated: {generated}Z",
         "",

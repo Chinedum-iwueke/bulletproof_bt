@@ -4,7 +4,7 @@ description: "During volatility compression, SessionVWAP deviation fades target 
 research_layer: "L1"
 hypothesis_family: "mean_reversion"
 version: "1.0.0"
-author: "Bulletproof_bt"
+author: "bulletproof_bt"
 created_at: "2026-03-10T00:00:00Z"
 
 required_indicators:
