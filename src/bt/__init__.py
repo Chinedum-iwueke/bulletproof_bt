@@ -9,5 +9,9 @@ from bt._version import __version__
 from bt.saas.service import run_analysis_from_parsed_artifact
 from bt.api import run_backtest, run_grid
 
-__all__ = ["run_backtest", "run_grid", "__version__"]
-
+__all__ = [
+    "run_backtest",
+    "run_grid",
+    "run_analysis_from_parsed_artifact",
+    "__version__",
+]

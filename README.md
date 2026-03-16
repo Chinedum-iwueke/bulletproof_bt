@@ -268,6 +268,19 @@ Run tests to verify installation:
 pytest -q
 ```
 
+## Package Naming (important)
+
+- Distribution/package name (install target): `bulletproof_bt`
+- Runtime import module: `bt`
+
+```python
+import bt
+
+print(bt.__version__)
+# from parsed artifact diagnostics seam
+result = bt.run_analysis_from_parsed_artifact(parsed_artifact, config=None)
+```
+
 ## Run a backtest (CLI)
 
 ```bash
