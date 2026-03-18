@@ -1,0 +1,90 @@
+hypothesis_id: "L1-H1B"
+title: "Volatility Floor Gates Trend Continuation (Salvage Fork)"
+description: "L1-H1 salvage fork: fixed TP disabled, frozen ATR entry stop retained, chandelier trail added with pathwise diagnostics."
+research_layer: "L1"
+hypothesis_family: "trend_continuation"
+version: "1.0.0"
+author: "bulletproof_bt"
+created_at: "2026-03-18T00:00:00Z"
+
+required_indicators:
+  - ema
+  - atr
+  - donchian
+
+indicator_defaults:
+  ema_fast_period: 20
+  ema_slow_period: 50
+  atr_period: 14
+  rv_formula: "atr_14 / close"
+  vol_percentile_window_days: 30
+
+gates:
+  - field: "vol_pct_t"
+    op: ">="
+    param: "theta_vol"
+  - field: "trend_dir_t"
+    op: "!="
+    value: 0
+
+parameter_grid:
+  theta_vol: [0.70, 0.80, 0.85]
+  k_atr_entry_stop: [2.5, 3.0]
+  T_hold: [48, 72]
+  tp_enabled: [false]
+  chandelier_lookback: [12]
+  chandelier_atr_mult: [2.5, 3.5]
+  trail_activation_mode: [bars, profit_r]
+  trail_activate_after_bars: [1]
+  trail_activate_after_profit_r: [0.5]
+
+entry:
+  strategy: "l1_h1b_salvage"
+  signal_timeframe: "15m"
+  timeframe: "15m"
+  base_execution_timeframe: "1m"
+  order_timing: "bar_close_submit_next_bar_execution"
+  disallow_flip: true
+
+exit:
+  stop_kind: "atr_multiple"
+  stop_model: "fixed_atr_multiple"
+  stop_atr_param: "k_atr_entry_stop"
+  stop_update_policy: "frozen_at_entry"
+  atr_source_timeframe: "signal_timeframe"
+  time_stop_param: "T_hold"
+  hold_time_unit: "signal_bars"
+  exit_monitoring_timeframe: "1m"
+  take_profit:
+    enabled_param: "tp_enabled"
+    atr_multiple_param: null
+    tp_update_policy: "disabled"
+  trailing_stop:
+    kind: "chandelier"
+    lookback_param: "chandelier_lookback"
+    atr_multiple_param: "chandelier_atr_mult"
+    activation_mode_param: "trail_activation_mode"
+    activate_after_bars_param: "trail_activate_after_bars"
+    activate_after_profit_r_param: "trail_activate_after_profit_r"
+
+execution_semantics:
+  signal_timeframe: "15m"
+  base_execution_timeframe: "1m"
+  base_data_frequency_expected: "1m"
+  stop_model: "fixed_atr_multiple"
+  stop_update_policy: "frozen_at_entry"
+  tp_update_policy: "disabled"
+  hold_time_unit: "signal_bars"
+  exit_monitoring_timeframe: "1m"
+  atr_source_timeframe: "signal_timeframe"
+  trail_calc_timeframe: "signal_timeframe"
+
+sizing:
+  mode: "constant_r"
+  formula: "qty = (equity * r_per_trade) / stop_distance"
+
+evaluation:
+  required_tiers: ["Tier2", "Tier3"]
+
+runtime_controls:
+  notes: "Grid materialization enforces mode-specific activation validity: bars-mode uses trail_activate_after_bars only, and profit_r-mode uses trail_activate_after_profit_r only."

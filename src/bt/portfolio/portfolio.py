@@ -55,6 +55,7 @@ class Portfolio:
         """
         for symbol, bar in bars_by_symbol.items():
             self._mark_prices[symbol] = bar.close
+            self._position_book.update_path_with_bar(symbol, high=float(bar.high), low=float(bar.low), ts=bar.ts)
         self._recalculate_state()
 
     def _recalculate_state(self) -> None:
