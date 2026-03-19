@@ -61,6 +61,7 @@ def _build_engine(
     config: dict[str, Any],
     datafeed: Any,
     run_dir: Path,
+    run_id: str | None = None,
     sanity_counters: SanityCounters | None = None,
     audit_manager: AuditManager | None = None,
 ):
@@ -235,7 +236,7 @@ def _build_engine(
         portfolio=portfolio,
         decisions_writer=JsonlWriter(run_dir / "decisions.jsonl"),
         fills_writer=JsonlWriter(run_dir / "fills.jsonl"),
-        trades_writer=TradesCsvWriter(run_dir / "trades.csv"),
+        trades_writer=TradesCsvWriter(run_dir / "trades.csv", run_id=run_id, hypothesis_id=str(strategy_name)),
         equity_path=run_dir / "equity.csv",
         config=config,
         sanity_counters=sanity_counters,
@@ -382,6 +383,7 @@ def run_backtest(
                 config,
                 datafeed,
                 run_dir,
+                run_id=resolved_run_name,
                 sanity_counters=sanity_counters,
                 audit_manager=audit_manager,
             )
@@ -390,6 +392,7 @@ def run_backtest(
                 config,
                 datafeed,
                 run_dir,
+                run_id=resolved_run_name,
                 sanity_counters=sanity_counters,
             )
         engine.run()
@@ -438,6 +441,7 @@ def run_backtest(
                     config,
                     datafeed2,
                     rerun_dir,
+                    run_id=f"{resolved_run_name}_determinism",
                     sanity_counters=SanityCounters(run_id=f"{resolved_run_name}_determinism"),
                     audit_manager=None,
                 )
@@ -446,6 +450,7 @@ def run_backtest(
                     config,
                     datafeed2,
                     rerun_dir,
+                    run_id=f"{resolved_run_name}_determinism",
                     sanity_counters=SanityCounters(run_id=f"{resolved_run_name}_determinism"),
                 )
             engine2.run()

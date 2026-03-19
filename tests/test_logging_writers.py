@@ -90,7 +90,8 @@ def test_trades_csv_writer_writes_trade(tmp_path: Path) -> None:
         rows = list(csv.reader(handle))
 
     assert rows[0] == TradesCsvWriter._columns
-    assert rows[1][0] == trade.entry_ts.isoformat()
-    assert rows[1][1] == trade.exit_ts.isoformat()
-    assert rows[1][2] == "AAPL"
-    assert rows[1][3] == "BUY"
+    parsed = dict(zip(rows[0], rows[1], strict=True))
+    assert parsed["entry_ts"] == trade.entry_ts.isoformat()
+    assert parsed["exit_ts"] == trade.exit_ts.isoformat()
+    assert parsed["symbol"] == "AAPL"
+    assert parsed["side"] == "BUY"

@@ -38,6 +38,32 @@ CORE_COLUMNS = [
     "tail_loss_p99",
     "mfe_mean_r",
     "mae_mean_r",
+    "mfe_median_r",
+    "mae_median_r",
+    "mfe_p95_r",
+    "mae_p95_r",
+    "frac_trades_hit_1r",
+    "frac_trades_hit_2r",
+    "frac_trades_hit_3r",
+    "avg_time_to_mfe_signal_bars",
+    "median_time_to_mfe_signal_bars",
+    "avg_holding_period_signal_bars",
+    "median_holding_period_signal_bars",
+    "avg_holding_period_winners_signal_bars",
+    "avg_holding_period_losers_signal_bars",
+    "long_trade_count",
+    "short_trade_count",
+    "long_ev_r_net",
+    "short_ev_r_net",
+    "vwap_touch_rate",
+    "avg_extension_to_entry_delay_signal_bars",
+    "avg_vwap_distance_at_entry_atr_units",
+    "armed_setup_count",
+    "confirmed_reentry_count",
+    "entry_conversion_rate",
+    "vwap_touch_before_time_stop_rate",
+    "stopout_before_any_meaningful_reversion_rate",
+    "mean_max_extension_z_before_entry",
     "capture_ratio_mean",
     "output_dir",
 ]
@@ -45,9 +71,18 @@ CORE_COLUMNS = [
 HYPERPARAM_KEYS = [
     "theta_vol",
     "k_atr",
+    "k_atr_entry_stop",
     "T_hold",
+    "chandelier_lookback",
+    "chandelier_atr_mult",
+    "trail_activation_mode",
+    "trail_activate_after_bars",
+    "trail_activate_after_profit_r",
     "q_comp",
     "z0",
+    "z_ext",
+    "z_reentry",
+    "require_reversal_close",
     "fit_window_days",
     "gate_quantile",
     "k",
@@ -147,6 +182,77 @@ def _turnover_from_trades(trades_df: pd.DataFrame) -> float | None:
     return None
 
 
+def _compute_trade_diagnostics(trades_df: pd.DataFrame, *, status: str, run_dir: Path) -> dict[str, Any]:
+    if trades_df.empty:
+        return {
+            "num_trades": 0,
+            "diag_status": "zero_closed_trades",
+            "mfe_mean_r": None,
+            "mae_mean_r": None,
+            "vwap_touch_rate": None,
+        }
+
+    if "mfe_r" not in trades_df.columns or "mae_r" not in trades_df.columns:
+        if status == "SUCCESS":
+            raise ValueError(
+                f"completed run missing mandatory path diagnostics columns mfe_r/mae_r: run_dir={run_dir}"
+            )
+        return {"diag_status": "missing_path_metrics"}
+
+    mfe_r = pd.to_numeric(trades_df["mfe_r"], errors="coerce")
+    mae_r = pd.to_numeric(trades_df["mae_r"], errors="coerce")
+    if status == "SUCCESS" and ((mfe_r.notna().sum() == 0) or (mae_r.notna().sum() == 0)):
+        raise ValueError(f"completed run has closed trades but null mfe_r/mae_r diagnostics: run_dir={run_dir}")
+
+    realized_r = pd.to_numeric(
+        trades_df.get("realized_r_net", trades_df.get("r_multiple_net", pd.Series(index=trades_df.index))),
+        errors="coerce",
+    )
+    hold_signal = pd.to_numeric(trades_df.get("holding_period_bars_signal"), errors="coerce")
+    ttm_signal = pd.to_numeric(trades_df.get("time_to_mfe_bars_signal"), errors="coerce")
+    side = trades_df.get("side", pd.Series(index=trades_df.index)).astype(str).str.upper()
+    exit_reason = trades_df.get("exit_reason", pd.Series(index=trades_df.index)).astype(str)
+    def _series(name: str, default: float | bool | None = None) -> pd.Series:
+        if name in trades_df.columns:
+            return trades_df[name]
+        return pd.Series(default, index=trades_df.index)
+
+    delay_signal = pd.to_numeric(_series("extension_to_entry_delay_signal_bars"), errors="coerce")
+    vwap_dist = pd.to_numeric(_series("vwap_distance_at_entry_atr_units"), errors="coerce")
+    max_ext = pd.to_numeric(_series("max_extension_z_before_entry"), errors="coerce")
+    touched_vwap = _series("touched_vwap_before_exit", False).astype(str).str.lower().isin({"true", "1"})
+    touched_1r = _series("touched_1r_before_exit", False).astype(str).str.lower().isin({"true", "1"})
+
+    return {
+        "diag_status": "ok",
+        "mfe_mean_r": float(mfe_r.mean()) if mfe_r.notna().any() else None,
+        "mae_mean_r": float(mae_r.mean()) if mae_r.notna().any() else None,
+        "mfe_median_r": float(mfe_r.median()) if mfe_r.notna().any() else None,
+        "mae_median_r": float(mae_r.median()) if mae_r.notna().any() else None,
+        "mfe_p95_r": float(mfe_r.quantile(0.95)) if mfe_r.notna().any() else None,
+        "mae_p95_r": float(mae_r.quantile(0.95)) if mae_r.notna().any() else None,
+        "frac_trades_hit_1r": float((mfe_r >= 1.0).mean()) if mfe_r.notna().any() else None,
+        "frac_trades_hit_2r": float((mfe_r >= 2.0).mean()) if mfe_r.notna().any() else None,
+        "frac_trades_hit_3r": float((mfe_r >= 3.0).mean()) if mfe_r.notna().any() else None,
+        "avg_time_to_mfe_signal_bars": float(ttm_signal.mean()) if ttm_signal.notna().any() else None,
+        "median_time_to_mfe_signal_bars": float(ttm_signal.median()) if ttm_signal.notna().any() else None,
+        "avg_holding_period_signal_bars": float(hold_signal.mean()) if hold_signal.notna().any() else None,
+        "median_holding_period_signal_bars": float(hold_signal.median()) if hold_signal.notna().any() else None,
+        "avg_holding_period_winners_signal_bars": float(hold_signal[realized_r > 0].mean()) if (hold_signal[realized_r > 0].notna().any()) else None,
+        "avg_holding_period_losers_signal_bars": float(hold_signal[realized_r <= 0].mean()) if (hold_signal[realized_r <= 0].notna().any()) else None,
+        "long_trade_count": int((side == "BUY").sum()),
+        "short_trade_count": int((side == "SELL").sum()),
+        "long_ev_r_net": float(realized_r[side == "BUY"].mean()) if (side == "BUY").any() else None,
+        "short_ev_r_net": float(realized_r[side == "SELL"].mean()) if (side == "SELL").any() else None,
+        "vwap_touch_rate": float((exit_reason == "vwap_touch").mean()) if not exit_reason.empty else None,
+        "avg_extension_to_entry_delay_signal_bars": float(delay_signal.mean()) if delay_signal.notna().any() else None,
+        "avg_vwap_distance_at_entry_atr_units": float(vwap_dist.mean()) if vwap_dist.notna().any() else None,
+        "vwap_touch_before_time_stop_rate": float(((exit_reason == "time_stop") & touched_vwap).mean()) if not exit_reason.empty else None,
+        "stopout_before_any_meaningful_reversion_rate": float(((exit_reason == "stop_initial") & (~touched_1r)).mean()) if not exit_reason.empty else None,
+        "mean_max_extension_z_before_entry": float(max_ext.mean()) if max_ext.notna().any() else None,
+    }
+
+
 def build_run_summary_row(run_dir: Path, *, completed_only: bool = True, hypothesis_catalog: dict[str, dict[str, str]] | None = None) -> tuple[dict[str, Any], list[str]]:
     warnings: list[str] = []
     status = detect_run_artifact_status(run_dir)
@@ -197,6 +303,7 @@ def build_run_summary_row(run_dir: Path, *, completed_only: bool = True, hypothe
         "payoff_ratio": performance.get("payoff_ratio_r"),
         "max_consecutive_losses": performance.get("max_consecutive_losses"),
         "num_trades": performance.get("total_trades", performance.get("trades")),
+        "n_symbols": int(trades_df["symbol"].nunique()) if ("symbol" in trades_df.columns and not trades_df.empty) else 0,
         "max_drawdown_r": performance.get("max_drawdown_pct", performance.get("max_drawdown")),
         "drawdown_duration": performance.get("max_drawdown_duration", performance.get("max_drawdown_duration_bars")),
         "turnover": performance.get("turnover", _turnover_from_trades(trades_df)),
@@ -207,6 +314,19 @@ def build_run_summary_row(run_dir: Path, *, completed_only: bool = True, hypothe
         "capture_ratio_mean": _capture_ratio_mean_from_trades(trades_df),
         "output_dir": str(run_dir),
     }
+    row.update(_compute_trade_diagnostics(trades_df, status=status.state, run_dir=run_dir))
+    mechanism = _read_json(run_dir / "l1_h2b_mechanism.json")
+    armed_setup_count = mechanism.get("armed_setup_count")
+    confirmed_reentry_count = mechanism.get("confirmed_reentry_count")
+    row["armed_setup_count"] = armed_setup_count
+    row["confirmed_reentry_count"] = confirmed_reentry_count
+    if armed_setup_count in (None, 0):
+        row["entry_conversion_rate"] = None
+    else:
+        try:
+            row["entry_conversion_rate"] = float(row.get("num_trades") or 0) / float(armed_setup_count)
+        except (TypeError, ValueError, ZeroDivisionError):
+            row["entry_conversion_rate"] = None
 
     for key in HYPERPARAM_KEYS:
         row[key] = strategy_cfg.get(key)
@@ -234,6 +354,8 @@ def summarize_experiment_runs(
 
     rows: list[dict[str, Any]] = []
     warning_rows: list[dict[str, Any]] = []
+    symbol_rows: list[dict[str, Any]] = []
+    exit_rows: list[dict[str, Any]] = []
 
     for run_dir in run_dirs:
         row, run_warnings = build_run_summary_row(
@@ -243,6 +365,48 @@ def summarize_experiment_runs(
         )
         if row:
             rows.append(row)
+            trades_path = run_dir / "trades.csv"
+            try:
+                trades_df = pd.read_csv(trades_path) if trades_path.exists() else pd.DataFrame()
+            except pd.errors.EmptyDataError:
+                trades_df = pd.DataFrame()
+            if not trades_df.empty and "symbol" in trades_df.columns:
+                for symbol, sdf in trades_df.groupby("symbol", dropna=False):
+                    realized = pd.to_numeric(sdf.get("realized_r_net", sdf.get("r_multiple_net")), errors="coerce")
+                    mfe_r = pd.to_numeric(sdf.get("mfe_r"), errors="coerce")
+                    mae_r = pd.to_numeric(sdf.get("mae_r"), errors="coerce")
+                    exit_reason = sdf.get("exit_reason", pd.Series(index=sdf.index)).fillna("other").astype(str)
+                    symbol_side = sdf.get("side", pd.Series(index=sdf.index)).astype(str).str.upper()
+                    is_long = symbol_side == "BUY"
+                    is_short = symbol_side == "SELL"
+                    symbol_rows.append(
+                        {
+                            "run_id": run_dir.name,
+                            "hypothesis_id": row.get("hypothesis_id"),
+                            "symbol": symbol,
+                            "n_trades": int(sdf.shape[0]),
+                            "win_rate": float((realized > 0).mean()) if realized.notna().any() else None,
+                            "ev_r_net": float(realized.mean()) if realized.notna().any() else None,
+                            "ev_r_gross": float(pd.to_numeric(sdf.get("realized_r_gross", sdf.get("r_multiple_gross")), errors="coerce").mean()),
+                            "mfe_mean_r": float(mfe_r.mean()) if mfe_r.notna().any() else None,
+                            "mae_mean_r": float(mae_r.mean()) if mae_r.notna().any() else None,
+                            "frac_trades_hit_1r": float((mfe_r >= 1.0).mean()) if mfe_r.notna().any() else None,
+                            "frac_trades_hit_2r": float((mfe_r >= 2.0).mean()) if mfe_r.notna().any() else None,
+                            "frac_trades_hit_3r": float((mfe_r >= 3.0).mean()) if mfe_r.notna().any() else None,
+                            "vwap_touch_rate": float((exit_reason == "vwap_touch").mean()) if not exit_reason.empty else None,
+                            "avg_time_to_mfe_signal_bars": float(pd.to_numeric(sdf.get("time_to_mfe_bars_signal"), errors="coerce").mean()) if "time_to_mfe_bars_signal" in sdf.columns else None,
+                            "avg_holding_period_signal_bars": float(pd.to_numeric(sdf.get("holding_period_bars_signal"), errors="coerce").mean()) if "holding_period_bars_signal" in sdf.columns else None,
+                            "primary_exit_reason": exit_reason.value_counts().index[0] if not exit_reason.empty else "other",
+                            "long_trade_count": int(is_long.sum()),
+                            "short_trade_count": int(is_short.sum()),
+                            "long_ev_r_net": float(realized[is_long].mean()) if is_long.any() else None,
+                            "short_ev_r_net": float(realized[is_short].mean()) if is_short.any() else None,
+                        }
+                    )
+                if "exit_reason" in trades_df.columns:
+                    reasons = trades_df["exit_reason"].fillna("other").astype(str).value_counts()
+                    for reason, count in reasons.items():
+                        exit_rows.append({"run_id": run_dir.name, "exit_reason": reason, "n_trades": int(count)})
         for warning in run_warnings:
             warning_rows.append({"run_dir": str(run_dir), "warning": warning})
 
@@ -260,6 +424,8 @@ def summarize_experiment_runs(
 
     warnings_path = summaries_dir / "diagnostics_warnings.csv"
     warning_df.to_csv(warnings_path, index=False)
+    pd.DataFrame(symbol_rows).to_csv(summaries_dir / "symbol_summary.csv", index=False)
+    pd.DataFrame(exit_rows).to_csv(summaries_dir / "exit_reason_summary.csv", index=False)
 
     return summary_df, warning_df
 

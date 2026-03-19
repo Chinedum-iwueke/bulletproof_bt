@@ -155,6 +155,8 @@ def write_data_scope(run_dir: Path, *, config: dict, dataset_dir: str | None = N
 
 class TradesCsvWriter:
     _columns = [
+        "run_id",
+        "hypothesis_id",
         "entry_ts",
         "exit_ts",
         "symbol",
@@ -172,16 +174,43 @@ class TradesCsvWriter:
         "slippage",
         "mae_price",
         "mfe_price",
+        "initial_stop_px",
+        "initial_stop_distance_px",
+        "initial_stop_distance_r_denom",
         "risk_amount",
         "stop_distance",
         "entry_stop_distance",
         "r_multiple_gross",
         "r_multiple_net",
+        "realized_r_gross",
+        "realized_r_net",
+        "mfe_r",
+        "mae_r",
+        "time_to_mfe_minutes",
+        "holding_period_minutes",
+        "holding_period_bars_signal",
+        "time_to_mfe_bars_signal",
+        "exit_reason",
+        "whether_trail_activated",
+        "trail_activation_mode",
+        "bars_until_trail_activation",
+        "profit_r_at_trail_activation",
+        "max_unrealized_profit_r",
+        "max_unrealized_loss_r",
+        "reached_1r",
+        "reached_2r",
+        "reached_3r",
+        "touched_vwap_before_exit",
+        "touched_1r_before_exit",
+        "touched_2r_before_exit",
+        "touched_3r_before_exit",
     ]
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, run_id: str | None = None, hypothesis_id: str | None = None):
         path.parent.mkdir(parents=True, exist_ok=True)
         self._path = path
+        self._run_id = run_id
+        self._hypothesis_id = hypothesis_id
         file_exists = path.exists()
         self._file = path.open("a", encoding="utf-8", newline="")
         self._writer = csv.writer(self._file)
@@ -207,22 +236,84 @@ class TradesCsvWriter:
         stop_distance = metadata.get("stop_distance")
         entry_qty = metadata.get("entry_qty", trade.qty)
         entry_stop_distance = metadata.get("entry_stop_distance", stop_distance)
+        entry_stop_price = metadata.get("entry_stop_price")
+        path_favorable_price = metadata.get("path_favorable_price", trade.mfe_price)
+        path_adverse_price = metadata.get("path_adverse_price", trade.mae_price)
 
         pnl_price = trade.pnl
         fees_paid = trade.fees
         pnl_net = pnl_price - fees_paid
+        realized_r_gross = compute_r_multiple(pnl_price, risk_amount)
+        realized_r_net = compute_r_multiple(pnl_net, risk_amount)
+
+        mfe_r = None
+        mae_r = None
+        try:
+            stop_dist = float(entry_stop_distance) if entry_stop_distance is not None else None
+        except (TypeError, ValueError):
+            stop_dist = None
+        if stop_dist is not None and stop_dist > 0:
+            if trade.side.name == "BUY":
+                if path_favorable_price is not None:
+                    mfe_r = (float(path_favorable_price) - float(trade.entry_price)) / stop_dist
+                if path_adverse_price is not None:
+                    mae_r = (float(trade.entry_price) - float(path_adverse_price)) / stop_dist
+            else:
+                if path_favorable_price is not None:
+                    mfe_r = (float(trade.entry_price) - float(path_favorable_price)) / stop_dist
+                if path_adverse_price is not None:
+                    mae_r = (float(path_adverse_price) - float(trade.entry_price)) / stop_dist
+
+        entry_ts = trade.entry_ts
+        exit_ts = trade.exit_ts
+        holding_period_minutes = (exit_ts - entry_ts).total_seconds() / 60.0
+        time_to_mfe_minutes = None
+        mfe_ts = metadata.get("path_favorable_ts")
+        if isinstance(mfe_ts, pd.Timestamp):
+            time_to_mfe_minutes = (mfe_ts - entry_ts).total_seconds() / 60.0
+        elif isinstance(mfe_ts, str):
+            parsed_mfe_ts = pd.to_datetime(mfe_ts, utc=True, errors="coerce")
+            if pd.notna(parsed_mfe_ts):
+                time_to_mfe_minutes = (parsed_mfe_ts - entry_ts).total_seconds() / 60.0
 
         computed_values: dict[str, Any] = {
+            "run_id": self._run_id,
+            "hypothesis_id": self._hypothesis_id,
             "pnl_price": pnl_price,
             "fees_paid": fees_paid,
             "pnl_net": pnl_net,
             "risk_amount": risk_amount,
             "stop_distance": stop_distance,
+            "initial_stop_px": entry_stop_price,
+            "initial_stop_distance_px": entry_stop_distance,
+            "initial_stop_distance_r_denom": entry_stop_distance,
             "entry_qty": entry_qty,
             "exit_qty": trade.qty,
             "entry_stop_distance": entry_stop_distance,
-            "r_multiple_gross": compute_r_multiple(pnl_price, risk_amount),
-            "r_multiple_net": compute_r_multiple(pnl_net, risk_amount),
+            "r_multiple_gross": realized_r_gross,
+            "r_multiple_net": realized_r_net,
+            "realized_r_gross": realized_r_gross,
+            "realized_r_net": realized_r_net,
+            "mfe_r": mfe_r,
+            "mae_r": mae_r,
+            "time_to_mfe_minutes": time_to_mfe_minutes,
+            "holding_period_minutes": holding_period_minutes,
+            "holding_period_bars_signal": metadata.get("holding_period_bars_signal"),
+            "time_to_mfe_bars_signal": metadata.get("time_to_mfe_bars_signal"),
+            "exit_reason": metadata.get("exit_reason"),
+            "whether_trail_activated": metadata.get("trail_activated"),
+            "trail_activation_mode": metadata.get("trail_activation_mode"),
+            "bars_until_trail_activation": metadata.get("bars_until_trail_activation"),
+            "profit_r_at_trail_activation": metadata.get("profit_r_at_trail_activation"),
+            "max_unrealized_profit_r": metadata.get("max_unrealized_profit_r", mfe_r),
+            "max_unrealized_loss_r": metadata.get("max_unrealized_loss_r", mae_r),
+            "reached_1r": bool(mfe_r is not None and mfe_r >= 1.0),
+            "reached_2r": bool(mfe_r is not None and mfe_r >= 2.0),
+            "reached_3r": bool(mfe_r is not None and mfe_r >= 3.0),
+            "touched_vwap_before_exit": metadata.get("touched_vwap_before_exit"),
+            "touched_1r_before_exit": bool(mfe_r is not None and mfe_r >= 1.0),
+            "touched_2r_before_exit": bool(mfe_r is not None and mfe_r >= 2.0),
+            "touched_3r_before_exit": bool(mfe_r is not None and mfe_r >= 3.0),
         }
 
         row: list[str] = []

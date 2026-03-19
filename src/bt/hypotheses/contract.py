@@ -102,6 +102,8 @@ class HypothesisContract:
         payload: list[dict[str, Any]] = []
         for variant in base:
             params = variant["params"]
+            if not self._is_valid_variant(params):
+                continue
             payload.append({
                 "hypothesis_id": self.schema.metadata.hypothesis_id,
                 "title": self.schema.metadata.title,
@@ -113,6 +115,31 @@ class HypothesisContract:
                 "required_indicators": list(self.required_indicators()),
             })
         return payload
+
+    def _is_valid_variant(self, params: dict[str, Any]) -> bool:
+        if "z_reentry" in params and "z_ext" in params:
+            try:
+                if float(params["z_reentry"]) >= float(params["z_ext"]):
+                    return False
+            except (TypeError, ValueError):
+                return False
+
+        mode = params.get("trail_activation_mode")
+        if mode is None:
+            return True
+
+        bars_values = self.schema.parameter_grid.get("trail_activate_after_bars")
+        profit_values = self.schema.parameter_grid.get("trail_activate_after_profit_r")
+        if not bars_values or not profit_values:
+            return True
+
+        bars_default = bars_values[0]
+        profit_default = profit_values[0]
+        if str(mode) == "bars":
+            return params.get("trail_activate_after_profit_r") == profit_default
+        if str(mode) == "profit_r":
+            return params.get("trail_activate_after_bars") == bars_default
+        return True
 
     def required_tiers(self) -> tuple[str, ...]:
         return self.schema.evaluation.required_tiers or ("Tier2", "Tier3")
