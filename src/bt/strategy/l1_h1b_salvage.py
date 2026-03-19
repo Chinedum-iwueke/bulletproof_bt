@@ -291,6 +291,7 @@ class L1H1BSalvageStrategy(Strategy):
             if trend_dir_t == 0 or not gate_pass:
                 continue
             side = Side.BUY if trend_dir_t > 0 else Side.SELL
+            entry_reason = "vol_floor_trend_long" if side == Side.BUY else "vol_floor_trend_short"
             if self._disallow_flip and current is not None and ((current == Side.BUY and side == Side.SELL) or (current == Side.SELL and side == Side.BUY)):
                 continue
             stop_distance = self._k_atr * atr_v
@@ -325,6 +326,7 @@ class L1H1BSalvageStrategy(Strategy):
                         "vol_pct_t": vol_pct_t,
                         "gate_pass": gate_pass,
                         "trend_dir_t": trend_dir_t,
+                        "entry_reason": entry_reason,
                         "entry_signal_ts": str(signal_bar.ts),
                         "atr_entry": st.atr_entry,
                         "stop_distance": st.stop_distance_frozen,

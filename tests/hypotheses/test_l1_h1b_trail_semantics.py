@@ -36,6 +36,7 @@ def _first_entry(strategy: HTFContextStrategyAdapter) -> tuple[object, int]:
 def test_trail_activates_on_bar_survival_and_ratchets_for_long() -> None:
     strategy = _build_wrapped_strategy(k_atr_entry_stop=0.5, T_hold=100, chandelier_lookback=2, chandelier_atr_mult=1.0, trail_activation_mode="bars", trail_activate_after_bars=1)
     entry, minute = _first_entry(strategy)
+    assert entry.metadata["entry_reason"] == "vol_floor_trend_long"
     stop = float(entry.metadata["stop_price"])
 
     # before first signal bar completes, no activation-triggered stop hit
