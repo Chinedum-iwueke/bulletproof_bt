@@ -20,4 +20,7 @@ __all__ = [
     "BrokerOrderCancelRequest",
     "BrokerOrderRequest",
     "MarketDataAdapter",
+    "SimulatedBrokerAdapter",
 ]
+
+from bt.exec.adapters.simulated import SimulatedBrokerAdapter

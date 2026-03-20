@@ -1,0 +1,36 @@
+initial_cash: 100000.0
+
+data:
+  mode: dataframe
+
+exec:
+  mode: shadow
+  heartbeat_seconds: 30
+  run_root: outputs/exec_runs
+  close_bar_only: true
+  stale_after_seconds: 120
+
+market_data:
+  bar_interval: 1m
+  warmup_bars: 0
+
+routing:
+  order_type_default: market
+
+execution:
+  profile: tier2
+  intrabar_mode: worst_case
+  spread_mode: fixed_bps
+
+risk:
+  mode: equity_pct
+  r_per_trade: 0.005
+  max_positions: 5
+  max_leverage: 1.5
+  stop_resolution: safe
+  allow_legacy_proxy: true
+
+strategy:
+  name: coinflip
+  seed: 42
+  p_trade: 0.2

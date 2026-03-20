@@ -1,0 +1,117 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Literal, cast
+
+from bt.config import deep_merge, load_yaml, resolve_paths_relative_to
+from bt.core.config_resolver import resolve_config
+from bt.data.load_feed import load_feed
+from bt.execution.commission import CommissionSpec
+from bt.execution.execution_model import ExecutionModel
+from bt.execution.fees import FeeModel
+from bt.execution.intrabar import parse_intrabar_spec
+from bt.execution.profile import resolve_execution_profile
+from bt.execution.slippage import SlippageModel
+from bt.instruments.registry import resolve_instrument_spec
+from bt.logging.trades import make_run_id, prepare_run_dir, write_config_used
+from bt.portfolio.portfolio import Portfolio
+from bt.risk.risk_engine import RiskEngine
+from bt.risk.spec import parse_risk_spec
+from bt.strategy import make_strategy
+from bt.strategy.htf_context import ReadOnlyContextStrategyAdapter
+
+from bt.exec.adapters.simulated import SimulatedBrokerAdapter
+from bt.exec.logging.exec_artifacts import ExecArtifactWriters
+from bt.exec.runtime.bar_gate import ClosedBarGate
+from bt.exec.runtime.health import RuntimeHealthMonitor
+from bt.exec.runtime.loop import RuntimeLoop
+from bt.exec.runtime.scheduler import HeartbeatScheduler
+from bt.exec.services.portfolio_runner import PortfolioRunner
+from bt.exec.services.risk_runner import RiskRunner
+from bt.exec.services.strategy_runner import StrategyRunner
+
+
+def _load_exec_config(config_path: str, override_paths: list[str] | None) -> dict[str, Any]:
+    cfg = load_yaml(config_path)
+    for path in resolve_paths_relative_to(Path(config_path).parent, override_paths):
+        cfg = deep_merge(cfg, load_yaml(path))
+    return resolve_config(cfg)
+
+
+def _coerce_spread_mode(value: object) -> Literal["none", "fixed_bps", "bar_range_proxy", "fixed_pips"]:
+    normalized = str(value)
+    if normalized in {"none", "fixed_bps", "bar_range_proxy", "fixed_pips"}:
+        return cast(Literal["none", "fixed_bps", "bar_range_proxy", "fixed_pips"], normalized)
+    return "none"
+
+
+def _build_components(config: dict[str, Any]) -> tuple[StrategyRunner, RiskRunner, PortfolioRunner, SimulatedBrokerAdapter]:
+    strategy_cfg = config.get("strategy", {}) if isinstance(config.get("strategy"), dict) else {}
+    strategy = ReadOnlyContextStrategyAdapter(inner=make_strategy(strategy_cfg.get("name", "coinflip"), **{k: v for k, v in strategy_cfg.items() if k != "name"}))
+    risk_cfg = dict(config.get("risk", {}))
+    risk_spec = parse_risk_spec({"risk": risk_cfg})
+    profile = resolve_execution_profile(config)
+    eff_slip = profile.slippage_bps + profile.spread_bps
+    risk = RiskEngine(
+        max_positions=int(risk_cfg.get("max_positions", 5)),
+        max_notional_per_symbol=config.get("max_notional_per_symbol"),
+        margin_buffer_tier=int(risk_cfg.get("margin_buffer_tier", 1)),
+        maker_fee_bps=profile.maker_fee * 1e4,
+        taker_fee_bps=profile.taker_fee * 1e4,
+        slippage_k_proxy=float(risk_cfg.get("slippage_k_proxy", 0.0)),
+        config={"risk": risk_cfg, "model": "fixed_bps", "fixed_bps": eff_slip, "slippage": config.get("slippage")},
+    )
+    portfolio = Portfolio(initial_cash=float(config.get("initial_cash", 100000.0)), max_leverage=risk_spec.max_leverage or float(config.get("max_leverage", 2.0)))
+
+    ex_cfg = config.get("execution", {}) if isinstance(config.get("execution"), dict) else {}
+    ex_model = ExecutionModel(
+        fee_model=FeeModel(maker_fee_bps=profile.maker_fee * 1e4, taker_fee_bps=profile.taker_fee * 1e4),
+        slippage_model=SlippageModel(k=float(config.get("slippage_k", 1.0)), atr_pct_cap=float(config.get("atr_pct_cap", 0.2)), impact_cap=float(config.get("impact_cap", 0.05)), fixed_bps=eff_slip),
+        spread_mode=_coerce_spread_mode(ex_cfg.get("spread_mode", "none")),
+        spread_bps=float(ex_cfg.get("spread_bps", 0.0) or 0.0),
+        spread_pips=(None if ex_cfg.get("spread_pips") is None else float(cast(object, ex_cfg.get("spread_pips")))),
+        intrabar_mode=parse_intrabar_spec(config).mode,
+        delay_bars=int(profile.delay_bars),
+        instrument=resolve_instrument_spec(config, symbol=None),
+        commission=CommissionSpec(mode=str((ex_cfg.get("commission") or {}).get("mode", "none"))),
+    )
+    return StrategyRunner(strategy=strategy), RiskRunner(risk_engine=risk), PortfolioRunner(portfolio=portfolio), SimulatedBrokerAdapter(execution_model=ex_model)
+
+
+def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: str | None = None, override_paths: list[str] | None = None, run_id: str | None = None) -> str:
+    config = _load_exec_config(config_path, override_paths)
+    exec_cfg = config.setdefault("exec", {})
+    exec_cfg["mode"] = mode
+
+    run_root = Path(out_dir or exec_cfg.get("run_root", "outputs/exec_runs"))
+    rid = run_id or make_run_id(prefix="exec")
+    run_dir = prepare_run_dir(run_root, rid)
+    write_config_used(run_dir, config)
+    artifacts = ExecArtifactWriters(run_dir=run_dir, run_id=rid, mode=mode, config=config, data_path=data_path)
+    artifacts.write_status(state="running")
+
+    strategy_runner, risk_runner, portfolio_runner, adapter = _build_components(config)
+    loop = RuntimeLoop(
+        feed=load_feed(data_path, config),
+        strategy_runner=strategy_runner,
+        risk_runner=risk_runner,
+        portfolio_runner=portfolio_runner,
+        adapter=adapter,
+        artifacts=artifacts,
+        scheduler=HeartbeatScheduler(heartbeat_seconds=int(exec_cfg.get("heartbeat_seconds", 30))),
+        bar_gate=ClosedBarGate(close_bar_only=bool(exec_cfg.get("close_bar_only", True)), warmup_bars=int((config.get("market_data", {}) or {}).get("warmup_bars", 0))),
+        health=RuntimeHealthMonitor(stale_after_seconds=int(exec_cfg.get("stale_after_seconds", 120))),
+        mode=mode,
+    )
+
+    try:
+        adapter.start()
+        loop.run()
+        artifacts.write_status(state="stopped")
+    except Exception as exc:
+        artifacts.write_status(state="failed", error=str(exc))
+        raise
+    finally:
+        adapter.stop()
+        artifacts.close()
+    return str(run_dir)
