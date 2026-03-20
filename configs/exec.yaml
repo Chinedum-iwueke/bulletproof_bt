@@ -9,7 +9,15 @@ exec:
   run_root: outputs/exec_runs
   close_bar_only: true
   stale_after_seconds: 120
+  restart_policy: resume
+  checkpoint_interval_seconds: 60
+  persist_state: true
 
+state:
+  backend: sqlite
+  path: outputs/exec_state/runtime.sqlite
+  save_checkpoints: true
+  save_processed_event_ids: true
 market_data:
   bar_interval: 1m
   warmup_bars: 0

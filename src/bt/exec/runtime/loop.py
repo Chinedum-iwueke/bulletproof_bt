@@ -1,17 +1,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
+
+import pandas as pd
 
 from bt.core.enums import Side
-from bt.exec.adapters.base import BrokerOrderRequest
-from bt.exec.adapters.simulated import SimulatedBrokerAdapter
-from bt.exec.events.broker_events import BrokerOrderFilledEvent
 from bt.exec.logging.heartbeats import heartbeat_record
-from bt.exec.logging.orders import order_record
+from bt.exec.logging.schemas import DecisionArtifactRecord
+from bt.exec.services.execution_router import ExecutionRouter, build_submitted_order_artifact
 from bt.exec.services.portfolio_runner import PortfolioRunner
 from bt.exec.services.risk_runner import RiskRunner
 from bt.exec.services.strategy_runner import StrategyRunner, build_positions_context
+from bt.exec.state.recovery import should_skip_bar
+
+
+@dataclass
+class RuntimeLoopState:
+    client_order_seq: int = 0
+    checkpoint_sequence: int = 0
+    last_processed_bar_ts: pd.Timestamp | None = None
 
 
 @dataclass
@@ -20,15 +28,16 @@ class RuntimeLoop:
     strategy_runner: StrategyRunner
     risk_runner: RiskRunner
     portfolio_runner: PortfolioRunner
-    adapter: SimulatedBrokerAdapter
+    execution_router: ExecutionRouter
     artifacts: Any
     scheduler: Any
     bar_gate: Any
     health: Any
     mode: str
+    state: RuntimeLoopState
+    on_bar_complete: Callable[[pd.Timestamp, RuntimeLoopState], None] | None = None
 
-    def run(self) -> None:
-        client_order_seq = 0
+    def run(self) -> RuntimeLoopState:
         while True:
             bars = self.feed.next()
             if bars is None:
@@ -37,6 +46,8 @@ class RuntimeLoop:
             if not bars_by_symbol:
                 continue
             ts = next(iter(bars_by_symbol.values())).ts
+            if should_skip_bar(checkpoint_bar_ts=self.state.last_processed_bar_ts, bar_ts=ts):
+                continue
             self.health.observe_bar(ts)
 
             for hb in self.scheduler.on_timestamp(ts):
@@ -66,29 +77,28 @@ class RuntimeLoop:
                     max_leverage=self.portfolio_runner.portfolio.max_leverage,
                     current_qty=current_qty,
                 )
-                self.artifacts.write_decision({"ts": ts, "symbol": signal.symbol, "signal": signal, "approved": decision.approved, "reason": decision.reason})
+                self.artifacts.write_decision(
+                    DecisionArtifactRecord(ts=ts, symbol=signal.symbol, signal=signal, approved=decision.approved, reason=decision.reason)
+                )
                 if not decision.approved or decision.order_intent is None or self.mode == "shadow":
                     continue
-                client_order_seq += 1
-                request = BrokerOrderRequest(
-                    client_order_id=f"co-{client_order_seq}",
-                    symbol=decision.order_intent.symbol,
-                    side=decision.order_intent.side.value,
-                    qty=abs(float(decision.order_intent.qty)),
-                    order_type=decision.order_intent.order_type.value,
-                    limit_price=decision.order_intent.limit_price,
-                    metadata=dict(decision.order_intent.metadata),
+                self.state.client_order_seq += 1
+                submit_result = self.execution_router.submit_order(order_seq=self.state.client_order_seq, intent=decision.order_intent, ts=ts)
+                self.artifacts.write_order(
+                    build_submitted_order_artifact(
+                        ts=ts,
+                        symbol=decision.order_intent.symbol,
+                        side=decision.order_intent.side,
+                        qty=abs(float(decision.order_intent.qty)),
+                        result=submit_result,
+                    )
                 )
-                req_id = self.adapter.submit_order(request)
-                self.artifacts.write_order(order_record(ts=ts, event="submitted", payload={"request_id": req_id, "symbol": request.symbol, "side": request.side, "qty": request.qty}))
 
-            if self.mode == "paper_simulated":
-                self.adapter.process_bar(ts=ts, bars_by_symbol=bars_by_symbol)
-                fills = []
-                for evt in self.adapter.iter_events():
-                    if isinstance(evt, BrokerOrderFilledEvent):
-                        fills.append(evt.fill)
-                        self.artifacts.write_fill({"ts": evt.fill.ts, "symbol": evt.fill.symbol, "order_id": evt.fill.order_id, "side": evt.fill.side, "qty": evt.fill.qty, "price": evt.fill.price, "fee": evt.fill.fee, "slippage": evt.fill.slippage, "metadata": evt.fill.metadata})
-                if fills:
-                    self.portfolio_runner.apply_fills(fills)
+            for fill_artifact in self.execution_router.process_bar(ts=ts, bars_by_symbol=bars_by_symbol):
+                self.artifacts.write_fill(fill_artifact)
+
             self.portfolio_runner.mark_to_market(bars_by_symbol)
+            self.state.last_processed_bar_ts = ts
+            if self.on_bar_complete is not None:
+                self.on_bar_complete(ts, self.state)
+        return self.state

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from bt.logging.formatting import write_json_deterministic
@@ -51,14 +52,22 @@ class ExecArtifactWriters:
         self.heartbeat.close()
         self.reconciliation.close()
 
-    def write_decision(self, record: dict[str, Any]) -> None:
-        self.decisions.write(record)
+    @staticmethod
+    def _normalize_record(record: object) -> dict[str, Any]:
+        if is_dataclass(record):
+            return asdict(record)
+        if isinstance(record, dict):
+            return record
+        raise TypeError(f"Unsupported artifact record type: {type(record)!r}")
 
-    def write_order(self, record: dict[str, Any]) -> None:
-        self.orders.write(record)
+    def write_decision(self, record: object) -> None:
+        self.decisions.write(self._normalize_record(record))
 
-    def write_fill(self, record: dict[str, Any]) -> None:
-        self.fills.write(record)
+    def write_order(self, record: object) -> None:
+        self.orders.write(self._normalize_record(record))
 
-    def write_heartbeat(self, record: dict[str, Any]) -> None:
-        self.heartbeat.write(record)
+    def write_fill(self, record: object) -> None:
+        self.fills.write(self._normalize_record(record))
+
+    def write_heartbeat(self, record: object) -> None:
+        self.heartbeat.write(self._normalize_record(record))

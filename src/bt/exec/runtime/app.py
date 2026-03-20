@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal, cast
 
+import pandas as pd
+
 from bt.config import deep_merge, load_yaml, resolve_paths_relative_to
 from bt.core.config_resolver import resolve_config
 from bt.data.load_feed import load_feed
@@ -24,11 +26,15 @@ from bt.exec.adapters.simulated import SimulatedBrokerAdapter
 from bt.exec.logging.exec_artifacts import ExecArtifactWriters
 from bt.exec.runtime.bar_gate import ClosedBarGate
 from bt.exec.runtime.health import RuntimeHealthMonitor
-from bt.exec.runtime.loop import RuntimeLoop
+from bt.exec.runtime.loop import RuntimeLoop, RuntimeLoopState
 from bt.exec.runtime.scheduler import HeartbeatScheduler
+from bt.exec.services.execution_router import ExecutionRouter
 from bt.exec.services.portfolio_runner import PortfolioRunner
 from bt.exec.services.risk_runner import RiskRunner
 from bt.exec.services.strategy_runner import StrategyRunner
+from bt.exec.state import RuntimeSessionState, SQLiteExecutionStateStore
+from bt.exec.state.checkpoints import build_runtime_checkpoint, save_checkpoint
+from bt.exec.state.recovery import build_recovery_plan
 
 
 def _load_exec_config(config_path: str, override_paths: list[str] | None) -> dict[str, Any]:
@@ -78,12 +84,31 @@ def _build_components(config: dict[str, Any]) -> tuple[StrategyRunner, RiskRunne
     return StrategyRunner(strategy=strategy), RiskRunner(risk_engine=risk), PortfolioRunner(portfolio=portfolio), SimulatedBrokerAdapter(execution_model=ex_model)
 
 
+def _validate_state_config(*, config: dict[str, Any]) -> tuple[bool, str, str, int, bool, bool]:
+    exec_cfg = config.setdefault("exec", {})
+    state_cfg = config.setdefault("state", {})
+    persist_state = bool(exec_cfg.get("persist_state", True))
+    restart_policy = str(exec_cfg.get("restart_policy", "resume"))
+    if restart_policy not in {"resume", "reconcile_only", "fresh"}:
+        raise ValueError(f"Unsupported exec.restart_policy: {restart_policy}")
+    checkpoint_interval_seconds = int(exec_cfg.get("checkpoint_interval_seconds", 60))
+    save_processed_event_ids = bool(state_cfg.get("save_processed_event_ids", True))
+    save_checkpoints = bool(state_cfg.get("save_checkpoints", True))
+    state_path = str(state_cfg.get("path", "outputs/exec_state/runtime.sqlite"))
+    if persist_state and str(state_cfg.get("backend", "sqlite")) != "sqlite":
+        raise ValueError("Phase 2 supports only state.backend=sqlite")
+    return persist_state, restart_policy, state_path, checkpoint_interval_seconds, save_processed_event_ids, save_checkpoints
+
+
 def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: str | None = None, override_paths: list[str] | None = None, run_id: str | None = None) -> str:
     config = _load_exec_config(config_path, override_paths)
     exec_cfg = config.setdefault("exec", {})
     exec_cfg["mode"] = mode
 
+    persist_state, restart_policy, state_path, checkpoint_interval_seconds, save_processed_event_ids, save_checkpoints = _validate_state_config(config=config)
     run_root = Path(out_dir or exec_cfg.get("run_root", "outputs/exec_runs"))
+    if state_path == "outputs/exec_state/runtime.sqlite" and out_dir is not None:
+        state_path = str((run_root / "exec_state" / "runtime.sqlite"))
     rid = run_id or make_run_id(prefix="exec")
     run_dir = prepare_run_dir(run_root, rid)
     write_config_used(run_dir, config)
@@ -91,27 +116,105 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
     artifacts.write_status(state="running")
 
     strategy_runner, risk_runner, portfolio_runner, adapter = _build_components(config)
+
+    checkpoint_ts: pd.Timestamp | None = None
+    order_seq = 0
+    checkpoint_seq = 0
+    checkpoint_run_id = rid
+    state_store: SQLiteExecutionStateStore | None = None
+    if persist_state:
+        state_store = SQLiteExecutionStateStore(path=state_path)
+        plan = build_recovery_plan(store=state_store, mode=mode, restart_policy=restart_policy)
+        if plan.checkpoint is not None and plan.disposition.value == "resume":
+            checkpoint_ts = plan.checkpoint.last_bar_ts
+            order_seq = plan.checkpoint.next_client_order_seq
+            checkpoint_seq = plan.checkpoint.sequence
+            checkpoint_run_id = plan.checkpoint.run_id
+        session = RuntimeSessionState(
+            run_id=rid,
+            mode=mode,
+            restart_policy=restart_policy,
+            status="running",
+            started_at=pd.Timestamp.now(tz="UTC"),
+            updated_at=pd.Timestamp.now(tz="UTC"),
+            metadata={"recovery_disposition": plan.disposition.value, "recovery_message": plan.message, "resumed_from_run_id": checkpoint_run_id if checkpoint_run_id != rid else None},
+        )
+        state_store.record_session_liveness(session)
+
+    last_checkpoint_wallclock: pd.Timestamp | None = None
+
+    def _checkpoint_callback(ts: pd.Timestamp, state: RuntimeLoopState) -> None:
+        nonlocal last_checkpoint_wallclock
+        if state_store is None or not save_checkpoints:
+            return
+        now = pd.Timestamp.now(tz="UTC")
+        if last_checkpoint_wallclock is not None and (now - last_checkpoint_wallclock).total_seconds() < checkpoint_interval_seconds:
+            return
+        checkpoint = build_runtime_checkpoint(
+            run_id=rid,
+            sequence=state.checkpoint_sequence + 1,
+            last_bar_ts=state.last_processed_bar_ts,
+            next_client_order_seq=state.client_order_seq,
+            open_orders=adapter.fetch_open_orders(),
+            positions=list(portfolio_runner.portfolio.position_book.all_positions().values()),
+            balances=adapter.fetch_balances(),
+            mode=mode,
+        )
+        save_checkpoint(store=state_store, checkpoint=checkpoint)
+        state.checkpoint_sequence = checkpoint.sequence
+        last_checkpoint_wallclock = now
+
+    execution_router = ExecutionRouter(
+        run_id=rid,
+        mode=mode,
+        adapter=adapter,
+        portfolio_runner=portfolio_runner,
+        store=state_store,
+        save_processed_event_ids=save_processed_event_ids,
+    )
+
     loop = RuntimeLoop(
         feed=load_feed(data_path, config),
         strategy_runner=strategy_runner,
         risk_runner=risk_runner,
         portfolio_runner=portfolio_runner,
-        adapter=adapter,
+        execution_router=execution_router,
         artifacts=artifacts,
         scheduler=HeartbeatScheduler(heartbeat_seconds=int(exec_cfg.get("heartbeat_seconds", 30))),
         bar_gate=ClosedBarGate(close_bar_only=bool(exec_cfg.get("close_bar_only", True)), warmup_bars=int((config.get("market_data", {}) or {}).get("warmup_bars", 0))),
         health=RuntimeHealthMonitor(stale_after_seconds=int(exec_cfg.get("stale_after_seconds", 120))),
         mode=mode,
+        state=RuntimeLoopState(client_order_seq=order_seq, checkpoint_sequence=checkpoint_seq, last_processed_bar_ts=checkpoint_ts),
+        on_bar_complete=_checkpoint_callback,
     )
 
+    final_state = loop.state
     try:
         adapter.start()
-        loop.run()
+        final_state = loop.run()
         artifacts.write_status(state="stopped")
+        if state_store is not None:
+            if save_checkpoints:
+                checkpoint = build_runtime_checkpoint(
+                    run_id=rid,
+                    sequence=final_state.checkpoint_sequence + 1,
+                    last_bar_ts=final_state.last_processed_bar_ts,
+                    next_client_order_seq=final_state.client_order_seq,
+                    open_orders=adapter.fetch_open_orders(),
+                    positions=list(portfolio_runner.portfolio.position_book.all_positions().values()),
+                    balances=adapter.fetch_balances(),
+                    mode=mode,
+                )
+                save_checkpoint(store=state_store, checkpoint=checkpoint)
+            state_store.mark_session_final_status(run_id=rid, status="stopped", ts=pd.Timestamp.now(tz="UTC"))
     except Exception as exc:
         artifacts.write_status(state="failed", error=str(exc))
+        if state_store is not None:
+            state_store.mark_session_final_status(run_id=rid, status="failed", ts=pd.Timestamp.now(tz="UTC"), error=str(exc))
         raise
     finally:
         adapter.stop()
         artifacts.close()
+        if state_store is not None:
+            state_store.close()
     return str(run_dir)
