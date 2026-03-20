@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Iterator
-
 import pandas as pd
 
 from bt.core.enums import OrderState, OrderType, PositionState, Side
@@ -28,9 +26,8 @@ class DummyMarketDataAdapter:
     def subscribe_closed_bars(self, symbols: list[str], timeframe: str) -> None:
         _ = (symbols, timeframe)
 
-    def iter_events(self) -> Iterator[object]:
-        if False:
-            yield object()
+    def iter_events(self) -> list[object]:
+        return []
 
     def get_health(self) -> AdapterHealth:
         return AdapterHealth(source="market", ts=pd.Timestamp("2026-01-01T00:00:00Z"), status=AdapterHealthStatus.HEALTHY)
@@ -43,9 +40,8 @@ class DummyBrokerAdapter:
     def stop(self) -> None:
         return None
 
-    def iter_events(self) -> Iterator[object]:
-        if False:
-            yield object()
+    def iter_events(self) -> list[object]:
+        return []
 
     def submit_order(self, request: BrokerOrderRequest) -> str:
         _ = request
@@ -70,6 +66,10 @@ class DummyBrokerAdapter:
                 state=OrderState.NEW,
             )
         ]
+
+    def fetch_completed_orders(self, limit: int = 200) -> list[Order]:
+        _ = limit
+        return []
 
     def fetch_positions(self) -> list[Position]:
         return [

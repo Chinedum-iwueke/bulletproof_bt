@@ -203,7 +203,7 @@ class SQLiteExecutionStateStore:
             (run_id,),
         ).fetchall()
         order_state: dict[str, Order] = {}
-        terminal = {"filled", "cancelled", "rejected"}
+        terminal = {"filled", "cancelled", "rejected", "expired"}
         for row in rows:
             payload = json.loads(str(row["payload_json"]))
             order_payload = payload.get("order")

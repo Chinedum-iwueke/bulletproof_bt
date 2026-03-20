@@ -113,3 +113,15 @@ class BrokerConnectionStatusEvent:
 
     def __post_init__(self) -> None:
         _ensure_utc(self.ts, "ts")
+
+
+BrokerEvent = (
+    BrokerOrderAcknowledgedEvent
+    | BrokerOrderRejectedEvent
+    | BrokerOrderPartiallyFilledEvent
+    | BrokerOrderFilledEvent
+    | BrokerOrderCancelledEvent
+    | BrokerPositionSnapshotEvent
+    | BrokerBalanceSnapshotEvent
+    | BrokerConnectionStatusEvent
+)

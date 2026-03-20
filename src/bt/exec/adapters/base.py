@@ -112,7 +112,7 @@ class BrokerAdapter(Protocol):
     def stop(self) -> None:
         """Stop broker connectivity resources."""
 
-    def iter_events(self) -> Any:
+    def iter_events(self) -> list[object]:
         """Yield broker-side events for runtime processing."""
 
     def submit_order(self, request: BrokerOrderRequest) -> str:
@@ -126,6 +126,9 @@ class BrokerAdapter(Protocol):
 
     def fetch_open_orders(self) -> list[Order]:
         """Fetch currently open orders."""
+
+    def fetch_completed_orders(self, limit: int = 200) -> list[Order]:
+        """Fetch recently completed orders for reconciliation."""
 
     def fetch_positions(self) -> list[Position]:
         """Fetch current positions snapshot."""

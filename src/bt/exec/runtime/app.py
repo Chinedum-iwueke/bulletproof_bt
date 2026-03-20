@@ -24,16 +24,17 @@ from bt.strategy.htf_context import ReadOnlyContextStrategyAdapter
 
 from bt.exec.adapters.simulated import SimulatedBrokerAdapter
 from bt.exec.logging.exec_artifacts import ExecArtifactWriters
+from bt.exec.reconcile import ReconciliationEngine, ReconciliationInputs, ReconciliationPolicy, ReconciliationScope, reconciliation_record
 from bt.exec.runtime.bar_gate import ClosedBarGate
 from bt.exec.runtime.health import RuntimeHealthMonitor
-from bt.exec.runtime.loop import RuntimeLoop, RuntimeLoopState
+from bt.exec.runtime.loop import ReconciliationConfig, RuntimeLoop, RuntimeLoopState
 from bt.exec.runtime.scheduler import HeartbeatScheduler
 from bt.exec.services.execution_router import ExecutionRouter
 from bt.exec.services.portfolio_runner import PortfolioRunner
 from bt.exec.services.risk_runner import RiskRunner
 from bt.exec.services.strategy_runner import StrategyRunner
 from bt.exec.state import RuntimeSessionState, SQLiteExecutionStateStore
-from bt.exec.state.checkpoints import build_runtime_checkpoint, save_checkpoint
+from bt.exec.state.checkpoints import CheckpointCadence, build_runtime_checkpoint, save_checkpoint
 from bt.exec.state.recovery import build_recovery_plan
 
 
@@ -100,11 +101,33 @@ def _validate_state_config(*, config: dict[str, Any]) -> tuple[bool, str, str, i
     return persist_state, restart_policy, state_path, checkpoint_interval_seconds, save_processed_event_ids, save_checkpoints
 
 
+def _resolve_reconcile_config(config: dict[str, Any]) -> tuple[ReconciliationConfig, ReconciliationPolicy, ReconciliationScope, float, float, float]:
+    rcfg = config.setdefault("reconcile", {})
+    interval = int(rcfg.get("interval_seconds", 30))
+    if interval <= 0:
+        raise ValueError("reconcile.interval_seconds must be > 0")
+    policy = ReconciliationPolicy(str(rcfg.get("policy", "warn")))
+    return (
+        ReconciliationConfig(enabled=bool(rcfg.get("enabled", True)), interval_seconds=interval),
+        policy,
+        ReconciliationScope(
+            compare_orders=bool(rcfg.get("compare_orders", True)),
+            compare_fills=bool(rcfg.get("compare_fills", True)),
+            compare_positions=bool(rcfg.get("compare_positions", True)),
+            compare_balances=bool(rcfg.get("compare_balances", True)),
+        ),
+        float(rcfg.get("material_fill_qty_tolerance", 0.0)),
+        float(rcfg.get("material_position_qty_tolerance", 0.0)),
+        float(rcfg.get("material_balance_tolerance", 0.0)),
+    )
+
+
 def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: str | None = None, override_paths: list[str] | None = None, run_id: str | None = None) -> str:
     config = _load_exec_config(config_path, override_paths)
     exec_cfg = config.setdefault("exec", {})
     exec_cfg["mode"] = mode
 
+    reconcile_cfg, reconcile_policy, reconcile_scope, fill_tol, pos_tol, bal_tol = _resolve_reconcile_config(config)
     persist_state, restart_policy, state_path, checkpoint_interval_seconds, save_processed_event_ids, save_checkpoints = _validate_state_config(config=config)
     run_root = Path(out_dir or exec_cfg.get("run_root", "outputs/exec_runs"))
     if state_path == "outputs/exec_state/runtime.sqlite" and out_dir is not None:
@@ -112,15 +135,13 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
     rid = run_id or make_run_id(prefix="exec")
     run_dir = prepare_run_dir(run_root, rid)
     write_config_used(run_dir, config)
-    artifacts = ExecArtifactWriters(run_dir=run_dir, run_id=rid, mode=mode, config=config, data_path=data_path)
-    artifacts.write_status(state="running")
 
     strategy_runner, risk_runner, portfolio_runner, adapter = _build_components(config)
 
     checkpoint_ts: pd.Timestamp | None = None
     order_seq = 0
     checkpoint_seq = 0
-    checkpoint_run_id = rid
+    resumed_from_run_id: str | None = None
     state_store: SQLiteExecutionStateStore | None = None
     if persist_state:
         state_store = SQLiteExecutionStateStore(path=state_path)
@@ -129,7 +150,7 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
             checkpoint_ts = plan.checkpoint.last_bar_ts
             order_seq = plan.checkpoint.next_client_order_seq
             checkpoint_seq = plan.checkpoint.sequence
-            checkpoint_run_id = plan.checkpoint.run_id
+            resumed_from_run_id = plan.checkpoint.run_id
         session = RuntimeSessionState(
             run_id=rid,
             mode=mode,
@@ -137,18 +158,19 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
             status="running",
             started_at=pd.Timestamp.now(tz="UTC"),
             updated_at=pd.Timestamp.now(tz="UTC"),
-            metadata={"recovery_disposition": plan.disposition.value, "recovery_message": plan.message, "resumed_from_run_id": checkpoint_run_id if checkpoint_run_id != rid else None},
+            metadata={"recovery_disposition": plan.disposition.value, "recovery_message": plan.message, "resumed_from_run_id": resumed_from_run_id},
         )
         state_store.record_session_liveness(session)
 
-    last_checkpoint_wallclock: pd.Timestamp | None = None
+    artifacts = ExecArtifactWriters(run_dir=run_dir, run_id=rid, mode=mode, config=config, data_path=data_path, resumed_from_run_id=resumed_from_run_id)
+    artifacts.write_status(state="running")
+
+    checkpoint_cadence = CheckpointCadence(interval_seconds=checkpoint_interval_seconds)
 
     def _checkpoint_callback(ts: pd.Timestamp, state: RuntimeLoopState) -> None:
-        nonlocal last_checkpoint_wallclock
         if state_store is None or not save_checkpoints:
             return
-        now = pd.Timestamp.now(tz="UTC")
-        if last_checkpoint_wallclock is not None and (now - last_checkpoint_wallclock).total_seconds() < checkpoint_interval_seconds:
+        if not checkpoint_cadence.should_checkpoint(ts):
             return
         checkpoint = build_runtime_checkpoint(
             run_id=rid,
@@ -162,7 +184,6 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
         )
         save_checkpoint(store=state_store, checkpoint=checkpoint)
         state.checkpoint_sequence = checkpoint.sequence
-        last_checkpoint_wallclock = now
 
     execution_router = ExecutionRouter(
         run_id=rid,
@@ -172,6 +193,31 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
         store=state_store,
         save_processed_event_ids=save_processed_event_ids,
     )
+
+    reconciliation_engine = ReconciliationEngine()
+
+    def _run_reconcile(ts: pd.Timestamp):
+        local_positions = list(portfolio_runner.portfolio.position_book.all_positions().values())
+        local_balances = adapter.fetch_balances()
+        inputs = ReconciliationInputs(
+            run_id=rid,
+            ts=ts,
+            local_open_orders=execution_router.current_open_orders(),
+            adapter_open_orders=adapter.fetch_open_orders(),
+            adapter_completed_orders=adapter.fetch_completed_orders(),
+            local_fills=execution_router.local_fills(),
+            adapter_fills=adapter.fetch_recent_fills_or_executions(),
+            local_positions=local_positions,
+            adapter_positions=adapter.fetch_positions(),
+            local_balances=local_balances,
+            adapter_balances=adapter.fetch_balances(),
+            scope=reconcile_scope,
+            material_fill_qty_tolerance=fill_tol,
+            material_position_qty_tolerance=pos_tol,
+            material_balance_tolerance=bal_tol,
+        )
+        result = reconciliation_engine.reconcile(inputs=inputs, policy=reconcile_policy)
+        return reconciliation_record(result)
 
     loop = RuntimeLoop(
         feed=load_feed(data_path, config),
@@ -185,6 +231,8 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
         health=RuntimeHealthMonitor(stale_after_seconds=int(exec_cfg.get("stale_after_seconds", 120))),
         mode=mode,
         state=RuntimeLoopState(client_order_seq=order_seq, checkpoint_sequence=checkpoint_seq, last_processed_bar_ts=checkpoint_ts),
+        reconciliation=reconcile_cfg,
+        reconcile_fn=_run_reconcile,
         on_bar_complete=_checkpoint_callback,
     )
 

@@ -42,3 +42,15 @@ strategy:
   name: coinflip
   seed: 42
   p_trade: 0.2
+
+reconcile:
+  enabled: true
+  interval_seconds: 30
+  policy: warn
+  compare_orders: true
+  compare_fills: true
+  compare_positions: true
+  compare_balances: true
+  material_fill_qty_tolerance: 0.0
+  material_position_qty_tolerance: 0.0
+  material_balance_tolerance: 0.0

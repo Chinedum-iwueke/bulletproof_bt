@@ -8,6 +8,22 @@ from bt.exec.state.models import RuntimeCheckpoint
 from bt.exec.state.store import ExecutionStateStore
 
 
+
+
+class CheckpointCadence:
+    def __init__(self, *, interval_seconds: int) -> None:
+        self._interval_seconds = max(1, int(interval_seconds))
+        self._last_ts: pd.Timestamp | None = None
+
+    def should_checkpoint(self, ts: pd.Timestamp) -> bool:
+        if self._last_ts is None:
+            self._last_ts = ts
+            return True
+        if (ts - self._last_ts).total_seconds() >= float(self._interval_seconds):
+            self._last_ts = ts
+            return True
+        return False
+
 def build_runtime_checkpoint(
     *,
     run_id: str,

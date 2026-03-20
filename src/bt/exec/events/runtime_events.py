@@ -77,3 +77,6 @@ class RuntimeLifecycleEvent:
 
     def __post_init__(self) -> None:
         _ensure_utc(self.ts, "ts")
+
+
+RuntimeEvent = RuntimeHeartbeatEvent | ClosedBarEvent | RuntimeHealthEvent | ReconciliationTickEvent | RuntimeLifecycleEvent

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Callable, Protocol
 
 import pandas as pd
 
 from bt.core.enums import Side
 from bt.exec.logging.heartbeats import heartbeat_record
 from bt.exec.logging.schemas import DecisionArtifactRecord
+from bt.exec.reconcile import ReconciliationResult
 from bt.exec.services.execution_router import ExecutionRouter, build_submitted_order_artifact
 from bt.exec.services.portfolio_runner import PortfolioRunner
 from bt.exec.services.risk_runner import RiskRunner
@@ -15,31 +16,45 @@ from bt.exec.services.strategy_runner import StrategyRunner, build_positions_con
 from bt.exec.state.recovery import should_skip_bar
 
 
+@dataclass(frozen=True)
+class ReconciliationConfig:
+    enabled: bool
+    interval_seconds: int
+
+
 @dataclass
 class RuntimeLoopState:
     client_order_seq: int = 0
     checkpoint_sequence: int = 0
     last_processed_bar_ts: pd.Timestamp | None = None
+    frozen: bool = False
+
+
+class ReconcileFn(Protocol):
+    def __call__(self, ts: pd.Timestamp) -> ReconciliationResult | dict[str, object] | None: ...
 
 
 @dataclass
 class RuntimeLoop:
-    feed: Any
+    feed: object
     strategy_runner: StrategyRunner
     risk_runner: RiskRunner
     portfolio_runner: PortfolioRunner
     execution_router: ExecutionRouter
-    artifacts: Any
-    scheduler: Any
-    bar_gate: Any
-    health: Any
+    artifacts: object
+    scheduler: object
+    bar_gate: object
+    health: object
     mode: str
     state: RuntimeLoopState
+    reconciliation: ReconciliationConfig
+    reconcile_fn: ReconcileFn | None = None
     on_bar_complete: Callable[[pd.Timestamp, RuntimeLoopState], None] | None = None
 
     def run(self) -> RuntimeLoopState:
+        last_reconcile_ts: pd.Timestamp | None = None
         while True:
-            bars = self.feed.next()
+            bars = self.feed.next()  # type: ignore[attr-defined]
             if bars is None:
                 break
             bars_by_symbol = bars if isinstance(bars, dict) else {bar.symbol: bar for bar in list(bars)}
@@ -50,11 +65,25 @@ class RuntimeLoop:
                 continue
             self.health.observe_bar(ts)
 
-            for hb in self.scheduler.on_timestamp(ts):
+            for hb in self.scheduler.on_timestamp(ts):  # type: ignore[attr-defined]
                 snap = self.health.snapshot(ts)
                 self.artifacts.write_heartbeat(heartbeat_record(hb, healthy=snap.healthy, stale_seconds=snap.stale_seconds))
 
-            if not self.bar_gate.is_eligible(ts=ts):
+            if self.reconciliation.enabled and self.reconcile_fn is not None:
+                should_run = last_reconcile_ts is None or (ts - last_reconcile_ts).total_seconds() >= float(self.reconciliation.interval_seconds)
+                if should_run:
+                    result = self.reconcile_fn(ts)
+                    if result is not None:
+                        self.artifacts.write_reconciliation(result)
+                        if isinstance(result, dict):
+                            action = str(((result.get("decision") or {}) if isinstance(result.get("decision"), dict) else {}).get("action", ""))
+                            if action == "freeze":
+                                self.state.frozen = True
+                        elif result.decision.action.value == "freeze":
+                            self.state.frozen = True
+                    last_reconcile_ts = ts
+
+            if not self.bar_gate.is_eligible(ts=ts):  # type: ignore[attr-defined]
                 continue
 
             tradeable = set(bars_by_symbol)
@@ -62,6 +91,8 @@ class RuntimeLoop:
             signals = self.strategy_runner.run(ts=ts, bars_by_symbol=bars_by_symbol, tradeable=tradeable, ctx=ctx)
 
             for signal in signals:
+                if self.state.frozen:
+                    break
                 bar = bars_by_symbol.get(signal.symbol)
                 if bar is None:
                     continue
