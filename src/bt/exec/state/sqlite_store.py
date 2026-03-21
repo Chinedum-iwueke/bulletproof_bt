@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from bt.core.enums import OrderState, OrderType, PositionState, Side
-from bt.core.types import Order, Position
+from bt.core.types import Fill, Order, Position
 from bt.exec.adapters.base import BalanceSnapshot
 from bt.exec.state.models import BrokerEventRecord, OrderLifecycleRecord, ProcessedEventRecord, RuntimeCheckpoint, RuntimeSessionState
 
@@ -192,6 +192,25 @@ class SQLiteExecutionStateStore:
         )
         self._conn.commit()
 
+    def query_local_fill_history(self, *, run_id: str, limit: int = 200) -> list[Fill]:
+        rows = self._conn.execute(
+            """
+            SELECT payload_json
+            FROM order_lifecycle_events
+            WHERE run_id = ? AND event_type IN ('partially_filled', 'filled')
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (run_id, max(limit, 0)),
+        ).fetchall()
+        fills: list[Fill] = []
+        for row in reversed(rows):
+            payload = json.loads(str(row["payload_json"]))
+            fill_payload = payload.get("fill")
+            if isinstance(fill_payload, dict):
+                fills.append(self._fill_from_dict(fill_payload))
+        return fills
+
     def query_open_local_orders(self, *, run_id: str) -> list[Order]:
         rows = self._conn.execute(
             """
@@ -347,6 +366,21 @@ class SQLiteExecutionStateStore:
             mfe_price=None if raw.get("mfe_price") is None else float(raw["mfe_price"]),
             opened_ts=None if raw.get("opened_ts") is None else pd.Timestamp(raw["opened_ts"]),
             closed_ts=None if raw.get("closed_ts") is None else pd.Timestamp(raw["closed_ts"]),
+        )
+
+
+    @staticmethod
+    def _fill_from_dict(raw: dict[str, object]) -> Fill:
+        return Fill(
+            order_id=str(raw["order_id"]),
+            ts=pd.Timestamp(raw["ts"]),
+            symbol=str(raw["symbol"]),
+            side=Side(str(raw["side"])),
+            qty=float(raw["qty"]),
+            price=float(raw["price"]),
+            fee=float(raw["fee"]),
+            slippage=float(raw["slippage"]),
+            metadata=dict(raw.get("metadata") or {}),
         )
 
     @staticmethod

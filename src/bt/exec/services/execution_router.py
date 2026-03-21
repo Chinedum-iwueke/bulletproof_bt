@@ -6,7 +6,7 @@ import pandas as pd
 
 from bt.core.enums import OrderState, Side
 from bt.core.types import Fill, Order, OrderIntent
-from bt.exec.adapters.base import BrokerOrderRequest
+from bt.exec.adapters.base import BrokerAdapter, BrokerOrderRequest
 from bt.exec.adapters.simulated import SimulatedBrokerAdapter
 from bt.exec.events.broker_events import BrokerOrderAcknowledgedEvent, BrokerOrderFilledEvent
 from bt.exec.lifecycle import (
@@ -35,7 +35,7 @@ class ExecutionRouter:
         *,
         run_id: str,
         mode: str,
-        adapter: SimulatedBrokerAdapter,
+        adapter: BrokerAdapter,
         portfolio_runner: PortfolioRunner,
         store: ExecutionStateStore | None,
         save_processed_event_ids: bool,
@@ -81,6 +81,8 @@ class ExecutionRouter:
 
     def process_bar(self, *, ts: pd.Timestamp, bars_by_symbol: dict[str, object]) -> list[FillArtifactRecord]:
         if self._mode != "paper_simulated":
+            return []
+        if not isinstance(self._adapter, SimulatedBrokerAdapter):
             return []
         self._adapter.process_bar(ts=ts, bars_by_symbol=bars_by_symbol)
         fills: list[Fill] = []

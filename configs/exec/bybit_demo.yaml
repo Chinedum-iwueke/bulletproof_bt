@@ -1,0 +1,18 @@
+broker:
+  venue: bybit
+  environment: demo
+  category: linear
+  symbols: [BTCUSDT]
+  recv_window_ms: 5000
+  request_timeout_ms: 4000
+  max_retries: 3
+  retry_backoff_ms: 250
+  auth:
+    api_key_env: BYBIT_API_KEY
+    api_secret_env: BYBIT_API_SECRET
+  ws:
+    enabled: true
+    connect_timeout_seconds: 10
+    heartbeat_seconds: 20
+    private_topics: [position, wallet, order, execution]
+    public_topics: [tickers]

@@ -22,6 +22,10 @@ from bt.risk.spec import parse_risk_spec
 from bt.strategy import make_strategy
 from bt.strategy.htf_context import ReadOnlyContextStrategyAdapter
 
+from bt.exec.adapters.base import BrokerAdapter
+from bt.exec.adapters.bybit import BybitBrokerAdapter, BybitRESTClient, resolve_bybit_config
+from bt.exec.adapters.bybit.client_ws_private import BybitPrivateWSClient
+from bt.exec.adapters.bybit.client_ws_public import BybitPublicWSClient
 from bt.exec.adapters.simulated import SimulatedBrokerAdapter
 from bt.exec.logging.exec_artifacts import ExecArtifactWriters
 from bt.exec.reconcile import ReconciliationEngine, ReconciliationInputs, ReconciliationPolicy, ReconciliationScope, reconciliation_record
@@ -52,7 +56,7 @@ def _coerce_spread_mode(value: object) -> Literal["none", "fixed_bps", "bar_rang
     return "none"
 
 
-def _build_components(config: dict[str, Any]) -> tuple[StrategyRunner, RiskRunner, PortfolioRunner, SimulatedBrokerAdapter]:
+def _build_components(config: dict[str, Any]) -> tuple[StrategyRunner, RiskRunner, PortfolioRunner, BrokerAdapter]:
     strategy_cfg = config.get("strategy", {}) if isinstance(config.get("strategy"), dict) else {}
     strategy = ReadOnlyContextStrategyAdapter(inner=make_strategy(strategy_cfg.get("name", "coinflip"), **{k: v for k, v in strategy_cfg.items() if k != "name"}))
     risk_cfg = dict(config.get("risk", {}))
@@ -82,7 +86,29 @@ def _build_components(config: dict[str, Any]) -> tuple[StrategyRunner, RiskRunne
         instrument=resolve_instrument_spec(config, symbol=None),
         commission=CommissionSpec(mode=str((ex_cfg.get("commission") or {}).get("mode", "none"))),
     )
-    return StrategyRunner(strategy=strategy), RiskRunner(risk_engine=risk), PortfolioRunner(portfolio=portfolio), SimulatedBrokerAdapter(execution_model=ex_model)
+    broker_cfg = config.get("broker") if isinstance(config.get("broker"), dict) else {}
+    venue = str(broker_cfg.get("venue", "simulated")).lower()
+    if venue == "bybit":
+        bybit_cfg = resolve_bybit_config(config)
+        api_key, api_secret = bybit_cfg.auth.resolve()
+        rest = BybitRESTClient(
+            base_url=bybit_cfg.rest_base_url,
+            api_key=api_key,
+            api_secret=api_secret,
+            recv_window_ms=bybit_cfg.recv_window_ms,
+            timeout_ms=bybit_cfg.request_timeout_ms,
+            max_retries=bybit_cfg.max_retries,
+            retry_backoff_ms=bybit_cfg.retry_backoff_ms,
+        )
+        adapter: BrokerAdapter = BybitBrokerAdapter(
+            config=bybit_cfg,
+            rest_client=rest,
+            ws_public=BybitPublicWSClient(url=bybit_cfg.public_ws_url, topics=bybit_cfg.ws.public_topics, symbols=bybit_cfg.symbols, enabled=bybit_cfg.ws.enabled),
+            ws_private=BybitPrivateWSClient(url=bybit_cfg.private_ws_url, topics=bybit_cfg.ws.private_topics, api_key=api_key, api_secret=api_secret, enabled=bybit_cfg.ws.enabled),
+        )
+        return StrategyRunner(strategy=strategy), RiskRunner(risk_engine=risk), PortfolioRunner(portfolio=portfolio), adapter
+    simulated: BrokerAdapter = cast(BrokerAdapter, SimulatedBrokerAdapter(execution_model=ex_model))
+    return StrategyRunner(strategy=strategy), RiskRunner(risk_engine=risk), PortfolioRunner(portfolio=portfolio), simulated
 
 
 def _validate_state_config(*, config: dict[str, Any]) -> tuple[bool, str, str, int, bool, bool]:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from bt.core.enums import OrderState, OrderType, PositionState, Side
-from bt.core.types import Order, Position
+from bt.core.types import Fill, Order, Position
 from bt.exec.adapters import BalanceSnapshot
 from bt.exec.state import ExecutionCheckpoint, ExecutionStateStore, OrderLifecycleRecord, ProcessedEventRecord, RuntimeSessionState
 
@@ -39,6 +39,10 @@ class InMemoryContractStore:
     def load_latest_checkpoint(self, run_id: str) -> ExecutionCheckpoint | None:
         _ = run_id
         return self._checkpoint
+
+    def query_local_fill_history(self, *, run_id: str, limit: int = 200) -> list[Fill]:
+        _ = run_id, limit
+        return []
 
     def query_open_local_orders(self, *, run_id: str) -> list[Order]:
         _ = run_id

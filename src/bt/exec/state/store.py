@@ -5,7 +5,7 @@ from typing import Protocol, runtime_checkable
 
 import pandas as pd
 
-from bt.core.types import Order, Position
+from bt.core.types import Fill, Order, Position
 from bt.exec.adapters.base import BalanceSnapshot
 from bt.exec.state.models import BrokerEventRecord, OrderLifecycleRecord, ProcessedEventRecord, RuntimeCheckpoint, RuntimeSessionState
 
@@ -43,6 +43,10 @@ class ExecutionStateStore(Protocol):
 
     def persist_balance_snapshot(self, *, run_id: str, snapshot: BalanceSnapshot) -> None:
         """Persist latest-known balance snapshot."""
+
+
+    def query_local_fill_history(self, *, run_id: str, limit: int = 200) -> list[Fill]:
+        """Query local fill history reconstructed from lifecycle events."""
 
     def query_open_local_orders(self, *, run_id: str) -> list[Order]:
         """Query latest view of open local orders."""

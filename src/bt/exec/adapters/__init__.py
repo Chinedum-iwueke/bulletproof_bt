@@ -21,6 +21,9 @@ __all__ = [
     "BrokerOrderRequest",
     "MarketDataAdapter",
     "SimulatedBrokerAdapter",
+    "BybitBrokerAdapter",
 ]
 
 from bt.exec.adapters.simulated import SimulatedBrokerAdapter
+
+from bt.exec.adapters.bybit import BybitBrokerAdapter
