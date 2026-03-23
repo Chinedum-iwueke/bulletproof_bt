@@ -114,11 +114,15 @@ def resolve_stop_distance(
                 },
             )
         if stop_distance <= 0:
-            raise ValueError(f"{symbol}: computed stop_distance must be > 0, got {stop_distance}.")
+            raise ValueError(f"{symbol}: invalid stop_price for {side}: stop={stop_price} entry={entry_price}")
+        details: dict[str, Any] = {"stop_price": stop_price}
+        if not is_valid_direction:
+            details["direction_mismatch_vs_entry"] = True
+            details["direction_mismatch_side"] = side
         return _build_stop_result(
             stop_distance=stop_distance,
             source=STOP_RESOLUTION_EXPLICIT_STOP_PRICE,
-            details={"stop_price": stop_price},
+            details=details,
         )
 
     risk_cfg = config.get("risk", {})
