@@ -55,6 +55,47 @@ def _trade_only_artifact() -> ParsedArtifactInput:
     )
 
 
+def _trade_only_artifact_without_excursion_or_exit() -> ParsedArtifactInput:
+    trades = [
+        NormalizedTradeRecord(
+            trade_id="t1",
+            symbol="BTCUSDT",
+            side="LONG",
+            entry_time="2024-01-01T00:00:00Z",
+            entry_price=100.0,
+            exit_price=101.0,
+            quantity=1.0,
+            fees=0.1,
+        ),
+        NormalizedTradeRecord(
+            trade_id="t2",
+            symbol="BTCUSDT",
+            side="LONG",
+            entry_time="2024-01-01T01:00:00Z",
+            entry_price=101.0,
+            exit_price=99.0,
+            quantity=1.0,
+            fees=0.1,
+        ),
+        NormalizedTradeRecord(
+            trade_id="t3",
+            symbol="BTCUSDT",
+            side="SHORT",
+            entry_time="2024-01-01T02:00:00Z",
+            entry_price=103.0,
+            exit_price=101.0,
+            quantity=1.0,
+            fees=0.1,
+        ),
+    ]
+    return ParsedArtifactInput(
+        artifact_kind="trade_csv",
+        richness="trade_only",
+        strategy_metadata={"strategy_name": "fixture_strategy"},
+        trades=trades,
+    )
+
+
 def test_run_analysis_from_parsed_artifact_trade_only_degrades_honestly() -> None:
     service = StrategyRobustnessLabService()
 
@@ -75,8 +116,31 @@ def test_run_analysis_from_parsed_artifact_trade_only_degrades_honestly() -> Non
     assert "execution" in result.diagnostics
     assert "report" in result.diagnostics
     assert result.diagnostics["distribution"]["available"] is True
-    assert result.diagnostics["distribution"]["summary_metrics"]["trade_count"] == 3
-    assert result.diagnostics["distribution"]["figures"]
+    distribution = result.diagnostics["distribution"]
+    assert distribution["summary_metrics"]["trade_count"] == 3
+    for metric in [
+        "expectancy",
+        "win_rate",
+        "median_return",
+        "mean_return",
+        "gross_profit",
+        "gross_loss",
+        "payoff_ratio",
+        "profit_factor",
+        "return_std",
+    ]:
+        assert metric in distribution["summary_metrics"]
+    figure_ids = {figure["id"] for figure in distribution["figures"]}
+    assert "trade_return_histogram" in figure_ids
+    assert "win_loss_distribution" in figure_ids
+    assert "mae_mfe_scatter" in figure_ids
+    assert "duration_histogram" in figure_ids
+    assert "shape_insights" in distribution["interpretation"]
+    assert distribution["assumptions"]
+    assert distribution["limitations"]
+    assert distribution["recommendations"]
+    assert distribution["metadata"]["available_subdiagnostics"]["histogram_available"] is True
+    assert distribution["metadata"]["available_subdiagnostics"]["win_loss_available"] is True
     overview = result.diagnostics["overview"]
     assert overview["summary_metrics"]["posture"] in {
         "robust_under_current_assumptions",
@@ -101,6 +165,26 @@ def test_run_analysis_from_parsed_artifact_trade_only_degrades_honestly() -> Non
     assert result.diagnostics["monte_carlo"]["summary_metrics"]["worst_simulated_drawdown_pct"] <= 0.0
     assert "limitations" in result.diagnostics["report"]
     assert "fixture parser note" in result.warnings
+
+
+def test_distribution_trade_only_honestly_omits_unsupported_secondary_figures() -> None:
+    service = StrategyRobustnessLabService()
+
+    result = service.run_analysis_from_parsed_artifact(
+        _trade_only_artifact_without_excursion_or_exit(),
+        config=AnalysisRunConfig(seed=11, simulations=80),
+    )
+
+    distribution = result.diagnostics["distribution"]
+    figure_ids = {figure["id"] for figure in distribution["figures"]}
+    assert "trade_return_histogram" in figure_ids
+    assert "win_loss_distribution" in figure_ids
+    assert "mae_mfe_scatter" not in figure_ids
+    assert "duration_histogram" not in figure_ids
+    assert distribution["metadata"]["available_subdiagnostics"]["mae_mfe_available"] is False
+    assert distribution["metadata"]["available_subdiagnostics"]["duration_available"] is False
+    assert any("MAE/MFE" in limitation for limitation in distribution["limitations"])
+    assert any("duration" in limitation.lower() for limitation in distribution["limitations"])
 
 
 def test_run_analysis_from_parsed_artifact_is_deterministic_for_same_seed() -> None:

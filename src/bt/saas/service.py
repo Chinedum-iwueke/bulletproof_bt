@@ -905,101 +905,263 @@ class StrategyRobustnessLabService:
     def _trade_distribution(self, trades: pd.DataFrame) -> dict[str, Any]:
         pnl = trades["pnl_net"].fillna(0.0)
         pnl_values = [float(value) for value in pnl.tolist()]
-        durations = []
+        trade_count = int(len(pnl))
+
+        durations: list[float] = []
         if "exit_ts" in trades.columns:
             exit_ts = pd.to_datetime(trades["exit_ts"], utc=True, errors="coerce")
             duration_series = (exit_ts - trades["entry_ts"]).dt.total_seconds() / 60.0
-            durations = [float(value) for value in duration_series.dropna().tolist()]
+            durations = [
+                float(value)
+                for value in duration_series.dropna().tolist()
+                if np.isfinite(value) and value >= 0.0
+            ]
+
+        mae_mfe_points = [
+            {"x": float(mae), "y": float(mfe), "label": str(trade_id)}
+            for mae, mfe, trade_id in zip(
+                trades["mae_price"].fillna(np.nan),
+                trades["mfe_price"].fillna(np.nan),
+                trades.index,
+                strict=True,
+            )
+            if not np.isnan(mae) and not np.isnan(mfe)
+        ]
+        has_mae_mfe = bool(mae_mfe_points)
+        has_duration = bool(durations)
 
         r_values = [float(value) for value in trades["r_multiple_net"].dropna().tolist()]
         r_summary = summarize_r(r_values)
         wins = pnl[pnl > 0]
         losses = pnl[pnl < 0]
+        win_count = int((pnl > 0).sum())
+        loss_count = int((pnl < 0).sum())
+        flat_count = int((pnl == 0).sum())
         gross_profit = float(wins.sum())
+        gross_loss = float(losses.sum())
         gross_loss_abs = float(abs(losses.sum()))
         payoff_ratio = float(wins.mean() / abs(losses.mean())) if len(wins) and len(losses) and losses.mean() != 0 else None
         profit_factor = float(gross_profit / gross_loss_abs) if gross_loss_abs > 0 else None
         win_rate = float((pnl > 0).mean()) if len(pnl) else 0.0
         mean_return = float(pnl.mean()) if len(pnl) else 0.0
         median_return = float(pnl.median()) if len(pnl) else 0.0
+        return_std = float(pnl.std(ddof=1)) if trade_count > 1 else 0.0
+        skewness = float(pnl.skew()) if trade_count > 2 else 0.0
+        kurtosis = float(pnl.kurt()) if trade_count > 3 else 0.0
+        percentile_10 = float(np.quantile(np.asarray(pnl_values, dtype=float), 0.10)) if trade_count else 0.0
+        percentile_90 = float(np.quantile(np.asarray(pnl_values, dtype=float), 0.90)) if trade_count else 0.0
 
-        return {
-            "summary_metrics": {
-                "trade_count": int(len(pnl)),
-                "expectancy": mean_return,
-                "win_rate": win_rate,
-                "mean_return": mean_return,
-                "median_return": median_return,
-                "gross_profit": gross_profit,
-                "gross_loss_abs": gross_loss_abs,
-                "profit_factor": profit_factor,
-                "payoff_ratio": payoff_ratio,
-                "avg_duration_minutes": float(np.mean(durations)) if durations else None,
-                "median_duration_minutes": float(np.median(durations)) if durations else None,
-            },
-            "figures": [
-                self._figure_histogram(
-                    figure_id="trade_outcome_histogram",
-                    title="Trade Outcome Distribution",
-                    x_label="pnl_net",
-                    y_label="trade_count",
-                    bins=self._histogram_bins(pnl_values, bins=14),
-                ),
+        right_tail_share = (
+            float(wins[wins >= wins.quantile(0.9)].sum() / gross_profit)
+            if len(wins) >= 2 and gross_profit > 0
+            else None
+        )
+        loss_tail_share = (
+            float(abs(losses[losses <= losses.quantile(0.2)].sum()) / gross_loss_abs)
+            if len(losses) >= 2 and gross_loss_abs > 0
+            else None
+        )
+
+        shape_insights: list[dict[str, Any]] = []
+        skew_direction = "right_skewed" if skewness > 0.25 else ("left_skewed" if skewness < -0.25 else "approximately_symmetric")
+        shape_insights.append(
+            {
+                "type": "skew",
+                "signal": skew_direction,
+                "value": skewness,
+            }
+        )
+        tail_signal = "balanced_tails"
+        if right_tail_share is not None and right_tail_share >= 0.5:
+            tail_signal = "right_tail_dependent_payoff_profile"
+        elif loss_tail_share is not None and loss_tail_share >= 0.6:
+            tail_signal = "loss_concentration_risk"
+        shape_insights.append(
+            {
+                "type": "tail_concentration",
+                "signal": tail_signal,
+                "right_tail_profit_share": right_tail_share,
+                "loss_tail_share": loss_tail_share,
+            }
+        )
+        if win_rate < 0.5 and payoff_ratio is not None and payoff_ratio > 1.0:
+            shape_insights.append(
                 {
-                    "id": "win_loss_counts",
-                    "type": "bar_groups",
-                    "title": "Win/Loss Count",
-                    "x_label": "outcome",
-                    "y_label": "count",
-                    "groups": [
-                        {"label": "wins", "value": int((pnl > 0).sum())},
-                        {"label": "losses", "value": int((pnl < 0).sum())},
-                        {"label": "flat", "value": int((pnl == 0).sum())},
-                    ],
-                },
+                    "type": "outcome_asymmetry",
+                    "signal": "many_small_losses_fewer_larger_wins",
+                    "value": payoff_ratio,
+                }
+            )
+        elif win_rate >= 0.5 and (payoff_ratio is None or payoff_ratio <= 1.0):
+            shape_insights.append(
+                {
+                    "type": "outcome_asymmetry",
+                    "signal": "high_hit_rate_low_payoff_profile",
+                    "value": payoff_ratio,
+                }
+            )
+        elif abs(mean_return) < max(1e-12, 0.10 * return_std):
+            shape_insights.append(
+                {
+                    "type": "outcome_asymmetry",
+                    "signal": "symmetric_but_weak_expectancy",
+                    "value": mean_return,
+                }
+            )
+
+        positives: list[str] = []
+        cautions: list[str] = []
+        if mean_return > 0.0:
+            positives.append(f"Positive expectancy per trade ({mean_return:.4f}).")
+        else:
+            cautions.append(f"Expectancy is non-positive ({mean_return:.4f}).")
+        if profit_factor is not None and profit_factor > 1.0:
+            positives.append(f"Profit factor is above 1.0 ({profit_factor:.2f}).")
+        else:
+            cautions.append("Profit factor is undefined or not above 1.0.")
+        if trade_count < 30:
+            cautions.append(f"Distribution confidence is limited by sample size ({trade_count} trades).")
+        if return_std == 0.0 and trade_count > 1:
+            cautions.append("Trade outcomes have near-zero dispersion; stress assumptions may be understated.")
+
+        summary = (
+            "Trade outcomes show "
+            f"{skew_direction.replace('_', ' ')}, "
+            f"expectancy {mean_return:.4f}, "
+            f"and win rate {win_rate:.1%} across {trade_count} trades."
+        )
+
+        limitations = [
+            "No regime-conditioned distribution (requires OHLCV/regime labels).",
+            "No parameter-conditioned distribution (requires parameter/grid metadata).",
+        ]
+        if not has_mae_mfe:
+            limitations.append("No MAE/MFE excursion data in normalized trades.")
+        if not has_duration:
+            limitations.append("No usable exit timestamps to derive duration distribution.")
+
+        recommendations = [
+            "Include OHLCV or regime labels to unlock regime-conditioned distribution diagnostics.",
+            "Include parameter metadata or grid outputs for parameter-segmented distribution analysis.",
+        ]
+        if not has_mae_mfe:
+            recommendations.append("Upload MAE/MFE excursion fields to unlock excursion scatter diagnostics.")
+        if not has_duration:
+            recommendations.append("Include exit timestamps or explicit duration fields for duration distribution analysis.")
+
+        figures: list[dict[str, Any]] = [
+            self._figure_histogram(
+                figure_id="trade_return_histogram",
+                title="Trade Return Distribution",
+                x_label="pnl_net",
+                y_label="trade_count",
+                bins=self._histogram_bins(pnl_values, bins=min(max(int(np.sqrt(max(trade_count, 1))) + 6, 8), 24)),
+            ),
+            {
+                "id": "win_loss_distribution",
+                "type": "bar_groups",
+                "title": "Win/Loss Distribution",
+                "x_label": "outcome",
+                "y_label": "trade_count",
+                "groups": [
+                    {"label": "wins", "count": win_count, "pct": float(win_count / trade_count) if trade_count else 0.0},
+                    {"label": "losses", "count": loss_count, "pct": float(loss_count / trade_count) if trade_count else 0.0},
+                    {"label": "flat", "count": flat_count, "pct": float(flat_count / trade_count) if trade_count else 0.0},
+                ],
+            },
+        ]
+        figures[0]["metadata"] = {
+            "value_field": "pnl_net",
+            "trade_count": trade_count,
+            "bin_count": len(figures[0]["bins"]),
+            "mean_marker": mean_return,
+            "median_marker": median_return,
+            "percentile_10_marker": percentile_10,
+            "percentile_90_marker": percentile_90,
+        }
+
+        if has_mae_mfe:
+            figures.append(
                 {
                     "id": "mae_mfe_scatter",
                     "type": "scatter",
                     "title": "MAE/MFE Scatter",
                     "x_label": "mae_price",
                     "y_label": "mfe_price",
-                    "points": [
-                        {"x": float(mae), "y": float(mfe), "label": str(trade_id)}
-                        for mae, mfe, trade_id in zip(
-                            trades["mae_price"].fillna(np.nan),
-                            trades["mfe_price"].fillna(np.nan),
-                            trades.index,
-                            strict=True,
-                        )
-                        if not np.isnan(mae) and not np.isnan(mfe)
-                    ],
-                },
+                    "points": mae_mfe_points,
+                }
+            )
+        if has_duration:
+            figures.append(
                 self._figure_histogram(
                     figure_id="duration_histogram",
                     title="Trade Duration Distribution",
                     x_label="duration_minutes",
                     y_label="trade_count",
-                    bins=self._histogram_bins(durations, bins=10),
-                ),
-            ],
-            "interpretation": [
-                "Distribution diagnostics are derived directly from trade-level realized PnL.",
-                "Expectancy and payoff metrics are strongest trade-only diagnostics and remain valid without OHLCV context.",
-            ],
-            "warnings": (
-                ["Profit factor and payoff ratio are undefined when there are no losing trades."]
-                if profit_factor is None or payoff_ratio is None
-                else []
-            ),
+                    bins=self._histogram_bins(durations, bins=min(max(int(np.sqrt(len(durations))) + 4, 6), 20)),
+                )
+            )
+
+        warnings = []
+        if profit_factor is None or payoff_ratio is None:
+            warnings.append("Profit factor and payoff ratio require both winning and losing trades.")
+        if not has_mae_mfe:
+            warnings.append("Excursion diagnostics omitted because MAE/MFE fields are missing.")
+        if not has_duration:
+            warnings.append("Duration diagnostics omitted because exit timestamps are missing or invalid.")
+
+        return {
+            "summary_metrics": {
+                "trade_count": trade_count,
+                "expectancy": mean_return,
+                "win_rate": win_rate,
+                "mean_return": mean_return,
+                "median_return": median_return,
+                "return_std": return_std,
+                "gross_profit": gross_profit,
+                "gross_loss": gross_loss,
+                "gross_loss_abs": gross_loss_abs,
+                "profit_factor": profit_factor,
+                "payoff_ratio": payoff_ratio,
+                "mean_duration": float(np.mean(durations)) if durations else None,
+                "median_duration": float(np.median(durations)) if durations else None,
+                "avg_duration_minutes": float(np.mean(durations)) if durations else None,
+                "median_duration_minutes": float(np.median(durations)) if durations else None,
+                "percentile_10": percentile_10,
+                "percentile_90": percentile_90,
+                "skewness": skewness,
+                "kurtosis": kurtosis,
+            },
+            "figures": figures,
+            "interpretation": {
+                "summary": summary,
+                "positives": positives,
+                "cautions": cautions,
+                "shape_insights": shape_insights,
+            },
+            "warnings": warnings,
             "assumptions": [
-                "Returns are measured as per-trade pnl_net in native currency units.",
+                "Distribution metrics are derived from normalized per-trade pnl_net values.",
+                "Duration statistics are emitted only when valid entry and exit timestamps are available.",
+                "Excursion diagnostics are emitted only when both MAE and MFE are present on trades.",
             ],
-            "recommendations": [
-                "Provide explicit risk_amount or r-multiples for stronger risk-normalized distribution analysis."
-            ],
+            "limitations": limitations,
+            "recommendations": recommendations,
             "metadata": {
-                "has_durations": bool(durations),
-                "has_mae_mfe": bool(trades["mae_price"].notna().any() and trades["mfe_price"].notna().any()),
+                "trade_count": trade_count,
+                "coverage_window": {
+                    "start": trades["entry_ts"].min().isoformat() if trade_count else None,
+                    "end": trades["entry_ts"].max().isoformat() if trade_count else None,
+                },
+                "available_subdiagnostics": {
+                    "histogram_available": True,
+                    "win_loss_available": True,
+                    "mae_mfe_available": has_mae_mfe,
+                    "duration_available": has_duration,
+                },
+                "completeness_notes": limitations,
+                "has_durations": has_duration,
+                "has_mae_mfe": has_mae_mfe,
             },
             "r_multiple_distribution": r_values,
             "r_multiple_summary": {

@@ -68,18 +68,45 @@ Richer bundle unlocks:
 ### distribution
 
 Minimum:
-- expectancy, win rate, mean/median return
-- gross profit/loss, payoff ratio/profit factor when defined
-- trade count, duration summaries
+- strong trade-forensics summary bundle:
+  - `trade_count`
+  - `expectancy`, `win_rate`, `mean_return`, `median_return`
+  - `gross_profit`, `gross_loss`, `gross_loss_abs`
+  - `payoff_ratio`, `profit_factor` (when both wins/losses exist)
+  - `return_std`
+  - `percentile_10`, `percentile_90`
+  - `skewness`, `kurtosis`
+  - `mean_duration`, `median_duration` (only when durations are derivable)
 
 Figures:
-- outcome histogram
-- win/loss bars
-- MAE/MFE scatter when available
-- duration histogram
+- **Primary figures (always for trade data):**
+  - return histogram with explicit engine bins + metadata markers
+  - win/loss grouped bars with counts and percentages
+- **Secondary figures (conditional only):**
+  - MAE/MFE scatter only when both excursion fields exist
+  - duration histogram only when valid entry/exit timestamps exist
+
+Interpretation:
+- structured narrative object:
+  - `summary`
+  - `positives`
+  - `cautions`
+  - `shape_insights` (engine-computed, e.g., skew direction, tail concentration, asymmetry profile)
+
+Truthful capability signaling:
+- missing excursion/duration content is represented via:
+  - `limitations`
+  - `warnings`
+  - `metadata.available_subdiagnostics`
+- no fake empty MAE/MFE or duration figure blocks are emitted
 
 Trade-only:
-- this is a primary rich diagnostic and should remain fully populated from trades
+- this is a primary rich diagnostic and should remain strong from trade records alone:
+  - robust summary metrics
+  - real histogram bins
+  - real win/loss distribution
+  - shape interpretation
+  - explicit assumptions, limitations, and recommendations
 
 ### monte_carlo
 
