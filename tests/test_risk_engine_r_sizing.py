@@ -57,19 +57,21 @@ def test_compute_position_size_r_min_stop_distance_clamps() -> None:
     assert qty == pytest.approx(10.0)
 
 
-def test_compute_position_size_r_invalid_stop_distance_raises() -> None:
+def test_compute_position_size_r_zero_stop_distance_auto_widens() -> None:
     engine = _engine()
 
-    with pytest.raises(ValueError, match=r"BTC: invalid stop_price"):
-        engine.compute_position_size_r(
-            symbol="BTC",
-            side="long",
-            entry_price=100.0,
-            signal={"stop_price": 100.0},
-            bars_by_symbol={},
-            ctx={},
-            equity=10_000.0,
-        )
+    qty, meta = engine.compute_position_size_r(
+        symbol="BTC",
+        side="long",
+        entry_price=100.0,
+        signal={"stop_price": 100.0},
+        bars_by_symbol={},
+        ctx={},
+        equity=10_000.0,
+    )
+
+    assert qty > 0
+    assert meta["stop_distance"] == pytest.approx(0.0001)
 
 
 @pytest.mark.parametrize(

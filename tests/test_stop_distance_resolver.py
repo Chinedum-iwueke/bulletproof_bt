@@ -64,6 +64,21 @@ def test_resolve_stop_distance_invalid_side_near_entry_uses_absolute_distance() 
     assert result.details["direction_mismatch_vs_entry"] is True
 
 
+def test_resolve_stop_distance_equal_entry_auto_widens() -> None:
+    result = resolve_stop_distance(
+        symbol="CAKEUSDT:USDT",
+        side="long",
+        entry_price=1.96,
+        signal={"stop_price": 1.96},
+        bars_by_symbol={},
+        ctx={},
+        config={},
+    )
+
+    assert result.stop_distance == pytest.approx(1.96e-6)
+    assert result.details["auto_widened_zero_distance"] is True
+
+
 def test_resolve_stop_distance_atr_rule() -> None:
     config = {"risk": {"stop": {"mode": "atr", "atr_multiple": 2.0, "atr_indicator": "atr"}}}
     ctx = {"indicators": {"AAPL": {"atr": IndicatorStub(is_ready=True, value=1.5)}}}
