@@ -17,6 +17,9 @@ from bt.saas.models import (
     EngineAnalysisResult,
     EngineRunContext,
     IngestedRun,
+    NormalizedTradeRecord,
+    ParameterSweepInput,
+    ParameterSweepRunInput,
     ParsedArtifactInput,
     ScorePayload,
 )
@@ -24,6 +27,7 @@ from bt.saas.models import (
 
 REQUIRED_BASE_COLUMNS = {"entry_ts", "symbol", "side"}
 SIDE_MAP = {"BUY": 1.0, "LONG": 1.0, "SELL": -1.0, "SHORT": -1.0}
+_PARAM_VALUE_TYPES = (str, int, float, bool)
 
 
 class IngestionError(ValueError):
@@ -97,6 +101,69 @@ class StrategyRobustnessLabService:
             metadata=metadata,
         )
 
+    def ingest_parameter_sweep_bundle(
+        self,
+        bundle_dir: str | Path,
+        *,
+        metric: str = "ev_net",
+    ) -> ParsedArtifactInput:
+        root = Path(bundle_dir)
+        manifest_path = root / "manifest.json"
+        if not manifest_path.exists():
+            raise IngestionError(f"Missing required parameter sweep manifest: {manifest_path}")
+
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        parameter_names = manifest.get("parameter_names")
+        if not isinstance(parameter_names, list) or not parameter_names or not all(
+            isinstance(name, str) and name.strip() for name in parameter_names
+        ):
+            raise IngestionError("parameter_sweep manifest requires non-empty 'parameter_names' list[str].")
+        canonical_parameter_names = [name.strip() for name in parameter_names]
+        if len(set(canonical_parameter_names)) != len(canonical_parameter_names):
+            raise IngestionError("parameter_sweep manifest parameter_names must be unique.")
+
+        run_specs = manifest.get("runs")
+        if not isinstance(run_specs, list) or len(run_specs) < 2:
+            raise IngestionError("parameter_sweep manifest must contain at least two runs.")
+
+        runs: list[ParameterSweepRunInput] = []
+        flattened_trades: list[NormalizedTradeRecord] = []
+        combinations: set[tuple[tuple[str, int | float | str | bool], ...]] = set()
+
+        for spec in run_specs:
+            run = self._parse_parameter_sweep_run_spec(
+                root=root,
+                run_spec=spec,
+                parameter_names=canonical_parameter_names,
+                metric=metric,
+            )
+            key = tuple((name, run.params[name]) for name in canonical_parameter_names)
+            combinations.add(key)
+            runs.append(run)
+            flattened_trades.extend(run.trades)
+
+        if len(combinations) < 2:
+            raise IngestionError("parameter_sweep requires multiple unique parameter combinations.")
+
+        strategy_name = str(manifest.get("strategy_name", root.name or "parameter_sweep"))
+        return ParsedArtifactInput(
+            artifact_kind="parameter_sweep",
+            richness="research_complete",
+            trades=flattened_trades,
+            strategy_metadata={"strategy_name": strategy_name, "ingestion_contract": "parameter_sweep_bundle"},
+            assumptions=manifest.get("assumptions") if isinstance(manifest.get("assumptions"), dict) else None,
+            params={"parameter_names": canonical_parameter_names},
+            parameter_sweep=ParameterSweepInput(
+                parameter_names=canonical_parameter_names,
+                runs=runs,
+                assumptions=manifest.get("assumptions") if isinstance(manifest.get("assumptions"), dict) else None,
+                execution_context=manifest.get("execution_context")
+                if isinstance(manifest.get("execution_context"), dict)
+                else None,
+            ),
+            parser_notes=["Parsed structured parameter sweep bundle via manifest.json contract."],
+        )
+
     def build_dashboard_payload(
         self,
         run: IngestedRun,
@@ -167,6 +234,50 @@ class StrategyRobustnessLabService:
             "validation_report": report,
         }
 
+    def ingest_parameter_sweep_table(
+        self,
+        table_path: str | Path,
+        *,
+        parameter_names: list[str],
+        run_id_column: str = "run_id",
+    ) -> ParsedArtifactInput:
+        frame = pd.read_csv(table_path)
+        required_columns = {run_id_column, *parameter_names, "entry_time", "symbol", "side"}
+        missing = sorted(required_columns - set(frame.columns))
+        if missing:
+            raise IngestionError(
+                f"parameter_sweep table missing required columns: {missing}. "
+                "Provide run_id, parameter columns, and canonical trade columns."
+            )
+
+        runs: list[ParameterSweepRunInput] = []
+        flattened: list[NormalizedTradeRecord] = []
+        for run_id, group in frame.groupby(run_id_column):
+            params: dict[str, int | float | str | bool] = {}
+            for name in parameter_names:
+                unique_values = group[name].dropna().unique().tolist()
+                if len(unique_values) != 1:
+                    raise IngestionError(
+                        f"Run '{run_id}' must have exactly one value for parameter '{name}'."
+                    )
+                params[name] = self._validate_parameter_value(unique_values[0], run_id=str(run_id), param_name=name)
+            trades = self._records_from_trade_frame(group.drop(columns=parameter_names + [run_id_column]))
+            runs.append(ParameterSweepRunInput(run_id=str(run_id), params=params, trades=trades))
+            flattened.extend(trades)
+
+        if len(runs) < 2:
+            raise IngestionError("parameter_sweep table must contain at least two distinct run_id groups.")
+
+        return ParsedArtifactInput(
+            artifact_kind="parameter_sweep",
+            richness="research_complete",
+            trades=flattened,
+            strategy_metadata={"strategy_name": Path(table_path).stem, "ingestion_contract": "parameter_sweep_table"},
+            params={"parameter_names": parameter_names},
+            parameter_sweep=ParameterSweepInput(parameter_names=parameter_names, runs=runs),
+            parser_notes=["Parsed parameter sweep from combined table with run_id + parameter columns."],
+        )
+
     def run_analysis_from_parsed_artifact(
         self,
         parsed_artifact: ParsedArtifactInput,
@@ -183,6 +294,10 @@ class StrategyRobustnessLabService:
             account_size=config.account_size,
             risk_per_trade_pct=config.risk_per_trade_pct,
         )
+        if parsed_artifact.parameter_sweep is not None:
+            payload["parameter_stability"] = self._parameter_stability_from_parameter_sweep(
+                parsed_artifact.parameter_sweep
+            )
 
         diagnostics = {
             "overview": payload["overview"],
@@ -223,6 +338,7 @@ class StrategyRobustnessLabService:
             benchmark_present=parsed_artifact.benchmark_present,
             has_assumptions=parsed_artifact.assumptions is not None,
             has_params=parsed_artifact.params is not None,
+            has_parameter_sweep=parsed_artifact.parameter_sweep is not None,
         )
         return EngineAnalysisResult(
             run_context=run_context,
@@ -233,7 +349,11 @@ class StrategyRobustnessLabService:
         )
 
     def _ingested_run_from_parsed_artifact(self, parsed_artifact: ParsedArtifactInput) -> IngestedRun:
-        if not parsed_artifact.trades:
+        trade_records = list(parsed_artifact.trades)
+        if not trade_records and parsed_artifact.parameter_sweep is not None:
+            for run in parsed_artifact.parameter_sweep.runs:
+                trade_records.extend(run.trades)
+        if not trade_records:
             raise IngestionError("Parsed artifact must include at least one normalized trade record.")
 
         frame = pd.DataFrame(
@@ -255,7 +375,7 @@ class StrategyRobustnessLabService:
                 "market": trade.market,
                 "exchange": trade.exchange,
             }
-            for trade in parsed_artifact.trades
+            for trade in trade_records
         )
         normalized = self._normalize_trades(frame)
 
@@ -304,7 +424,7 @@ class StrategyRobustnessLabService:
     ) -> dict[str, DiagnosticCapability]:
         trade_count = len(parsed_artifact.trades)
         has_trades = trade_count > 0
-        has_params = parsed_artifact.params is not None
+        has_params = parsed_artifact.params is not None or parsed_artifact.parameter_sweep is not None
         def status_for_trade_based(name: str) -> DiagnosticCapability:
             if not has_trades:
                 return DiagnosticCapability(
@@ -497,6 +617,117 @@ class StrategyRobustnessLabService:
             x_key=x_key,
             y_key=y_key,
         )
+
+    def _parse_parameter_sweep_run_spec(
+        self,
+        *,
+        root: Path,
+        run_spec: Any,
+        parameter_names: list[str],
+        metric: str,
+    ) -> ParameterSweepRunInput:
+        if not isinstance(run_spec, dict):
+            raise IngestionError("Each parameter_sweep run entry must be an object.")
+        run_id = str(run_spec.get("run_id", "")).strip()
+        if not run_id:
+            raise IngestionError("Each parameter_sweep run requires non-empty 'run_id'.")
+
+        raw_params = run_spec.get("params")
+        if not isinstance(raw_params, dict):
+            raise IngestionError(f"Run '{run_id}' must include a 'params' object.")
+        if set(raw_params.keys()) != set(parameter_names):
+            raise IngestionError(
+                f"Run '{run_id}' parameter keys must exactly match manifest parameter_names."
+            )
+
+        parsed_params = {
+            name: self._validate_parameter_value(raw_params[name], run_id=run_id, param_name=name)
+            for name in parameter_names
+        }
+        summary = run_spec.get("summary") if isinstance(run_spec.get("summary"), dict) else None
+
+        trades_file = run_spec.get("trades_file")
+        trade_payload = run_spec.get("trades")
+        if trades_file is None and trade_payload is None and (summary is None or metric not in summary):
+            raise IngestionError(
+                f"Run '{run_id}' must include trade data (trades_file/trades) or summary metric '{metric}'."
+            )
+
+        trades: list[NormalizedTradeRecord] = []
+        if trades_file is not None:
+            trades_path = (root / str(trades_file)).resolve()
+            try:
+                trades_path.relative_to(root.resolve())
+            except ValueError as exc:
+                raise IngestionError(f"Run '{run_id}' trades_file must stay within bundle directory.") from exc
+            if not trades_path.exists():
+                raise IngestionError(f"Run '{run_id}' trades_file not found: {trades_path}")
+            trades = self._records_from_trade_frame(pd.read_csv(trades_path))
+        elif isinstance(trade_payload, list) and trade_payload:
+            trades = self._records_from_trade_frame(pd.DataFrame(trade_payload))
+
+        return ParameterSweepRunInput(
+            run_id=run_id,
+            params=parsed_params,
+            trades=trades,
+            summary=summary,
+            metadata=run_spec.get("metadata") if isinstance(run_spec.get("metadata"), dict) else None,
+        )
+
+    def _validate_parameter_value(
+        self,
+        value: Any,
+        *,
+        run_id: str,
+        param_name: str,
+    ) -> int | float | str | bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            parsed = float(value)
+            if not np.isfinite(parsed):
+                raise IngestionError(
+                    f"Run '{run_id}' parameter '{param_name}' must be finite."
+                )
+            return int(value) if isinstance(value, int) else parsed
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                raise IngestionError(f"Run '{run_id}' parameter '{param_name}' cannot be empty.")
+            return stripped
+        raise IngestionError(
+            f"Run '{run_id}' parameter '{param_name}' must be one of {_PARAM_VALUE_TYPES}."
+        )
+
+    def _records_from_trade_frame(self, trades: pd.DataFrame) -> list[NormalizedTradeRecord]:
+        normalized = self._normalize_trades(trades)
+        records: list[NormalizedTradeRecord] = []
+        for row in normalized.to_dict(orient="records"):
+            records.append(
+                NormalizedTradeRecord(
+                    symbol=str(row["symbol"]),
+                    side=str(row["side"]),
+                    entry_time=pd.Timestamp(row["entry_ts"]).isoformat().replace("+00:00", "Z"),
+                    exit_time=(
+                        pd.Timestamp(row["exit_ts"]).isoformat().replace("+00:00", "Z")
+                        if pd.notna(row.get("exit_ts"))
+                        else None
+                    ),
+                    entry_price=float(row["entry_price"]) if pd.notna(row.get("entry_price")) else None,
+                    exit_price=float(row["exit_price"]) if pd.notna(row.get("exit_price")) else None,
+                    quantity=float(row["quantity"]) if pd.notna(row.get("quantity")) else None,
+                    fees=float(row["fees_paid"]) if pd.notna(row.get("fees_paid")) else None,
+                    pnl=float(row["pnl_net"]) if pd.notna(row.get("pnl_net")) else None,
+                    mae=float(row["mae_price"]) if pd.notna(row.get("mae_price")) else None,
+                    mfe=float(row["mfe_price"]) if pd.notna(row.get("mfe_price")) else None,
+                    strategy_name=str(row["strategy_name"]) if pd.notna(row.get("strategy_name")) else None,
+                    timeframe=str(row["timeframe"]) if pd.notna(row.get("timeframe")) else None,
+                    market=str(row["market"]) if pd.notna(row.get("market")) else None,
+                    exchange=str(row["exchange"]) if pd.notna(row.get("exchange")) else None,
+                    trade_id=str(row["trade_id"]) if pd.notna(row.get("trade_id")) else None,
+                )
+            )
+        return records
 
     def _normalize_trades(self, trades: pd.DataFrame) -> pd.DataFrame:
         rename_map = {
@@ -1445,6 +1676,61 @@ class StrategyRobustnessLabService:
             "status": "single_run_only",
             "interpretation": "Upload experiment grid summary for full parameter stability diagnostics.",
         }
+
+    def _parameter_stability_from_parameter_sweep(
+        self,
+        sweep: ParameterSweepInput,
+        *,
+        metric: str = "ev_net",
+    ) -> dict[str, Any]:
+        if len(sweep.runs) < 2:
+            raise IngestionError("parameter_sweep requires at least two runs for stability analysis.")
+
+        points: list[dict[str, Any]] = []
+        metric_values: list[float] = []
+        combinations: set[tuple[tuple[str, int | float | str | bool], ...]] = set()
+        for run in sweep.runs:
+            key = tuple((name, run.params[name]) for name in sweep.parameter_names)
+            combinations.add(key)
+            value = None
+            if run.summary is not None and metric in run.summary:
+                value = pd.to_numeric(run.summary.get(metric), errors="coerce")
+            if pd.isna(value):
+                pnls = [trade.pnl for trade in run.trades if trade.pnl is not None]
+                value = float(np.mean(pnls)) if pnls else np.nan
+            if pd.isna(value):
+                raise IngestionError(
+                    f"Run '{run.run_id}' missing numeric '{metric}' summary and has no trade pnl records."
+                )
+            metric_value = float(value)
+            metric_values.append(metric_value)
+            point = {"run_id": run.run_id, "value": metric_value, "params": dict(run.params)}
+            if sweep.parameter_names:
+                point["x"] = run.params[sweep.parameter_names[0]]
+            if len(sweep.parameter_names) > 1:
+                point["y"] = run.params[sweep.parameter_names[1]]
+            points.append(point)
+
+        if len(combinations) < 2:
+            raise IngestionError("parameter_sweep requires multiple unique parameter combinations.")
+
+        metric_series = pd.Series(metric_values, dtype=float)
+        x_key = sweep.parameter_names[0]
+        y_key = sweep.parameter_names[1] if len(sweep.parameter_names) > 1 else "run_id"
+        if len(sweep.parameter_names) == 1:
+            for point in points:
+                point["y"] = point["run_id"]
+        payload = self._parameter_stability_common(
+            metric_series=metric_series,
+            heatmap=points,
+            x_key=x_key,
+            y_key=y_key,
+        )
+        payload["metadata"]["parameter_names"] = list(sweep.parameter_names)
+        payload["metadata"]["dimensions"] = len(sweep.parameter_names)
+        payload["metadata"]["runs"] = len(sweep.runs)
+        payload["status"] = "parameter_sweep"
+        return payload
 
     def _parameter_stability_common(
         self,

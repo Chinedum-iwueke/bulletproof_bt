@@ -17,7 +17,7 @@ DiagnosticName = Literal[
 ]
 
 CapabilityStatus = Literal["supported", "limited", "unavailable"]
-ArtifactKind = Literal["trade_csv", "artifact_bundle"]
+ArtifactKind = Literal["trade_csv", "artifact_bundle", "parameter_sweep"]
 ArtifactRichness = Literal[
     "trade_only",
     "trade_plus_metadata",
@@ -63,6 +63,21 @@ class NormalizedTradeRecord:
     exchange: str | None = None
     trade_id: str | None = None
 
+@dataclass(frozen=True)
+class ParameterSweepRunInput:
+    run_id: str
+    params: dict[str, int | float | str | bool]
+    trades: list[NormalizedTradeRecord]
+    summary: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class ParameterSweepInput:
+    parameter_names: list[str]
+    runs: list[ParameterSweepRunInput]
+    assumptions: dict[str, Any] | None = None
+    execution_context: dict[str, Any] | None = None
 
 @dataclass(frozen=True)
 class ParsedArtifactInput:
@@ -73,6 +88,7 @@ class ParsedArtifactInput:
     equity_curve: list[dict[str, Any]] | None = None
     assumptions: dict[str, Any] | None = None
     params: dict[str, Any] | None = None
+    parameter_sweep: ParameterSweepInput | None = None
     ohlcv_present: bool = False
     benchmark_present: bool = False
     parser_notes: list[str] = field(default_factory=list)
@@ -110,6 +126,7 @@ class EngineRunContext:
     benchmark_present: bool
     has_assumptions: bool
     has_params: bool
+    has_parameter_sweep: bool
 
 
 @dataclass(frozen=True)

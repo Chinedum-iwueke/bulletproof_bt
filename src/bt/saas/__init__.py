@@ -8,6 +8,8 @@ from bt.saas.models import (
     EngineRunContext,
     IngestedRun,
     NormalizedTradeRecord,
+    ParameterSweepInput,
+    ParameterSweepRunInput,
     ParsedArtifactInput,
     ScorePayload,
 )
@@ -22,6 +24,8 @@ __all__ = [
     "IngestedRun",
     "IngestionError",
     "NormalizedTradeRecord",
+    "ParameterSweepInput",
+    "ParameterSweepRunInput",
     "ParsedArtifactInput",
     "ScorePayload",
     "StrategyRobustnessLabService",

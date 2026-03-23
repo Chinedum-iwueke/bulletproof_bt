@@ -5,7 +5,7 @@
 | overview | normalized trades with timestamp + side + PnL (or inferable PnL fields) | strategy metadata, explicit equity curve | Yes | No | No | No | Includes headline metrics, warnings, equity payload. |
 | distribution | normalized trades with PnL; optional exit timestamps, MAE/MFE, R fields | richer risk metadata | Yes | No | No | No | Emits R summary, MAE/MFE, durations, streaks. |
 | monte_carlo | normalized trade PnL series | account size, drawdown levels, seed/sim count | Yes | No | No | No | Bootstrap trade-sequence simulation. |
-| stability | normalized trades/performance baseline | params/grid context | Yes (limited) | No | No | Not strictly required, but needed for stronger stability | Without params, uses single-run proxy (`plateau_ratio=1`). |
+| stability | normalized trades/performance baseline | parameter_sweep bundle (preferred), params/grid context | Yes (limited) | No | No | Yes for full topology | Full mode expects parameter sweep runs with explicit per-run params + trades/summary metric; without sweep context engine uses single-run proxy. |
 | execution | normalized trades + cost fields when present (`fees/slippage/spread`) | assumptions for scenario interpretation | Yes | No | No | No | Missing cost fields default to zero-cost baseline. |
 | regimes | normalized trades (`entry_ts`, `pnl_net`) | OHLCV and benchmark context | Yes (limited) | No (currently) | No | No | Current regime logic uses time/session + rolling-PnL proxies. |
 | ruin | Monte Carlo output built from trade PnL | account_size, risk_per_trade_pct | Yes | No | No | No | Derived from MC drawdown distribution. |
