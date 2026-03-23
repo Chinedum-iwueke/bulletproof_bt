@@ -192,6 +192,16 @@ class StrategyRobustnessLabService:
             capability_profile=capability_profile,
             diagnostic_eligibility=parsed_artifact.diagnostic_eligibility,
         )
+        diagnostics = {
+            name: self._decorate_diagnostic_payload(
+                name=name,
+                payload=payload_block,
+                capability=capability_profile.diagnostics[name],
+            )
+            if name in capability_profile.diagnostics
+            else payload_block
+            for name, payload_block in diagnostics.items()
+        }
         warnings = list(payload["overview"].get("warnings", [])) + list(parsed_artifact.parser_notes)
 
         run_context = EngineRunContext(
@@ -398,6 +408,49 @@ class StrategyRobustnessLabService:
 
         return filtered
 
+    def _unwrap_report_assumptions(self, payload: dict[str, Any]) -> list[str]:
+        assumptions = payload.get("assumptions")
+        if isinstance(assumptions, list):
+            return [str(item) for item in assumptions]
+        if isinstance(assumptions, dict):
+            return [f"{key}: {value}" for key, value in assumptions.items()]
+        return []
+
+    def _decorate_diagnostic_payload(
+        self,
+        *,
+        name: str,
+        payload: dict[str, Any],
+        capability: DiagnosticCapability,
+    ) -> dict[str, Any]:
+        if payload.get("status") == "skipped":
+            return payload
+
+        available = capability.status != "unavailable"
+        limited = capability.status == "limited"
+        reason_unavailable = None if available else capability.reason
+        limitations = [capability.reason] if capability.reason else []
+        assumptions = payload.get("assumptions", [])
+        if name == "report":
+            assumptions = self._unwrap_report_assumptions(payload)
+
+        decorated = {
+            "available": available,
+            "limited": limited,
+            "reason_unavailable": reason_unavailable,
+            "limitations": limitations,
+            "summary_metrics": payload.get("summary_metrics", {}),
+            "figures": payload.get("figures", []),
+            "interpretation": payload.get("interpretation", []),
+            "warnings": payload.get("warnings", []),
+            "assumptions": assumptions,
+            "recommendations": payload.get("recommendations", []),
+            "metadata": payload.get("metadata", {}),
+            "payload": payload,
+        }
+        decorated.update(payload)
+        return decorated
+
     def parameter_stability_from_grid(
         self,
         grid_summary_csv: str | Path,
@@ -558,14 +611,124 @@ class StrategyRobustnessLabService:
             "trade_count": int(len(trades)),
         }
 
-    def _overview(self, run: IngestedRun, score: dict[str, Any]) -> dict[str, Any]:
+    def _figure_line_series(
+        self,
+        *,
+        figure_id: str,
+        title: str,
+        x_label: str,
+        y_label: str,
+        x_values: list[Any],
+        series: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         return {
+            "id": figure_id,
+            "type": "line_series",
+            "title": title,
+            "x_label": x_label,
+            "y_label": y_label,
+            "x": x_values,
+            "series": series,
+        }
+
+    def _figure_histogram(
+        self,
+        *,
+        figure_id: str,
+        title: str,
+        x_label: str,
+        y_label: str,
+        bins: list[dict[str, float]],
+    ) -> dict[str, Any]:
+        return {
+            "id": figure_id,
+            "type": "histogram",
+            "title": title,
+            "x_label": x_label,
+            "y_label": y_label,
+            "bins": bins,
+        }
+
+    def _histogram_bins(self, values: list[float], *, bins: int = 12) -> list[dict[str, float]]:
+        if not values:
+            return []
+        counts, edges = np.histogram(np.asarray(values, dtype=float), bins=min(max(bins, 3), 40))
+        return [
+            {
+                "start": float(edges[idx]),
+                "end": float(edges[idx + 1]),
+                "count": float(counts[idx]),
+            }
+            for idx in range(len(counts))
+        ]
+
+    def _quantiles(self, values: np.ndarray, *, points: tuple[float, ...]) -> dict[str, float]:
+        if values.size == 0:
+            return {str(point): 0.0 for point in points}
+        return {str(point): float(np.quantile(values, point)) for point in points}
+
+    def _overview(self, run: IngestedRun, score: dict[str, Any]) -> dict[str, Any]:
+        equity_curve = self._equity_curve_payload(run.equity)
+        benchmark_series = run.metadata.get("benchmark_equity_curve")
+        figures: list[dict[str, Any]] = []
+        if equity_curve:
+            figures.append(
+                self._figure_line_series(
+                    figure_id="equity_curve",
+                    title="Equity Curve",
+                    x_label="timestamp",
+                    y_label="equity",
+                    x_values=[point["ts"] for point in equity_curve],
+                    series=[{"name": "strategy_equity", "values": [point["equity"] for point in equity_curve]}],
+                )
+            )
+        if isinstance(benchmark_series, list) and benchmark_series:
+            figures.append(
+                self._figure_line_series(
+                    figure_id="equity_vs_benchmark",
+                    title="Strategy vs Benchmark Equity",
+                    x_label="timestamp",
+                    y_label="equity",
+                    x_values=[point.get("ts") for point in benchmark_series],
+                    series=[
+                        {"name": "benchmark_equity", "values": [float(point.get("equity", 0.0)) for point in benchmark_series]},
+                    ],
+                )
+            )
+
+        warnings = self._warnings(run.performance)
+        max_drawdown_pct = float(run.performance.get("max_drawdown_pct", 0.0))
+        posture = "robust_candidate" if float(score.get("overall", 0.0)) >= 60.0 else "caution"
+        return {
+            "summary_metrics": {
+                "robustness_score": float(score.get("overall", 0.0)),
+                "overfitting_risk": float(max(0.0, min(1.0, 1.0 - float(score.get("sub_scores", {}).get("parameter_stability", 0.0)) / 100.0))),
+                "max_drawdown_pct": max_drawdown_pct,
+                "ev_net": float(run.performance.get("ev_net", 0.0)),
+                "win_rate": float(run.performance.get("win_rate", 0.0)),
+                "trade_count": int(run.performance.get("total_trades", 0)),
+                "posture": posture,
+            },
+            "figures": figures,
+            "interpretation": [
+                f"Top-line posture: {posture.replace('_', ' ')}.",
+                f"Strategy analyzed across {int(run.performance.get('total_trades', 0))} trades.",
+            ],
+            "warnings": warnings,
+            "assumptions": [
+                "Overview is computed from normalized trade records and reconstructed equity when explicit equity is missing.",
+            ],
+            "recommendations": [
+                "Upload benchmark context to unlock direct relative-performance comparison in overview.",
+            ],
+            "metadata": {
+                "diagnostics_used": ["performance", "score", "equity_curve"],
+            },
             "strategy": run.metadata,
             "headline_metrics": run.performance,
             "robustness_score": score["overall"],
             "sub_scores": score["sub_scores"],
-            "warnings": self._warnings(run.performance),
-            "equity_curve": self._equity_curve_payload(run.equity),
+            "equity_curve": equity_curve,
         }
 
     def _equity_curve_payload(self, equity: pd.DataFrame) -> list[dict[str, Any]]:
@@ -589,6 +752,7 @@ class StrategyRobustnessLabService:
 
     def _trade_distribution(self, trades: pd.DataFrame) -> dict[str, Any]:
         pnl = trades["pnl_net"].fillna(0.0)
+        pnl_values = [float(value) for value in pnl.tolist()]
         durations = []
         if "exit_ts" in trades.columns:
             exit_ts = pd.to_datetime(trades["exit_ts"], utc=True, errors="coerce")
@@ -597,8 +761,94 @@ class StrategyRobustnessLabService:
 
         r_values = [float(value) for value in trades["r_multiple_net"].dropna().tolist()]
         r_summary = summarize_r(r_values)
+        wins = pnl[pnl > 0]
+        losses = pnl[pnl < 0]
+        gross_profit = float(wins.sum())
+        gross_loss_abs = float(abs(losses.sum()))
+        payoff_ratio = float(wins.mean() / abs(losses.mean())) if len(wins) and len(losses) and losses.mean() != 0 else None
+        profit_factor = float(gross_profit / gross_loss_abs) if gross_loss_abs > 0 else None
+        win_rate = float((pnl > 0).mean()) if len(pnl) else 0.0
+        mean_return = float(pnl.mean()) if len(pnl) else 0.0
+        median_return = float(pnl.median()) if len(pnl) else 0.0
 
         return {
+            "summary_metrics": {
+                "trade_count": int(len(pnl)),
+                "expectancy": mean_return,
+                "win_rate": win_rate,
+                "mean_return": mean_return,
+                "median_return": median_return,
+                "gross_profit": gross_profit,
+                "gross_loss_abs": gross_loss_abs,
+                "profit_factor": profit_factor,
+                "payoff_ratio": payoff_ratio,
+                "avg_duration_minutes": float(np.mean(durations)) if durations else None,
+                "median_duration_minutes": float(np.median(durations)) if durations else None,
+            },
+            "figures": [
+                self._figure_histogram(
+                    figure_id="trade_outcome_histogram",
+                    title="Trade Outcome Distribution",
+                    x_label="pnl_net",
+                    y_label="trade_count",
+                    bins=self._histogram_bins(pnl_values, bins=14),
+                ),
+                {
+                    "id": "win_loss_counts",
+                    "type": "bar_groups",
+                    "title": "Win/Loss Count",
+                    "x_label": "outcome",
+                    "y_label": "count",
+                    "groups": [
+                        {"label": "wins", "value": int((pnl > 0).sum())},
+                        {"label": "losses", "value": int((pnl < 0).sum())},
+                        {"label": "flat", "value": int((pnl == 0).sum())},
+                    ],
+                },
+                {
+                    "id": "mae_mfe_scatter",
+                    "type": "scatter",
+                    "title": "MAE/MFE Scatter",
+                    "x_label": "mae_price",
+                    "y_label": "mfe_price",
+                    "points": [
+                        {"x": float(mae), "y": float(mfe), "label": str(trade_id)}
+                        for mae, mfe, trade_id in zip(
+                            trades["mae_price"].fillna(np.nan),
+                            trades["mfe_price"].fillna(np.nan),
+                            trades.index,
+                            strict=True,
+                        )
+                        if not np.isnan(mae) and not np.isnan(mfe)
+                    ],
+                },
+                self._figure_histogram(
+                    figure_id="duration_histogram",
+                    title="Trade Duration Distribution",
+                    x_label="duration_minutes",
+                    y_label="trade_count",
+                    bins=self._histogram_bins(durations, bins=10),
+                ),
+            ],
+            "interpretation": [
+                "Distribution diagnostics are derived directly from trade-level realized PnL.",
+                "Expectancy and payoff metrics are strongest trade-only diagnostics and remain valid without OHLCV context.",
+            ],
+            "warnings": (
+                ["Profit factor and payoff ratio are undefined when there are no losing trades."]
+                if profit_factor is None or payoff_ratio is None
+                else []
+            ),
+            "assumptions": [
+                "Returns are measured as per-trade pnl_net in native currency units.",
+            ],
+            "recommendations": [
+                "Provide explicit risk_amount or r-multiples for stronger risk-normalized distribution analysis."
+            ],
+            "metadata": {
+                "has_durations": bool(durations),
+                "has_mae_mfe": bool(trades["mae_price"].notna().any() and trades["mfe_price"].notna().any()),
+            },
             "r_multiple_distribution": r_values,
             "r_multiple_summary": {
                 "count": r_summary.n,
@@ -666,6 +916,18 @@ class StrategyRobustnessLabService:
                 "probability_by_drawdown_threshold": {},
                 "probability_of_ruin": 0.0,
                 "ruin_threshold_equity": float(initial_equity * 0.5),
+                "summary_metrics": {
+                    "worst_simulated_drawdown_pct": 0.0,
+                    "median_drawdown_pct": 0.0,
+                    "drawdown_p95_pct": 0.0,
+                    "probability_of_ruin": 0.0,
+                },
+                "figures": [],
+                "interpretation": ["Monte Carlo unavailable because trade outcomes or simulations are missing."],
+                "warnings": ["No Monte Carlo simulations were produced."],
+                "assumptions": ["Bootstrap simulation requires at least one trade return and simulations > 0."],
+                "recommendations": ["Provide trade outcomes and simulation count > 0 to enable Monte Carlo diagnostics."],
+                "metadata": {"simulations": 0, "trades_in_bootstrap": int(pnl.size)},
             }
 
         rng = np.random.default_rng(seed)
@@ -683,6 +945,9 @@ class StrategyRobustnessLabService:
 
         ruin_threshold_equity = float(initial_equity * 0.5)
         probability_of_ruin = float((equity_paths.min(axis=1) <= ruin_threshold_equity).mean())
+
+        quantiles = self._quantiles(max_drawdowns, points=(0.5, 0.95))
+        percentile_paths = np.quantile(equity_paths, [0.1, 0.5, 0.9], axis=0)
 
         return {
             "methodology": {
@@ -702,12 +967,67 @@ class StrategyRobustnessLabService:
             "probability_by_drawdown_threshold": threshold_probs,
             "probability_of_ruin": probability_of_ruin,
             "ruin_threshold_equity": ruin_threshold_equity,
+            "summary_metrics": {
+                "worst_simulated_drawdown_pct": float(max_drawdowns.min() * 100.0),
+                "median_drawdown_pct": float(quantiles["0.5"] * 100.0),
+                "drawdown_p95_pct": float(quantiles["0.95"] * 100.0),
+                "probability_of_ruin": probability_of_ruin,
+                "ruin_threshold_equity": ruin_threshold_equity,
+            },
+            "figures": [
+                {
+                    "id": "equity_fan_chart",
+                    "type": "fan_chart",
+                    "title": "Monte Carlo Equity Fan",
+                    "x_label": "trade_index",
+                    "y_label": "equity",
+                    "x": list(range(1, pnl.size + 1)),
+                    "bands": {
+                        "p10": [float(value) for value in percentile_paths[0].tolist()],
+                        "p50": [float(value) for value in percentile_paths[1].tolist()],
+                        "p90": [float(value) for value in percentile_paths[2].tolist()],
+                    },
+                },
+                self._figure_histogram(
+                    figure_id="drawdown_histogram",
+                    title="Simulated Max Drawdown Distribution",
+                    x_label="max_drawdown_pct",
+                    y_label="simulation_count",
+                    bins=self._histogram_bins([float(value * 100.0) for value in max_drawdowns.tolist()], bins=16),
+                ),
+            ],
+            "interpretation": [
+                "Monte Carlo uses bootstrap resampling of realized trade outcomes with replacement.",
+                "Ruin probability is estimated as the fraction of paths crossing the ruin equity threshold.",
+            ],
+            "warnings": [],
+            "assumptions": [
+                "Trade outcomes are IID under bootstrap resampling.",
+                "No serial correlation/regime conditioning is modeled in this baseline Monte Carlo.",
+            ],
+            "recommendations": [
+                "Provide richer regime labels or OHLCV context for conditional Monte Carlo in future revisions.",
+            ],
+            "metadata": {"trades_in_bootstrap": int(pnl.size), "simulations": int(simulations)},
         }
 
     def _parameter_stability_from_single_run(self, performance: dict[str, Any]) -> dict[str, Any]:
         ev = float(performance.get("ev_net", 0.0))
         score = 65.0 if ev > 0 else 35.0
         return {
+            "summary_metrics": {
+                "stability_score": score,
+                "plateau_ratio": None,
+                "peak_fragility": None,
+            },
+            "figures": [],
+            "interpretation": [
+                "Only a single-run proxy is available because parameter-grid metadata is absent."
+            ],
+            "warnings": ["Full stability topology requires experiment grid metadata."],
+            "assumptions": ["Proxy score is directional and should not be interpreted as topology evidence."],
+            "recommendations": ["Upload experiment grid summary to unlock heatmap/surface stability diagnostics."],
+            "metadata": {"mode": "single_run_proxy"},
             "stability_score": score,
             "plateau_ratio": None,
             "peak_fragility": None,
@@ -726,6 +1046,17 @@ class StrategyRobustnessLabService:
     ) -> dict[str, Any]:
         if metric_series.empty:
             return {
+                "summary_metrics": {
+                    "stability_score": 0.0,
+                    "plateau_ratio": 0.0,
+                    "peak_fragility": 1.0,
+                },
+                "figures": [],
+                "interpretation": ["Parameter stability grid was supplied but metric values are empty."],
+                "warnings": ["Could not compute stability from empty metric series."],
+                "assumptions": [],
+                "recommendations": ["Ensure selected metric column is numeric and populated in grid summary."],
+                "metadata": {"grid_points": 0},
                 "stability_score": 0.0,
                 "plateau_ratio": 0.0,
                 "peak_fragility": 1.0,
@@ -740,6 +1071,27 @@ class StrategyRobustnessLabService:
         fragility = 1.0 if peak == 0 else max(0.0, min(1.0, 1.0 - (median / peak)))
         score = max(0.0, min(100.0, (plateau_ratio * 60.0) + ((1.0 - fragility) * 40.0)))
         return {
+            "summary_metrics": {
+                "stability_score": score,
+                "plateau_ratio": plateau_ratio,
+                "peak_fragility": fragility,
+            },
+            "figures": [
+                {
+                    "id": "stability_heatmap",
+                    "type": "heatmap",
+                    "title": "Parameter Stability Heatmap",
+                    "x_label": x_key,
+                    "y_label": y_key,
+                    "value_label": "metric",
+                    "cells": heatmap,
+                }
+            ],
+            "interpretation": ["Lower fragility and wider plateau imply more parameter robustness."],
+            "warnings": [],
+            "assumptions": ["Stability is derived from the selected grid metric topology."],
+            "recommendations": ["Validate top plateau parameters out-of-sample before deployment."],
+            "metadata": {"grid_points": int(len(metric_series)), "axes": {"x": x_key, "y": y_key, "value": "metric"}},
             "stability_score": score,
             "plateau_ratio": plateau_ratio,
             "peak_fragility": fragility,
@@ -774,6 +1126,34 @@ class StrategyRobustnessLabService:
             min(100.0, (float(break_even_multiplier) / 3.0) * 100.0),
         )
         return {
+            "summary_metrics": {
+                "baseline_ev_net": float(base.mean()) if len(base) else 0.0,
+                "break_even_cost_multiplier": break_even_multiplier,
+                "execution_resilience_score": resilience,
+            },
+            "figures": [
+                self._figure_line_series(
+                    figure_id="cost_sensitivity_curve",
+                    title="Execution Cost Sensitivity",
+                    x_label="cost_multiplier",
+                    y_label="ev_net",
+                    x_values=[point["multiplier"] for point in blended_curve],
+                    series=[
+                        {"name": "fees_only", "values": [point["ev_net"] for point in fee_curve]},
+                        {"name": "slippage_spread", "values": [point["ev_net"] for point in slippage_curve]},
+                        {"name": "combined_costs", "values": [point["ev_net"] for point in blended_curve]},
+                    ],
+                )
+            ],
+            "interpretation": [
+                "Execution diagnostic stresses fees/slippage/spread against realized per-trade outcomes."
+            ],
+            "warnings": [],
+            "assumptions": [
+                "Stress multipliers apply proportionally to observed costs and do not model liquidity feedback."
+            ],
+            "recommendations": ["Collect venue-level slippage assumptions for richer execution what-if scenarios."],
+            "metadata": {"multipliers": multipliers},
             "baseline_ev_net": float(base.mean()) if len(base) else 0.0,
             "fee_curve": fee_curve,
             "slippage_spread_curve": slippage_curve,
@@ -825,6 +1205,36 @@ class StrategyRobustnessLabService:
         consistency = max(0.0, min(100.0, 100.0 - (dispersion * 100.0)))
 
         return {
+            "summary_metrics": {
+                "regime_consistency_score": consistency,
+            },
+            "figures": [
+                {
+                    "id": "session_expectancy_bars",
+                    "type": "bar_groups",
+                    "title": "Session Expectancy",
+                    "x_label": "session",
+                    "y_label": "mean_pnl_net",
+                    "groups": [{"label": str(k), "value": float(v)} for k, v in by_session.items()],
+                },
+                {
+                    "id": "volatility_regime_bars",
+                    "type": "bar_groups",
+                    "title": "Volatility Regime Expectancy",
+                    "x_label": "volatility_regime",
+                    "y_label": "mean_pnl_net",
+                    "groups": [{"label": str(k), "value": float(v)} for k, v in vol_expectancy.items()],
+                },
+            ],
+            "interpretation": [
+                "Regime analysis here is inferred from trade-sequence proxies unless explicit OHLCV regime labels are supplied."
+            ],
+            "warnings": [],
+            "assumptions": [
+                "Volatility and trend regimes are proxied from rolling trade PnL statistics in trade-only mode."
+            ],
+            "recommendations": ["Upload OHLCV/regime labels for genuine market-regime decomposition."],
+            "metadata": {"proxy_mode": True},
             "volatility_regime_expectancy": {str(k): float(v) for k, v in vol_expectancy.items()},
             "trend_range_expectancy": {str(k): float(v) for k, v in trend_expectancy.items()},
             "session_expectancy": {str(k): float(v) for k, v in by_session.items()},
@@ -846,6 +1256,31 @@ class StrategyRobustnessLabService:
             projected_risk_capital = float(account_size) * float(risk_per_trade_pct)
 
         return {
+            "summary_metrics": {
+                "probability_of_ruin": float(monte_carlo.get("probability_of_ruin", 0.0)),
+                "expected_worst_drawdown_pct": expected_worst_drawdown,
+                "capital_threshold": float(monte_carlo.get("ruin_threshold_equity", account_size * 0.5)),
+            },
+            "figures": [
+                {
+                    "id": "ruin_threshold_curve",
+                    "type": "line_series",
+                    "title": "Ruin Probability by Drawdown Threshold",
+                    "x_label": "drawdown_threshold",
+                    "y_label": "probability",
+                    "x": list(levels.keys()),
+                    "series": [{"name": "probability", "values": [float(value) for value in levels.values()]}],
+                }
+            ],
+            "interpretation": [
+                "Ruin metrics are tied to Monte Carlo survivability under the configured ruin equity threshold."
+            ],
+            "warnings": [],
+            "assumptions": [
+                "Ruin threshold defaults to 50% of account equity if not overridden by account policy."
+            ],
+            "recommendations": ["Set explicit account_size and risk_per_trade_pct for tighter ruin-context outputs."],
+            "metadata": {"drawdown_levels": list(levels.keys())},
             "probability_of_ruin": float(monte_carlo.get("probability_of_ruin", 0.0)),
             "probability_drawdown_30": float(levels.get("dd_30", 0.0)),
             "probability_drawdown_50": float(levels.get("dd_50", 0.0)),
@@ -925,9 +1360,66 @@ class StrategyRobustnessLabService:
         simulations: int,
     ) -> dict[str, Any]:
         interpretation = "Robust candidate" if score["overall"] >= 60.0 else "Deploy with caution"
+        available_diagnostics = {
+            "overview": True,
+            "distribution": True,
+            "monte_carlo": bool(monte_carlo.get("simulations", 0) > 0),
+            "stability": parameter_stability.get("status") != "single_run_only",
+            "execution": True,
+            "regimes": True,
+            "ruin": True,
+        }
         return {
+            "summary_metrics": {
+                "robustness_score": float(score["overall"]),
+                "trade_count": int(run.performance.get("total_trades", 0)),
+                "available_diagnostic_count": int(sum(1 for enabled in available_diagnostics.values() if enabled)),
+            },
+            "figures": [],
+            "interpretation": [
+                f"Final posture: {interpretation}.",
+                "Report summarizes only diagnostics that were truthfully computable from supplied inputs.",
+            ],
+            "warnings": [],
+            "assumptions": [
+                "Report sections are synthesized from deterministic diagnostics using configured Monte Carlo seed."
+            ],
+            "recommendations": [
+                "Provide richer artifact bundles (benchmark/OHLCV/parameter grid) to unlock deeper diagnostics."
+            ],
+            "metadata": {
+                "available_diagnostics": available_diagnostics,
+                "export_sections": [
+                    "executive_summary",
+                    "validation_posture",
+                    "limitations",
+                    "recommendations",
+                ],
+            },
+            "header": {
+                "strategy_name": run.metadata.get("strategy_name"),
+                "date_start": run.metadata.get("date_start"),
+                "date_end": run.metadata.get("date_end"),
+                "source": run.source,
+            },
+            "executive_summary": {
+                "verdict": interpretation,
+                "robustness_score": float(score["overall"]),
+                "top_risks": [
+                    "Monte Carlo drawdown profile",
+                    "Execution cost sensitivity",
+                ],
+            },
+            "validation_posture": {
+                "deterministic": True,
+                "seed": int(seed),
+                "simulations": int(simulations),
+            },
+            "limitations": [
+                "Trade-only artifacts cannot fully support parameter-topology stability or true market-regime decomposition."
+            ],
             "strategy_summary": run.metadata,
-            "assumptions": {
+            "assumptions_detail": {
                 "ingestion_source": run.source,
                 "monte_carlo_seed": seed,
                 "monte_carlo_simulations": simulations,

@@ -74,6 +74,12 @@ def test_run_analysis_from_parsed_artifact_trade_only_degrades_honestly() -> Non
     assert "monte_carlo" in result.diagnostics
     assert "execution" in result.diagnostics
     assert "report" in result.diagnostics
+    assert result.diagnostics["distribution"]["available"] is True
+    assert result.diagnostics["distribution"]["summary_metrics"]["trade_count"] == 3
+    assert result.diagnostics["distribution"]["figures"]
+    assert result.diagnostics["overview"]["summary_metrics"]["posture"] in {"robust_candidate", "caution"}
+    assert result.diagnostics["monte_carlo"]["summary_metrics"]["worst_simulated_drawdown_pct"] <= 0.0
+    assert "limitations" in result.diagnostics["report"]
     assert "fixture parser note" in result.warnings
 
 
@@ -87,6 +93,7 @@ def test_run_analysis_from_parsed_artifact_is_deterministic_for_same_seed() -> N
 
     assert a.diagnostics["monte_carlo"]["drawdown_distribution_pct"] == b.diagnostics["monte_carlo"]["drawdown_distribution_pct"]
     assert a.diagnostics["ruin"]["probability_of_ruin"] == b.diagnostics["ruin"]["probability_of_ruin"]
+    assert a.diagnostics["monte_carlo"]["figures"] == b.diagnostics["monte_carlo"]["figures"]
 
 
 def test_run_analysis_from_parsed_artifact_respects_diagnostic_eligibility() -> None:

@@ -1,0 +1,169 @@
+# Engine Diagnostic Emission Contract
+
+This document defines the engine-native payload emitted by:
+
+- `StrategyRobustnessLabService.run_analysis_from_parsed_artifact(...)`
+- `bt.saas.service.run_analysis_from_parsed_artifact(...)`
+
+## Global Diagnostic Envelope
+
+Each diagnostic block (`overview`, `distribution`, `monte_carlo`, `execution`, `stability`, `regimes`, `ruin`, `report`) is emitted with a stable envelope:
+
+- `available: bool`
+- `limited: bool`
+- `reason_unavailable: str | null`
+- `limitations: list[str]`
+- `summary_metrics: dict[str, scalar | null]`
+- `figures: list[FigurePayload]`
+- `interpretation: list[str]`
+- `warnings: list[str]`
+- `assumptions: list[str]`
+- `recommendations: list[str]`
+- `metadata: dict[str, Any]`
+- `payload: dict[str, Any]` (full native diagnostic payload for backward compatibility)
+
+Skipped diagnostics are emitted as:
+
+- `{"status": "skipped", "reason": "..."}`
+
+## Figure Payload Types
+
+Engine emits structured, UI-agnostic figure payloads:
+
+- `type: "line_series"` with `x` + multi-series values
+- `type: "histogram"` with explicit bins (`start`, `end`, `count`)
+- `type: "scatter"` with `points`
+- `type: "fan_chart"` with percentile bands (`p10`, `p50`, `p90`)
+- `type: "heatmap"` with typed cells
+- `type: "bar_groups"` for grouped bar comparisons
+
+## Diagnostic-Specific Emission
+
+### overview
+
+Minimum:
+- robustness and top-line posture
+- key trade/equity metrics
+- warnings + limitations
+
+Trade-only:
+- reconstructed equity figure if no uploaded equity curve
+- truthful no-benchmark posture when absent
+
+Richer bundle unlocks:
+- benchmark-relative equity comparison
+
+### distribution
+
+Minimum:
+- expectancy, win rate, mean/median return
+- gross profit/loss, payoff ratio/profit factor when defined
+- trade count, duration summaries
+
+Figures:
+- outcome histogram
+- win/loss bars
+- MAE/MFE scatter when available
+- duration histogram
+
+Trade-only:
+- this is a primary rich diagnostic and should remain fully populated from trades
+
+### monte_carlo
+
+Minimum:
+- worst/median drawdown
+- drawdown percentile summaries
+- ruin probability and methodology
+
+Figures:
+- equity fan chart
+- drawdown histogram
+
+Trade-only:
+- bootstrap simulation from realized trade sequence
+
+Richer bundle unlocks:
+- conditional/regime-aware simulation
+
+### execution
+
+Minimum:
+- fee/slippage/spread sensitivity
+- break-even cost multiplier
+- resilience score
+
+Figures:
+- cost sensitivity line series
+
+Trade-only:
+- valid if cost columns or defaults are available
+
+Richer bundle unlocks:
+- venue-specific microstructure assumptions
+
+### stability
+
+Minimum:
+- stability proxy score in single-run mode
+- explicit limitation messaging
+
+Figures:
+- heatmap when grid metadata exists
+
+Trade-only:
+- typically `limited` with proxy only
+
+Richer bundle unlocks:
+- topology metrics (plateau ratio, fragility) from parameter grids
+
+### regimes
+
+Minimum:
+- proxy regime summaries and consistency score
+
+Figures:
+- session expectancy bars
+- volatility-regime bars
+
+Trade-only:
+- proxy-only with explicit assumptions
+
+Richer bundle unlocks:
+- OHLCV/labeled regime decomposition
+
+### ruin
+
+Minimum:
+- probability of ruin
+- stress drawdown summary
+- capital threshold context
+
+Figures:
+- threshold probability line
+
+Trade-only:
+- derived from Monte Carlo outputs and account assumptions
+
+Richer bundle unlocks:
+- policy-aware and dynamic sizing stress curves
+
+### report
+
+Minimum report-ready sections:
+- `header`
+- `executive_summary`
+- `validation_posture`
+- diagnostic availability metadata
+- assumptions / limitations / recommendations
+- final verdict
+
+Trade-only:
+- meaningful report remains available, including what richer bundles would unlock
+
+## Truthfulness Rules
+
+- Never fabricate unavailable diagnostics.
+- Use `available/limited/reason_unavailable` to communicate capability truthfully.
+- Include limitations + recommendations when richer inputs are required.
+- Prefer partial truthful output over empty blocks when metrics are derivable.
