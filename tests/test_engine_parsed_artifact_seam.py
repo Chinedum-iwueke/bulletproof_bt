@@ -162,7 +162,20 @@ def test_run_analysis_from_parsed_artifact_trade_only_degrades_honestly() -> Non
     assert overview["assumptions"]
     assert overview["limitations"]
     assert overview["recommendations"]
-    assert result.diagnostics["monte_carlo"]["summary_metrics"]["worst_simulated_drawdown_pct"] <= 0.0
+    monte_carlo = result.diagnostics["monte_carlo"]
+    assert monte_carlo["summary_metrics"]["worst_simulated_drawdown_pct"] <= 0.0
+    assert "worst_drawdown" in monte_carlo["summary_metrics"]
+    assert "p95_drawdown" in monte_carlo["summary_metrics"]
+    assert "median_drawdown" in monte_carlo["summary_metrics"]
+    assert "p_ruin" in monte_carlo["summary_metrics"]
+    fan_chart = next(figure for figure in monte_carlo["figures"] if figure["type"] == "fan_chart")
+    assert {"p5", "p25", "p50", "p75", "p95"}.issubset(fan_chart["bands"].keys())
+    assert monte_carlo["drawdown_distribution"]["histogram_bins"]
+    assert monte_carlo["interpretation"]["summary"]
+    assert monte_carlo["assumptions"]
+    assert monte_carlo["limitations"]
+    assert monte_carlo["recommendations"]
+    assert monte_carlo["metadata"]["method"] == "bootstrap_iid_trade_pnl"
     assert "limitations" in result.diagnostics["report"]
     assert "fixture parser note" in result.warnings
 
