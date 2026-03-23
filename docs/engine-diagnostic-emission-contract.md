@@ -33,7 +33,7 @@ Engine emits structured, UI-agnostic figure payloads:
 - `type: "line_series"` with `x` + multi-series values
 - `type: "histogram"` with explicit bins (`start`, `end`, `count`)
 - `type: "scatter"` with `points`
-- `type: "fan_chart"` with percentile bands (`p10`, `p50`, `p90`)
+- `type: "fan_chart"` with percentile bands (`p5`, `p25`, `p50`, `p75`, `p95`)
 - `type: "heatmap"` with typed cells
 - `type: "bar_groups"` for grouped bar comparisons
 
@@ -111,16 +111,31 @@ Trade-only:
 ### monte_carlo
 
 Minimum:
-- worst/median drawdown
-- drawdown percentile summaries
-- ruin probability and methodology
+- summary metrics:
+  - `worst_drawdown` (pct)
+  - `p95_drawdown` (pct tail drawdown severity proxy)
+  - `median_drawdown` (pct)
+  - `p_ruin` (probability)
+- plus legacy compatibility metrics:
+  - `worst_simulated_drawdown_pct`
+  - `median_drawdown_pct`
+  - `drawdown_p95_pct`
+  - `probability_of_ruin`
+- drawdown distribution structure:
+  - `drawdown_distribution.histogram_bins`
+  - `drawdown_distribution.percentiles`
+- ruin context:
+  - `ruin_threshold_fraction`
+  - `ruin_threshold_equity`
+- explicit assumptions / limitations / recommendations arrays
 
 Figures:
-- equity fan chart
+- equity fan chart (`p5`, `p25`, `p50`, `p75`, `p95` bands)
 - drawdown histogram
 
 Trade-only:
-- bootstrap simulation from realized trade sequence
+- baseline IID bootstrap simulation from realized trade sequence is first-class and expected to produce
+  substantive survivability output (fan chart, drawdown distribution, ruin probability when threshold is defined)
 
 Richer bundle unlocks:
 - conditional/regime-aware simulation

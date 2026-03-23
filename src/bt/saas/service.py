@@ -1214,10 +1214,12 @@ class StrategyRobustnessLabService:
         fan_chart_paths: int = 50,
     ) -> dict[str, Any]:
         pnl = trades["pnl_net"].fillna(0.0).to_numpy(dtype=float)
+        ruin_threshold_fraction = 0.5
+        method = "bootstrap_iid_trade_pnl"
         if pnl.size == 0 or simulations <= 0:
             return {
                 "methodology": {
-                    "method": "bootstrap_trade_returns",
+                    "method": method,
                     "replacement": True,
                     "simulations": 0,
                     "seed": seed,
@@ -1228,20 +1230,35 @@ class StrategyRobustnessLabService:
                 "worst_drawdown_pct": 0.0,
                 "median_drawdown_pct": 0.0,
                 "probability_by_drawdown_threshold": {},
-                "probability_of_ruin": 0.0,
-                "ruin_threshold_equity": float(initial_equity * 0.5),
+                "probability_of_ruin": None,
+                "ruin_threshold_equity": None,
+                "ruin_threshold_fraction": ruin_threshold_fraction,
                 "summary_metrics": {
-                    "worst_simulated_drawdown_pct": 0.0,
-                    "median_drawdown_pct": 0.0,
-                    "drawdown_p95_pct": 0.0,
-                    "probability_of_ruin": 0.0,
+                    "worst_drawdown": None,
+                    "p95_drawdown": None,
+                    "median_drawdown": None,
+                    "p_ruin": None,
                 },
                 "figures": [],
-                "interpretation": ["Monte Carlo unavailable because trade outcomes or simulations are missing."],
+                "drawdown_distribution": {"histogram_bins": [], "percentiles": {}},
+                "interpretation": {
+                    "summary": "Monte Carlo unavailable because trade outcomes or simulation count are missing.",
+                    "risk_level": "unknown",
+                    "positives": [],
+                    "cautions": ["No simulation paths were generated."],
+                },
                 "warnings": ["No Monte Carlo simulations were produced."],
                 "assumptions": ["Bootstrap simulation requires at least one trade return and simulations > 0."],
+                "limitations": ["No valid trade outcomes or simulation paths were available."],
                 "recommendations": ["Provide trade outcomes and simulation count > 0 to enable Monte Carlo diagnostics."],
-                "metadata": {"simulations": 0, "trades_in_bootstrap": int(pnl.size)},
+                "metadata": {
+                    "method": method,
+                    "path_model": "iid_bootstrap_with_replacement",
+                    "simulations": 0,
+                    "trades_in_bootstrap": int(pnl.size),
+                    "horizon_trades": int(pnl.size),
+                    "ruin_threshold_fraction": ruin_threshold_fraction,
+                },
             }
 
         rng = np.random.default_rng(seed)
@@ -1257,15 +1274,26 @@ class StrategyRobustnessLabService:
             for level in drawdown_levels
         }
 
-        ruin_threshold_equity = float(initial_equity * 0.5)
+        ruin_threshold_equity = float(initial_equity * ruin_threshold_fraction)
         probability_of_ruin = float((equity_paths.min(axis=1) <= ruin_threshold_equity).mean())
 
-        quantiles = self._quantiles(max_drawdowns, points=(0.5, 0.95))
-        percentile_paths = np.quantile(equity_paths, [0.1, 0.5, 0.9], axis=0)
+        drawdown_severity_pct = -max_drawdowns * 100.0
+        quantiles = self._quantiles(max_drawdowns, points=(0.05, 0.5, 0.95))
+        severity_quantiles = self._quantiles(drawdown_severity_pct, points=(0.5, 0.95))
+        percentile_paths = np.quantile(equity_paths, [0.05, 0.25, 0.5, 0.75, 0.95], axis=0)
+        worst_drawdown_pct = float(max_drawdowns.min() * 100.0)
+        median_drawdown_pct = float(np.median(max_drawdowns) * 100.0)
+        p95_drawdown_pct = float(np.quantile(max_drawdowns, 0.05) * 100.0)
+        p5_drawdown_pct = float(np.quantile(max_drawdowns, 0.95) * 100.0)
+        expected_drawdown_pct = float(max_drawdowns.mean() * 100.0)
+        recovery_steps = np.argmax(equity_paths >= float(initial_equity), axis=1) + 1
+        never_recovered = np.all(equity_paths < float(initial_equity), axis=1)
+        recovery_steps = np.where(never_recovered, np.nan, recovery_steps.astype(float))
+        recovery_success_rate = float(np.isfinite(recovery_steps).mean())
 
         return {
             "methodology": {
-                "method": "bootstrap_trade_returns",
+                "method": method,
                 "replacement": True,
                 "simulations": int(simulations),
                 "seed": int(seed),
@@ -1276,13 +1304,38 @@ class StrategyRobustnessLabService:
                 for row in equity_paths[: min(fan_chart_paths, simulations)].tolist()
             ],
             "drawdown_distribution_pct": [float(value * 100.0) for value in max_drawdowns.tolist()],
-            "worst_drawdown_pct": float(max_drawdowns.min() * 100.0),
-            "median_drawdown_pct": float(np.median(max_drawdowns) * 100.0),
+            "drawdown_distribution": {
+                "histogram_bins": self._histogram_bins(
+                    [float(value) for value in drawdown_severity_pct.tolist()],
+                    bins=18,
+                ),
+                "percentiles": {
+                    "p5": p5_drawdown_pct,
+                    "p50": median_drawdown_pct,
+                    "p95": p95_drawdown_pct,
+                    "worst": worst_drawdown_pct,
+                },
+            },
+            "worst_drawdown_pct": worst_drawdown_pct,
+            "median_drawdown_pct": median_drawdown_pct,
             "probability_by_drawdown_threshold": threshold_probs,
             "probability_of_ruin": probability_of_ruin,
             "ruin_threshold_equity": ruin_threshold_equity,
+            "ruin_threshold_fraction": ruin_threshold_fraction,
             "summary_metrics": {
-                "worst_simulated_drawdown_pct": float(max_drawdowns.min() * 100.0),
+                "worst_drawdown": worst_drawdown_pct,
+                "p95_drawdown": p95_drawdown_pct,
+                "median_drawdown": median_drawdown_pct,
+                "p_ruin": probability_of_ruin,
+                "p5_drawdown": p5_drawdown_pct,
+                "expected_drawdown": expected_drawdown_pct,
+                "recovery_success_rate": recovery_success_rate,
+                "recovery_median_trades": (
+                    float(np.nanmedian(recovery_steps)) if np.isfinite(recovery_steps).any() else None
+                ),
+                "path_dispersion_terminal_equity_p10": float(np.quantile(equity_paths[:, -1], 0.1)),
+                "path_dispersion_terminal_equity_p90": float(np.quantile(equity_paths[:, -1], 0.9)),
+                "worst_simulated_drawdown_pct": worst_drawdown_pct,
                 "median_drawdown_pct": float(quantiles["0.5"] * 100.0),
                 "drawdown_p95_pct": float(quantiles["0.95"] * 100.0),
                 "probability_of_ruin": probability_of_ruin,
@@ -1297,32 +1350,75 @@ class StrategyRobustnessLabService:
                     "y_label": "equity",
                     "x": list(range(1, pnl.size + 1)),
                     "bands": {
-                        "p10": [float(value) for value in percentile_paths[0].tolist()],
-                        "p50": [float(value) for value in percentile_paths[1].tolist()],
-                        "p90": [float(value) for value in percentile_paths[2].tolist()],
+                        "p5": [float(value) for value in percentile_paths[0].tolist()],
+                        "p25": [float(value) for value in percentile_paths[1].tolist()],
+                        "p50": [float(value) for value in percentile_paths[2].tolist()],
+                        "p75": [float(value) for value in percentile_paths[3].tolist()],
+                        "p95": [float(value) for value in percentile_paths[4].tolist()],
                     },
                 },
                 self._figure_histogram(
                     figure_id="drawdown_histogram",
                     title="Simulated Max Drawdown Distribution",
-                    x_label="max_drawdown_pct",
+                    x_label="max_drawdown_severity_pct",
                     y_label="simulation_count",
-                    bins=self._histogram_bins([float(value * 100.0) for value in max_drawdowns.tolist()], bins=16),
+                    bins=self._histogram_bins([float(value) for value in drawdown_severity_pct.tolist()], bins=16),
                 ),
             ],
-            "interpretation": [
-                "Monte Carlo uses bootstrap resampling of realized trade outcomes with replacement.",
-                "Ruin probability is estimated as the fraction of paths crossing the ruin equity threshold.",
-            ],
+            "interpretation": {
+                "summary": (
+                    f"Bootstrap IID Monte Carlo over {simulations} paths shows median max drawdown "
+                    f"{median_drawdown_pct:.2f}% and 95th-tail drawdown {p95_drawdown_pct:.2f}%."
+                ),
+                "risk_level": (
+                    "high_tail_risk"
+                    if p95_drawdown_pct <= -40.0
+                    else "moderate_tail_risk"
+                    if p95_drawdown_pct <= -25.0
+                    else "contained_tail_risk"
+                ),
+                "positives": [
+                    f"Median simulated drawdown remains {median_drawdown_pct:.2f}%.",
+                    f"Recovery to initial equity occurred in {recovery_success_rate * 100.0:.1f}% of paths.",
+                ],
+                "cautions": [
+                    f"Worst simulated drawdown reaches {worst_drawdown_pct:.2f}%.",
+                    (
+                        f"Estimated ruin probability is {probability_of_ruin:.2%} at "
+                        f"{ruin_threshold_fraction:.0%} starting-equity threshold."
+                    ),
+                ],
+            },
             "warnings": [],
             "assumptions": [
-                "Trade outcomes are IID under bootstrap resampling.",
-                "No serial correlation/regime conditioning is modeled in this baseline Monte Carlo.",
+                "IID bootstrap resampling with replacement from realized trade-level net PnL.",
+                "Simulation horizon equals observed trade count in the uploaded artifact.",
+                "Ruin is defined as any path breaching 50% of starting equity.",
+            ],
+            "limitations": [
+                "No serial dependence, volatility clustering, or regime-aware sequencing is modeled.",
+                "No liquidity, slippage amplification, or execution-gapping stress is injected beyond supplied trade PnL.",
+                "Baseline Monte Carlo is unconditional IID bootstrap; conditional/context-aware simulation is not implemented here.",
             ],
             "recommendations": [
-                "Provide richer regime labels or OHLCV context for conditional Monte Carlo in future revisions.",
+                "Use p95 drawdown and ruin probability as sizing guardrails for survivability decisions.",
+                "Reduce position sizing if tail drawdown and ruin probabilities exceed risk policy.",
+                "Add regime labels/OHLCV context to support future conditional or block-bootstrap Monte Carlo extensions.",
             ],
-            "metadata": {"trades_in_bootstrap": int(pnl.size), "simulations": int(simulations)},
+            "metadata": {
+                "method": method,
+                "path_model": "iid_bootstrap_with_replacement",
+                "simulations": int(simulations),
+                "num_paths": int(simulations),
+                "trades_in_bootstrap": int(pnl.size),
+                "horizon_trades": int(pnl.size),
+                "ruin_threshold_fraction": ruin_threshold_fraction,
+                "ruin_threshold_equity": ruin_threshold_equity,
+                "figure_payload_mode": "percentile_bands_with_optional_sample_paths",
+                "fan_chart_band_percentiles": [5, 25, 50, 75, 95],
+                "drawdown_distribution_mode": "max_drawdown_histogram_and_percentiles",
+                "compute_simplifications": ["iid_resampling", "fixed_horizon_equal_to_observed_trade_count"],
+            },
         }
 
     def _parameter_stability_from_single_run(self, performance: dict[str, Any]) -> dict[str, Any]:
