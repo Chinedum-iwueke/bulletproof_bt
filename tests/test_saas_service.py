@@ -90,10 +90,29 @@ def test_risk_of_ruin_payload_contains_survivability_fields(tmp_path: Path) -> N
 
     ror = payload["risk_of_ruin"]
     assert "probability_of_ruin" in ror
+    assert ror["summary_metrics"]["probability_of_ruin"] is not None
+    assert ror["summary_metrics"]["expected_stress_drawdown"] is not None
+    assert ror["summary_metrics"]["survival_probability"] is not None
     assert "probability_drawdown_30" in ror
     assert "probability_drawdown_50" in ror
+    assert "risk_scenarios" in ror and len(ror["risk_scenarios"]) >= 4
     assert ror["account_size"] == 50_000.0
     assert ror["projected_risk_capital_per_trade"] == 500.0
+
+
+def test_risk_of_ruin_payload_is_limited_without_sizing_inputs(tmp_path: Path) -> None:
+    trade_log = tmp_path / "trade_log.csv"
+    _write_trade_log(trade_log)
+
+    service = StrategyRobustnessLabService()
+    run = service.ingest_trade_log(trade_log)
+    payload = service.build_dashboard_payload(run, seed=7, simulations=250)
+
+    ror = payload["risk_of_ruin"]
+    assert ror["status"] == "limited"
+    assert ror["summary_metrics"]["probability_of_ruin"] is None
+    assert "account_size" in ror["metadata"]["missing_required_inputs"]
+    assert "risk_per_trade_pct" in ror["metadata"]["missing_required_inputs"]
 
 
 def test_dashboard_payload_structure_and_json_ready(tmp_path: Path) -> None:

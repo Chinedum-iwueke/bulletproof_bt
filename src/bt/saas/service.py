@@ -192,7 +192,9 @@ class StrategyRobustnessLabService:
         regime = self._regime_analysis(run.trades, ohlcv=run.metadata.get("_ohlcv_context"))
         risk_of_ruin = self._risk_of_ruin(
             monte_carlo,
+            trades=run.trades,
             account_size=equity_start,
+            explicit_account_size=account_size,
             risk_per_trade_pct=risk_per_trade_pct,
         )
         score = self._score(
@@ -311,7 +313,7 @@ class StrategyRobustnessLabService:
         }
 
         capability_profile = AnalysisCapabilityProfile(
-            diagnostics=self._diagnostic_capability_profile(parsed_artifact)
+            diagnostics=self._diagnostic_capability_profile(parsed_artifact, config=config)
         )
         diagnostics = self._apply_diagnostic_eligibility(
             diagnostics=diagnostics,
@@ -423,6 +425,8 @@ class StrategyRobustnessLabService:
     def _diagnostic_capability_profile(
         self,
         parsed_artifact: ParsedArtifactInput,
+        *,
+        config: AnalysisRunConfig,
     ) -> dict[str, DiagnosticCapability]:
         trade_count = len(parsed_artifact.trades)
         has_trades = trade_count > 0
@@ -475,6 +479,51 @@ class StrategyRobustnessLabService:
             else "Cannot assemble report without diagnostics from trade data."
         )
 
+        if not has_trades:
+            ruin_capability = DiagnosticCapability(
+                status="unavailable",
+                reason="No trades supplied in parsed artifact.",
+                required_inputs=["trades", "account_size", "risk_per_trade_pct"],
+                optional_enrichments=["assumptions", "stop_policy", "compounding_model"],
+            )
+        elif config.account_size is None or config.risk_per_trade_pct is None:
+            missing = []
+            if config.account_size is None:
+                missing.append("account_size")
+            if config.risk_per_trade_pct is None:
+                missing.append("risk_per_trade_pct")
+            ruin_capability = DiagnosticCapability(
+                status="limited",
+                reason=(
+                    "Full risk-of-ruin model requires explicit "
+                    + ", ".join(missing)
+                    + " assumptions."
+                ),
+                required_inputs=["trades", "account_size", "risk_per_trade_pct"],
+                optional_enrichments=["assumptions", "stop_policy", "compounding_model", "monte_carlo"],
+            )
+        elif trade_count < 30:
+            ruin_capability = DiagnosticCapability(
+                status="limited",
+                reason="Ruin estimates are computed from fewer than 30 trades and have high uncertainty.",
+                required_inputs=["trades", "account_size", "risk_per_trade_pct"],
+                optional_enrichments=["assumptions", "stop_policy", "compounding_model", "monte_carlo"],
+            )
+        elif config.simulations <= 0:
+            ruin_capability = DiagnosticCapability(
+                status="unavailable",
+                reason="Ruin model requires Monte Carlo simulations > 0 for survivability estimates.",
+                required_inputs=["trades", "account_size", "risk_per_trade_pct"],
+                optional_enrichments=["assumptions", "stop_policy", "compounding_model", "monte_carlo"],
+            )
+        else:
+            ruin_capability = DiagnosticCapability(
+                status="supported",
+                reason="Risk-of-ruin model active with explicit capital and risk-per-trade assumptions.",
+                required_inputs=["trades", "account_size", "risk_per_trade_pct"],
+                optional_enrichments=["assumptions", "stop_policy", "compounding_model", "monte_carlo"],
+            )
+
         return {
             "overview": status_for_trade_based("overview"),
             "distribution": status_for_trade_based("distribution"),
@@ -493,16 +542,7 @@ class StrategyRobustnessLabService:
                 )
             ),
             "regimes": regimes,
-            "ruin": DiagnosticCapability(
-                status="supported" if has_trades else "unavailable",
-                reason=(
-                    "Risk of ruin derived from Monte Carlo drawdown distribution."
-                    if has_trades
-                    else "No trades supplied in parsed artifact."
-                ),
-                required_inputs=["trades"],
-                optional_enrichments=["account_size", "risk_per_trade_pct", "assumptions"],
-            ),
+            "ruin": ruin_capability,
             "report": DiagnosticCapability(
                 status=report_status,
                 reason=report_reason,
@@ -2186,50 +2226,286 @@ class StrategyRobustnessLabService:
         self,
         monte_carlo: dict[str, Any],
         *,
+        trades: pd.DataFrame,
         account_size: float,
+        explicit_account_size: float | None,
         risk_per_trade_pct: float | None,
     ) -> dict[str, Any]:
+        pnl = trades["pnl_net"].fillna(0.0).to_numpy(dtype=float)
         levels = monte_carlo.get("probability_by_drawdown_threshold", {})
-        expected_worst_drawdown = float(monte_carlo.get("worst_drawdown_pct", 0.0))
+        mc_summary = monte_carlo.get("summary_metrics", {})
+        simulations = int(monte_carlo.get("simulations", 0) or 0)
+        monte_carlo_linked = simulations > 0 and pnl.size > 0
+        ruin_threshold_fraction = float(monte_carlo.get("ruin_threshold_fraction", 0.5))
+        ruin_threshold_equity = float(monte_carlo.get("ruin_threshold_equity", account_size * ruin_threshold_fraction))
+        expected_worst_drawdown = mc_summary.get("expected_drawdown")
+        expected_stress_drawdown = float(expected_worst_drawdown) if expected_worst_drawdown is not None else None
 
-        projected_risk_capital = None
-        if risk_per_trade_pct is not None:
-            projected_risk_capital = float(account_size) * float(risk_per_trade_pct)
+        required_missing: list[str] = []
+        if explicit_account_size is None:
+            required_missing.append("account_size")
+        if risk_per_trade_pct is None:
+            required_missing.append("risk_per_trade_pct")
+
+        assumptions = [
+            (
+                f"account_size={float(explicit_account_size):.2f}"
+                if explicit_account_size is not None
+                else "account_size not explicitly provided (Monte Carlo seed equity fallback was used)."
+            ),
+            (
+                f"risk_per_trade_pct={float(risk_per_trade_pct):.4f}"
+                if risk_per_trade_pct is not None
+                else "risk_per_trade_pct not explicitly provided."
+            ),
+            "sizing_model=fixed_fractional (trade PnL normalized by configured risk-per-trade capital).",
+            "compounding_model=fixed-notional within each simulation horizon.",
+            "trade sequencing assumes IID bootstrap with replacement.",
+            f"monte_carlo_linked={monte_carlo_linked}.",
+        ]
+
+        limitations: list[str] = []
+        if required_missing:
+            limitations.append(
+                "Full capital-survivability model unavailable because required inputs are missing: "
+                + ", ".join(required_missing)
+                + "."
+            )
+        if not monte_carlo_linked:
+            limitations.append("No Monte Carlo simulation paths available for survivability stress estimation.")
+        limitations.extend(
+            [
+                "No regime-aware sequencing, execution shock integration, or portfolio correlation effects are modeled.",
+                "Dynamic sizing and stop-policy adaptation are not modeled in this baseline ruin implementation.",
+            ]
+        )
+
+        if required_missing:
+            return {
+                "status": "limited",
+                "summary_metrics": {
+                    "probability_of_ruin": None,
+                    "expected_stress_drawdown": expected_stress_drawdown,
+                    "survival_probability": None,
+                    "max_tolerable_risk_per_trade": None,
+                    "minimum_survivable_capital": None,
+                },
+                "figures": [],
+                "interpretation": {
+                    "summary": "Ruin analysis is limited: trade-only artifacts cannot produce deployable capital-survivability estimates.",
+                    "positives": (
+                        ["Monte Carlo stress drawdown context is available."]
+                        if monte_carlo_linked and expected_stress_drawdown is not None
+                        else []
+                    ),
+                    "cautions": [
+                        "Probability of ruin is intentionally withheld until account_size and risk_per_trade_pct are explicit."
+                    ],
+                },
+                "warnings": [],
+                "assumptions": assumptions,
+                "limitations": limitations,
+                "recommendations": [
+                    "Set explicit account_size and risk_per_trade_pct to activate full risk-of-ruin estimates.",
+                    "Validate sizing with Monte Carlo-linked survivability checks before deployment.",
+                ],
+                "metadata": {
+                    "ruin_model_type": "fixed_fractional_bootstrap_ruin_model",
+                    "stress_method": "iid_bootstrap_trade_pnl",
+                    "result_mode": "limited",
+                    "model_completeness": {
+                        "has_trade_distribution": bool(pnl.size > 0),
+                        "has_account_size": explicit_account_size is not None,
+                        "has_risk_per_trade_pct": risk_per_trade_pct is not None,
+                        "monte_carlo_linked": monte_carlo_linked,
+                    },
+                    "required_inputs": ["trades", "account_size", "risk_per_trade_pct"],
+                    "missing_required_inputs": required_missing,
+                    "ruin_threshold_fraction": ruin_threshold_fraction,
+                    "ruin_threshold_equity": ruin_threshold_equity if monte_carlo_linked else None,
+                },
+                "probability_of_ruin": None,
+                "expected_stress_drawdown": expected_stress_drawdown,
+                "account_size": float(explicit_account_size) if explicit_account_size is not None else None,
+                "risk_per_trade_pct": risk_per_trade_pct,
+                "projected_risk_capital_per_trade": None,
+            }
+
+        risk_capital_per_trade = float(account_size) * float(risk_per_trade_pct)
+        if risk_capital_per_trade <= 0 or pnl.size == 0 or simulations <= 0:
+            return {
+                "status": "unavailable",
+                "summary_metrics": {
+                    "probability_of_ruin": None,
+                    "expected_stress_drawdown": None,
+                    "survival_probability": None,
+                    "max_tolerable_risk_per_trade": None,
+                    "minimum_survivable_capital": None,
+                },
+                "figures": [],
+                "interpretation": {
+                    "summary": "Ruin analysis unavailable due to invalid sizing capital or missing simulation paths.",
+                    "positives": [],
+                    "cautions": ["No valid survivability estimate can be produced under current inputs."],
+                },
+                "warnings": [],
+                "assumptions": assumptions,
+                "limitations": limitations,
+                "recommendations": [
+                    "Provide positive account_size and risk_per_trade_pct with simulations > 0 to enable ruin diagnostics."
+                ],
+                "metadata": {
+                    "ruin_model_type": "fixed_fractional_bootstrap_ruin_model",
+                    "stress_method": "iid_bootstrap_trade_pnl",
+                    "result_mode": "unavailable",
+                    "required_inputs": ["trades", "account_size", "risk_per_trade_pct"],
+                    "missing_required_inputs": [],
+                    "ruin_threshold_fraction": ruin_threshold_fraction,
+                    "ruin_threshold_equity": ruin_threshold_equity,
+                },
+                "probability_of_ruin": None,
+                "expected_stress_drawdown": None,
+                "account_size": float(account_size),
+                "risk_per_trade_pct": float(risk_per_trade_pct),
+                "projected_risk_capital_per_trade": risk_capital_per_trade,
+            }
+
+        rng_seed = int(monte_carlo.get("methodology", {}).get("seed", 42))
+        r_multiple = pnl / risk_capital_per_trade
+        scenario_risks = sorted({0.005, 0.01, 0.02, 0.05, float(risk_per_trade_pct)})
+        threshold_levels = [0.20, 0.30, 0.40, 0.50, 0.60]
+
+        def _simulate_scenario(risk_pct: float, seed_offset: int) -> tuple[float, float, dict[str, float]]:
+            scenario_trade_risk = float(account_size) * float(risk_pct)
+            scenario_pnl = r_multiple * scenario_trade_risk
+            rng = np.random.default_rng(rng_seed + seed_offset)
+            sampled = rng.choice(scenario_pnl, size=(simulations, scenario_pnl.size), replace=True)
+            equity_paths = float(account_size) + np.cumsum(sampled, axis=1)
+            running_peaks = np.maximum.accumulate(equity_paths, axis=1)
+            drawdowns = np.where(running_peaks > 0, (equity_paths - running_peaks) / running_peaks, 0.0)
+            max_drawdowns = drawdowns.min(axis=1)
+            p_ruin = float((equity_paths.min(axis=1) <= ruin_threshold_equity).mean())
+            expected_drawdown = float(max_drawdowns.mean() * 100.0)
+            by_threshold = {
+                f"dd_{int(level * 100)}": float((max_drawdowns <= -level).mean())
+                for level in threshold_levels
+            }
+            return p_ruin, expected_drawdown, by_threshold
+
+        risk_scenarios: list[dict[str, float]] = []
+        active_threshold_curve: dict[str, float] = {}
+        probability_of_ruin = None
+        for idx, scenario_risk in enumerate(scenario_risks):
+            p_ruin, scenario_expected_drawdown, threshold_curve = _simulate_scenario(scenario_risk, idx + 1)
+            risk_scenarios.append(
+                {
+                    "risk_per_trade_pct": float(scenario_risk),
+                    "probability_of_ruin": p_ruin,
+                    "expected_stress_drawdown": scenario_expected_drawdown,
+                }
+            )
+            if abs(scenario_risk - float(risk_per_trade_pct)) < 1e-9:
+                probability_of_ruin = p_ruin
+                expected_stress_drawdown = scenario_expected_drawdown
+                active_threshold_curve = threshold_curve
+
+        survival_probability = (1.0 - probability_of_ruin) if probability_of_ruin is not None else None
+        tolerable = [
+            row["risk_per_trade_pct"]
+            for row in risk_scenarios
+            if row["probability_of_ruin"] <= 0.05
+        ]
+        max_tolerable_risk = max(tolerable) if tolerable else None
+
+        figures = [
+            {
+                "id": "ruin_probability_curve",
+                "type": "line_series",
+                "title": "Ruin Probability by Drawdown Threshold",
+                "x_label": "drawdown_threshold_pct",
+                "y_label": "probability_of_breach",
+                "x": [float(level.replace("dd_", "")) / 100.0 for level in active_threshold_curve.keys()],
+                "series": [{"name": "ruin_probability", "values": [float(v) for v in active_threshold_curve.values()]}],
+            },
+            {
+                "id": "risk_per_trade_sensitivity",
+                "type": "line_series",
+                "title": "Ruin Sensitivity by Risk per Trade",
+                "x_label": "risk_per_trade_pct",
+                "y_label": "probability_of_ruin",
+                "x": [float(row["risk_per_trade_pct"]) for row in risk_scenarios],
+                "series": [{"name": "probability_of_ruin", "values": [float(row["probability_of_ruin"]) for row in risk_scenarios]}],
+            },
+        ]
+
+        recommendations = [
+            "Use explicit account_size and risk_per_trade_pct as required controls for survivability decisions.",
+            "Run Monte Carlo-linked ruin checks before deployment whenever sizing assumptions change.",
+        ]
+        if probability_of_ruin is not None and probability_of_ruin > 0.10:
+            recommendations.append("Do not deploy at current sizing; reduce risk_per_trade_pct or increase capital.")
+        elif probability_of_ruin is not None and probability_of_ruin > 0.03:
+            recommendations.append("Sizing appears aggressive; consider reducing risk_per_trade_pct and retesting.")
+
+        cautions = []
+        if probability_of_ruin is not None:
+            cautions.append(f"Estimated ruin probability is {probability_of_ruin:.2%} at current sizing assumptions.")
+        if expected_stress_drawdown is not None:
+            cautions.append(f"Expected stress drawdown is {expected_stress_drawdown:.2f}% across simulated paths.")
 
         return {
+            "status": "available",
             "summary_metrics": {
-                "probability_of_ruin": float(monte_carlo.get("probability_of_ruin", 0.0)),
-                "expected_worst_drawdown_pct": expected_worst_drawdown,
-                "capital_threshold": float(monte_carlo.get("ruin_threshold_equity", account_size * 0.5)),
+                "probability_of_ruin": probability_of_ruin,
+                "expected_stress_drawdown": expected_stress_drawdown,
+                "survival_probability": survival_probability,
+                "max_tolerable_risk_per_trade": max_tolerable_risk,
+                "minimum_survivable_capital": None,
             },
-            "figures": [
-                {
-                    "id": "ruin_threshold_curve",
-                    "type": "line_series",
-                    "title": "Ruin Probability by Drawdown Threshold",
-                    "x_label": "drawdown_threshold",
-                    "y_label": "probability",
-                    "x": list(levels.keys()),
-                    "series": [{"name": "probability", "values": [float(value) for value in levels.values()]}],
-                }
-            ],
-            "interpretation": [
-                "Ruin metrics are tied to Monte Carlo survivability under the configured ruin equity threshold."
-            ],
+            "figures": figures,
+            "risk_scenarios": risk_scenarios,
+            "interpretation": {
+                "summary": "Ruin estimate is active with explicit capital and risk-per-trade assumptions.",
+                "positives": (
+                    [f"Survival probability is {survival_probability:.2%} under current assumptions."]
+                    if survival_probability is not None
+                    else []
+                ),
+                "cautions": cautions,
+            },
             "warnings": [],
-            "assumptions": [
-                "Ruin threshold defaults to 50% of account equity if not overridden by account policy."
-            ],
-            "recommendations": ["Set explicit account_size and risk_per_trade_pct for tighter ruin-context outputs."],
-            "metadata": {"drawdown_levels": list(levels.keys())},
-            "probability_of_ruin": float(monte_carlo.get("probability_of_ruin", 0.0)),
-            "probability_drawdown_30": float(levels.get("dd_30", 0.0)),
-            "probability_drawdown_50": float(levels.get("dd_50", 0.0)),
-            "expected_worst_drawdown_pct": expected_worst_drawdown,
-            "capital_threshold": float(monte_carlo.get("ruin_threshold_equity", account_size * 0.5)),
+            "assumptions": assumptions,
+            "limitations": limitations,
+            "recommendations": recommendations,
+            "metadata": {
+                "ruin_model_type": "fixed_fractional_bootstrap_ruin_model",
+                "stress_method": "iid_bootstrap_trade_pnl",
+                "result_mode": "direct_monte_carlo_linked",
+                "scenario_count": len(risk_scenarios),
+                "model_completeness": {
+                    "has_trade_distribution": True,
+                    "has_account_size": True,
+                    "has_risk_per_trade_pct": True,
+                    "monte_carlo_linked": True,
+                },
+                "required_inputs": ["trades", "account_size", "risk_per_trade_pct"],
+                "missing_required_inputs": [],
+                "ruin_threshold_fraction": ruin_threshold_fraction,
+                "ruin_threshold_equity": ruin_threshold_equity,
+                "sizing_model": "fixed_fractional",
+                "compounding_model": "fixed_notional_over_horizon",
+                "iid_trade_sequencing_assumed": True,
+                "monte_carlo_linked": True,
+                "drawdown_levels": list(levels.keys()),
+            },
+            "probability_of_ruin": probability_of_ruin,
+            "probability_drawdown_30": float(active_threshold_curve.get("dd_30", 0.0)),
+            "probability_drawdown_50": float(active_threshold_curve.get("dd_50", 0.0)),
+            "expected_stress_drawdown": expected_stress_drawdown,
+            "capital_threshold": ruin_threshold_equity,
             "account_size": float(account_size),
-            "risk_per_trade_pct": risk_per_trade_pct,
-            "projected_risk_capital_per_trade": projected_risk_capital,
+            "risk_per_trade_pct": float(risk_per_trade_pct),
+            "projected_risk_capital_per_trade": risk_capital_per_trade,
         }
 
     def _score(

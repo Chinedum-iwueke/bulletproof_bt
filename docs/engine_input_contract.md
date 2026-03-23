@@ -76,6 +76,26 @@ Secondary advanced mode:
 - `diagnostics`: normalized blocks (`overview`, `distribution`, `monte_carlo`, `stability`, `execution`, `regimes`, `ruin`, `report`)
 - `raw_payload`: underlying service payload for compatibility
 
+### Risk of Ruin input contract
+
+Minimum viable ruin model requires:
+
+- normalized trade distribution (`trades`)
+- explicit `account_size`
+- explicit `risk_per_trade_pct` (or equivalent fixed-fractional sizing input)
+
+Optional enrichments:
+
+- stop policy assumptions
+- compounding model overrides
+- Monte Carlo-linked survivability outputs
+- stress scenario grids
+
+Behavior:
+
+- missing `account_size` and/or `risk_per_trade_pct` => ruin diagnostic is emitted as **limited**, with explicit missing-input reasons and no fabricated `probability_of_ruin`
+- when minimum inputs exist => ruin emits full survivability summary metrics, assumptions, limitations, recommendations, interpretation, and at least one chart-ready ruin/stress figure
+
 ## Degradation policy
 
 - `diagnostic_eligibility` can disable specific diagnostics at call-time; disabled blocks are returned as `{"status": "skipped"}` and marked unavailable in capability profile.
@@ -84,3 +104,4 @@ Secondary advanced mode:
 - Low sample (<30 trades): trade-derived diagnostics marked limited.
 - Missing params/parameter_sweep: stability marked limited (single-run proxy).
 - Missing OHLCV: regimes marked limited (trade-sequence proxy).
+- Missing ruin sizing inputs (`account_size`, `risk_per_trade_pct`): ruin marked limited with explicit requirements; full ruin metrics withheld until inputs are provided.

@@ -8,7 +8,7 @@
 | stability | normalized trades/performance baseline | parameter_sweep bundle (preferred), params/grid context | Yes (limited) | No | No | Yes for full topology | Full mode expects parameter sweep runs with explicit per-run params + trades/summary metric; without sweep context engine uses single-run proxy. |
 | execution | normalized trades + cost fields when present (`fees/slippage/spread`) | assumptions for scenario interpretation | Yes | No | No | No | Missing cost fields default to zero-cost baseline. |
 | regimes | normalized trades (`entry_ts`, `pnl_net`) | OHLCV and benchmark context | Yes (limited) | No (currently) | No | No | Current regime logic uses time/session + rolling-PnL proxies. |
-| ruin | Monte Carlo output built from trade PnL | account_size, risk_per_trade_pct | Yes | No | No | No | Derived from MC drawdown distribution. |
+| ruin | normalized trade distribution, explicit `account_size`, explicit `risk_per_trade_pct` | Monte Carlo linkage, stop policy, compounding model, stress scenarios | Limited-only (without sizing inputs) | No | Yes (for full mode) | No | Full survivability mode is capital/sizing aware. Trade-only artifacts without sizing are emitted as limited with explicit missing-input reasons. |
 | report | Any successful diagnostic set (trade-based currently) | assumptions, params, context flags | Yes | No | No | No | Synthesizes final verdict and assumptions block. |
 
 ## Grounding in code

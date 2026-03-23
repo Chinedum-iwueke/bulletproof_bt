@@ -140,7 +140,7 @@ def test_run_analysis_from_parsed_artifact_trade_only_degrades_honestly() -> Non
     assert result.capability_profile.diagnostics["overview"].status == "limited"
     assert result.capability_profile.diagnostics["stability"].status == "limited"
     assert result.capability_profile.diagnostics["regimes"].status == "unavailable"
-    assert result.capability_profile.diagnostics["ruin"].status in {"supported", "limited"}
+    assert result.capability_profile.diagnostics["ruin"].status == "limited"
 
     assert "overview" in result.diagnostics
     assert "distribution" in result.diagnostics
@@ -208,8 +208,38 @@ def test_run_analysis_from_parsed_artifact_trade_only_degrades_honestly() -> Non
     assert monte_carlo["limitations"]
     assert monte_carlo["recommendations"]
     assert monte_carlo["metadata"]["method"] == "bootstrap_iid_trade_pnl"
+    ruin = result.diagnostics["ruin"]
+    assert ruin["limited"] is True
+    assert ruin["summary_metrics"]["probability_of_ruin"] is None
+    assert "account_size" in ruin["metadata"]["missing_required_inputs"]
+    assert "risk_per_trade_pct" in ruin["metadata"]["missing_required_inputs"]
+    assert ruin["figures"] == []
     assert "limitations" in result.diagnostics["report"]
     assert "fixture parser note" in result.warnings
+
+
+def test_run_analysis_from_parsed_artifact_ruin_full_mode_emits_survivability_outputs() -> None:
+    service = StrategyRobustnessLabService()
+    result = service.run_analysis_from_parsed_artifact(
+        _trade_only_artifact(),
+        config=AnalysisRunConfig(seed=5, simulations=120, account_size=50_000.0, risk_per_trade_pct=0.01),
+    )
+
+    ruin = result.diagnostics["ruin"]
+    assert ruin["available"] is True
+    assert ruin["summary_metrics"]["probability_of_ruin"] is not None
+    assert ruin["summary_metrics"]["expected_stress_drawdown"] is not None
+    assert ruin["summary_metrics"]["survival_probability"] is not None
+    assert ruin["figures"]
+    figure_ids = {figure["id"] for figure in ruin["figures"]}
+    assert "ruin_probability_curve" in figure_ids
+    assert "risk_per_trade_sensitivity" in figure_ids
+    assert ruin["risk_scenarios"]
+    assert ruin["metadata"]["scenario_count"] >= 4
+    assert ruin["assumptions"]
+    assert ruin["limitations"]
+    assert ruin["recommendations"]
+    assert isinstance(ruin["interpretation"], dict)
 
 
 def test_distribution_trade_only_honestly_omits_unsupported_secondary_figures() -> None:

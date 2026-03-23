@@ -192,15 +192,37 @@ Richer bundle unlocks:
 ### ruin
 
 Minimum:
-- probability of ruin
-- stress drawdown summary
-- capital threshold context
+- stateful availability (`available` / `limited` / `unavailable`) with explicit reasons
+- required-input framing:
+  - `trades`
+  - `account_size`
+  - `risk_per_trade_pct`
+- summary metrics (when required inputs exist):
+  - `probability_of_ruin`
+  - `expected_stress_drawdown`
+  - `survival_probability`
+  - optional sizing guardrails (`max_tolerable_risk_per_trade`, `minimum_survivable_capital` when computable)
+- explicit assumptions:
+  - account size
+  - risk-per-trade
+  - sizing model
+  - compounding model
+  - IID sequencing assumption
+  - Monte Carlo linkage flag
+- explicit limitations/recommendations tied to missing sizing inputs and model simplifications
 
 Figures:
-- threshold probability line
+- at least one survivability curve when model is active:
+  - ruin probability by drawdown threshold, and/or
+  - survival curve, and/or
+  - risk-per-trade sensitivity curve
+
+Preferred optional:
+- `risk_scenarios` sensitivity table for `0.5% / 1.0% / 2.0% / 5.0%` risk-per-trade
 
 Trade-only:
-- derived from Monte Carlo outputs and account assumptions
+- must be `limited` or `unavailable` when explicit sizing inputs are missing
+- must not fabricate `probability_of_ruin` from trade-only artifacts alone
 
 Richer bundle unlocks:
 - policy-aware and dynamic sizing stress curves
