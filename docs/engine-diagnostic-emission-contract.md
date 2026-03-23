@@ -230,15 +230,39 @@ Richer bundle unlocks:
 ### report
 
 Minimum report-ready sections:
-- `header`
+- `executive_verdict`
+  - `status`: `robust` | `conditional` | `fragile` | `not_deployment_ready`
+  - `headline`: short report title
+  - `summary`: short decision rationale
+- `confidence_level`
+  - `level`: `high` | `medium` | `low`
+  - `summary`: confidence rationale based on evidence richness/completeness
 - `executive_summary`
-- `validation_posture`
-- diagnostic availability metadata
-- assumptions / limitations / recommendations
-- final verdict
+  - concise what/so-what/now-what narrative suitable for client rendering
+- `diagnostics_summary`
+  - per-diagnostic status (`overview`, `distribution`, `monte_carlo`, `stability`, `execution`, `regimes`, `ruin`, `report`)
+  - one-line takeaway + confidence impact (`supports` or `weakens`)
+- `methodology`
+  - engine identity + runtime seam
+  - artifact richness and assumptions framing
+  - Monte Carlo details (seed, simulations, drawdown thresholds)
+  - parser notes when available
+- `limitations`
+- `deployment_guidance`
+  - explicit deployment-now framing
+  - where strategy may be used vs where it should not be used
+  - required improvements before deployment
+- `recommendations`
+  - prioritized action-oriented next steps
+- `key_metrics_snapshot`
+  - top-line decision metrics (score/win-rate/expectancy/drawdown/ruin/edge-decay when available)
+- `report_figures`
+  - curated inclusion hints for export (`equity_curve`, `return_histogram`, `monte_carlo_fan`, optional ruin curve)
+- `metadata`
+  - report scope, artifact label, analysis date/id, export-readiness flags
 
 Trade-only:
-- meaningful report remains available, including what richer bundles would unlock
+- meaningful report remains available with explicit caveats, deployment restrictions, and higher-priority recommendations for richer bundles
 
 ## Truthfulness Rules
 

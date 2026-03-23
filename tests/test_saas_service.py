@@ -193,6 +193,67 @@ def test_report_payload_assembly(tmp_path: Path) -> None:
     assert "performance_summary" in report
     assert "monte_carlo_diagnostics" in report
     assert "final_verdict" in report
+    assert "executive_verdict" in report
+    assert report["executive_verdict"]["status"] in {
+        "robust",
+        "conditional",
+        "fragile",
+        "not_deployment_ready",
+    }
+    assert report["confidence_level"]["level"] in {"high", "medium", "low"}
+    assert "deployment_guidance" in report
+    assert "diagnostics_summary" in report
+    assert "key_metrics_snapshot" in report
+    assert "report" in report
+    assert "metadata" in report["report"]
+    assert "report_figures" in report["report"]
+
+
+def test_report_payload_assembly_for_richer_run_artifacts(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run_report"
+    run_dir.mkdir(parents=True)
+    _write_trade_log(run_dir / "trades.csv")
+    pd.DataFrame(
+        {
+            "ts": ["2024-01-01T00:00:00Z", "2024-01-01T01:00:00Z"],
+            "equity": [100_000.0, 100_150.0],
+        }
+    ).to_csv(run_dir / "equity.csv", index=False)
+    (run_dir / "performance.json").write_text(
+        json.dumps(
+            {
+                "initial_equity": 100_000.0,
+                "final_equity": 100_150.0,
+                "ev_net": 12.5,
+                "win_rate": 0.5,
+                "max_drawdown_pct": -3.0,
+                "total_trades": 4,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    service = StrategyRobustnessLabService()
+    run = service.ingest_run_artifacts(run_dir)
+    report = service.build_dashboard_payload(
+        run,
+        seed=21,
+        simulations=400,
+        account_size=100_000.0,
+        risk_per_trade_pct=0.01,
+    )["validation_report"]
+
+    report_native = report["report"]
+    assert "executive_verdict" in report_native
+    assert "confidence_level" in report_native
+    assert "executive_summary" in report_native
+    assert "diagnostics_summary" in report_native
+    assert "methodology" in report_native
+    assert "limitations" in report_native
+    assert "deployment_guidance" in report_native
+    assert "recommendations" in report_native
+    assert "key_metrics_snapshot" in report_native
+    assert "metadata" in report_native
 
 
 def test_ingest_run_artifacts_reuses_existing_artifacts(tmp_path: Path) -> None:

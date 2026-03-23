@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -2576,7 +2577,6 @@ class StrategyRobustnessLabService:
         seed: int,
         simulations: int,
     ) -> dict[str, Any]:
-        interpretation = "Robust candidate" if score["overall"] >= 60.0 else "Deploy with caution"
         available_diagnostics = {
             "overview": True,
             "distribution": True,
@@ -2585,43 +2585,176 @@ class StrategyRobustnessLabService:
             "execution": True,
             "regimes": True,
             "ruin": True,
+            "report": True,
         }
+        robustness_score = float(score.get("overall", 0.0))
+        trade_count = int(run.performance.get("total_trades", 0))
+        win_rate = run.performance.get("win_rate")
+        expectancy = run.performance.get("ev_net")
+        has_trade_only_source = run.source == "trade_log"
+        richer_context_signals = (
+            bool(run.metadata.get("benchmark_present"))
+            or bool(run.metadata.get("ohlcv_present"))
+            or bool(run.metadata.get("assumptions_present"))
+            or bool(run.metadata.get("params_present"))
+            or run.source in {"run_artifacts", "parsed_artifact"}
+        )
+
+        executive_verdict = self._report_executive_verdict(
+            robustness_score=robustness_score,
+            trade_count=trade_count,
+            parameter_stability=parameter_stability,
+            monte_carlo=monte_carlo,
+            risk_of_ruin=risk_of_ruin,
+            richer_context_signals=richer_context_signals,
+        )
+        confidence_level = self._report_confidence_level(
+            run=run,
+            available_diagnostics=available_diagnostics,
+            parameter_stability=parameter_stability,
+            risk_of_ruin=risk_of_ruin,
+            simulations=simulations,
+        )
+        diagnostics_summary = self._report_diagnostics_summary(
+            available_diagnostics=available_diagnostics,
+            robustness_score=robustness_score,
+            monte_carlo=monte_carlo,
+            parameter_stability=parameter_stability,
+            execution_sensitivity=execution_sensitivity,
+            regime=regime,
+            risk_of_ruin=risk_of_ruin,
+        )
+
+        limitations = [
+            "Diagnostic confidence is bounded by uploaded artifact richness and may improve with benchmark/OHLCV/parameter-grid context.",
+        ]
+        if has_trade_only_source:
+            limitations.append(
+                "Trade-only uploads cannot fully validate parameter topology or true market-regime robustness."
+            )
+        if parameter_stability.get("status") == "single_run_only":
+            limitations.append(
+                "Parameter stability currently relies on a single-run proxy rather than grid-topology evidence."
+            )
+        if risk_of_ruin.get("status") != "supported":
+            limitations.append(
+                "Risk-of-ruin estimates are limited without explicit account_size and risk_per_trade_pct assumptions."
+            )
+        if simulations <= 0:
+            limitations.append("Monte Carlo simulations were disabled, reducing survivability evidence depth.")
+
+        deployment_guidance = self._report_deployment_guidance(
+            verdict_status=executive_verdict["status"],
+            confidence_level=confidence_level["level"],
+            risk_of_ruin=risk_of_ruin,
+            parameter_stability=parameter_stability,
+            has_trade_only_source=has_trade_only_source,
+            trade_count=trade_count,
+        )
+        recommendations = self._report_recommendations(
+            parameter_stability=parameter_stability,
+            risk_of_ruin=risk_of_ruin,
+            has_trade_only_source=has_trade_only_source,
+            diagnostics_summary=diagnostics_summary,
+        )
+
+        analysis_date = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        strategy_name = run.metadata.get("strategy_name")
+
         return {
+            "report": {
+                "executive_verdict": executive_verdict,
+                "confidence_level": confidence_level,
+                "executive_summary": {
+                    "summary": (
+                        f"Analyzed {trade_count} realized trades for strategy '{strategy_name or 'unknown_strategy'}' "
+                        f"with deterministic diagnostics; robustness score is {robustness_score:.1f}/100, "
+                        f"with win rate {float(win_rate or 0.0):.1%} and expectancy {float(expectancy or 0.0):.4f}."
+                    ),
+                    "operational_implications": deployment_guidance["narrative"],
+                    "what_matters_now": recommendations[:3],
+                },
+                "diagnostics_summary": diagnostics_summary,
+                "methodology": {
+                    "engine": "StrategyRobustnessLabService",
+                    "runtime_seam": "run_analysis_from_parsed_artifact / build_dashboard_payload",
+                    "artifact_richness": run.metadata.get("richness", "trade_only"),
+                    "ingestion_source": run.source,
+                    "modeling_assumptions": [
+                        "Deterministic metric synthesis from uploaded artifacts.",
+                        "Monte Carlo uses IID bootstrap sequencing of realized trade outcomes.",
+                        "Execution stress scenarios perturb fees/slippage/spread from baseline assumptions.",
+                    ],
+                    "monte_carlo": {
+                        "enabled": bool(simulations > 0),
+                        "seed": int(seed),
+                        "simulations": int(simulations),
+                        "ruin_drawdown_levels": list(monte_carlo.get("metadata", {}).get("drawdown_levels", [])),
+                    },
+                    "parser_notes": list(run.metadata.get("parser_notes", [])),
+                },
+                "limitations": limitations,
+                "deployment_guidance": deployment_guidance,
+                "recommendations": recommendations,
+                "key_metrics_snapshot": {
+                    "robustness_score": robustness_score,
+                    "win_rate": float(win_rate) if win_rate is not None else None,
+                    "expectancy": float(expectancy) if expectancy is not None else None,
+                    "worst_simulated_drawdown_pct": float(monte_carlo.get("worst_drawdown_pct", 0.0)),
+                    "probability_of_ruin": risk_of_ruin.get("probability_of_ruin"),
+                    "edge_decay_pct": execution_sensitivity.get("summary_metrics", {}).get("edge_decay_pct"),
+                },
+                "report_figures": self._report_curated_figures(
+                    risk_of_ruin=risk_of_ruin,
+                ),
+                "metadata": {
+                    "report_scope": "validation_report",
+                    "artifact_label": strategy_name,
+                    "analysis_date": analysis_date,
+                    "analysis_id": f"{strategy_name or 'strategy'}::{analysis_date}",
+                    "available_diagnostics": available_diagnostics,
+                    "export_readiness": {
+                        "screen_rendering_ready": True,
+                        "pdf_ready_core_sections": True,
+                        "audit_share_structured": True,
+                    },
+                },
+            },
             "summary_metrics": {
-                "robustness_score": float(score["overall"]),
-                "trade_count": int(run.performance.get("total_trades", 0)),
+                "robustness_score": robustness_score,
+                "trade_count": trade_count,
                 "available_diagnostic_count": int(sum(1 for enabled in available_diagnostics.values() if enabled)),
             },
             "figures": [],
             "interpretation": [
-                f"Final posture: {interpretation}.",
+                f"Final posture: {executive_verdict['headline']}.",
                 "Report summarizes only diagnostics that were truthfully computable from supplied inputs.",
             ],
             "warnings": [],
             "assumptions": [
                 "Report sections are synthesized from deterministic diagnostics using configured Monte Carlo seed."
             ],
-            "recommendations": [
-                "Provide richer artifact bundles (benchmark/OHLCV/parameter grid) to unlock deeper diagnostics."
-            ],
+            "recommendations": recommendations,
             "metadata": {
                 "available_diagnostics": available_diagnostics,
                 "export_sections": [
                     "executive_summary",
-                    "validation_posture",
+                    "diagnostics_summary",
+                    "methodology",
                     "limitations",
+                    "deployment_guidance",
                     "recommendations",
                 ],
             },
             "header": {
-                "strategy_name": run.metadata.get("strategy_name"),
+                "strategy_name": strategy_name,
                 "date_start": run.metadata.get("date_start"),
                 "date_end": run.metadata.get("date_end"),
                 "source": run.source,
             },
             "executive_summary": {
-                "verdict": interpretation,
-                "robustness_score": float(score["overall"]),
+                "verdict": executive_verdict["headline"],
+                "robustness_score": robustness_score,
                 "top_risks": [
                     "Monte Carlo drawdown profile",
                     "Execution cost sensitivity",
@@ -2632,9 +2765,27 @@ class StrategyRobustnessLabService:
                 "seed": int(seed),
                 "simulations": int(simulations),
             },
-            "limitations": [
-                "Trade-only artifacts cannot fully support parameter-topology stability or true market-regime decomposition."
-            ],
+            "limitations": limitations,
+            "diagnostics_summary": diagnostics_summary,
+            "methodology": {
+                "engine": "StrategyRobustnessLabService",
+                "seed": int(seed),
+                "simulations": int(simulations),
+                "deterministic": True,
+            },
+            "deployment_guidance": deployment_guidance,
+            "confidence_level": confidence_level,
+            "executive_verdict": executive_verdict,
+            "key_metrics_snapshot": {
+                "robustness_score": robustness_score,
+                "win_rate": float(win_rate) if win_rate is not None else None,
+                "expectancy": float(expectancy) if expectancy is not None else None,
+                "worst_simulated_drawdown_pct": float(monte_carlo.get("worst_drawdown_pct", 0.0)),
+                "probability_of_ruin": risk_of_ruin.get("probability_of_ruin"),
+            },
+            "report_figures": self._report_curated_figures(
+                risk_of_ruin=risk_of_ruin,
+            ),
             "strategy_summary": run.metadata,
             "assumptions_detail": {
                 "ingestion_source": run.source,
@@ -2650,10 +2801,257 @@ class StrategyRobustnessLabService:
             "risk_of_ruin": risk_of_ruin,
             "score": score,
             "final_verdict": {
-                "robustness_score": score["overall"],
-                "interpretation": interpretation,
+                "robustness_score": robustness_score,
+                "interpretation": executive_verdict["headline"],
             },
         }
+
+    def _report_executive_verdict(
+        self,
+        *,
+        robustness_score: float,
+        trade_count: int,
+        parameter_stability: dict[str, Any],
+        monte_carlo: dict[str, Any],
+        risk_of_ruin: dict[str, Any],
+        richer_context_signals: bool,
+    ) -> dict[str, str]:
+        mc_drawdown = float(monte_carlo.get("worst_drawdown_pct", 0.0))
+        ruin_probability = risk_of_ruin.get("probability_of_ruin")
+        stability_proxy_only = parameter_stability.get("status") == "single_run_only"
+        thin_evidence = trade_count < 30 or not richer_context_signals
+
+        status = "robust"
+        if robustness_score < 45.0 or mc_drawdown <= -45.0:
+            status = "not_deployment_ready"
+        elif robustness_score < 60.0 or stability_proxy_only:
+            status = "fragile"
+        elif thin_evidence or (ruin_probability is not None and float(ruin_probability) > 0.15):
+            status = "conditional"
+
+        headline_map = {
+            "robust": "Robust under evaluated assumptions",
+            "conditional": "Conditionally deployable with controls",
+            "fragile": "Fragile under current assumptions",
+            "not_deployment_ready": "Not deployment-ready",
+        }
+        return {
+            "status": status,
+            "headline": headline_map[status],
+            "summary": (
+                f"Verdict reflects robustness score {robustness_score:.1f}, worst simulated drawdown {mc_drawdown:.1f}% "
+                f"and evidence depth from {trade_count} trades."
+            ),
+        }
+
+    def _report_confidence_level(
+        self,
+        *,
+        run: IngestedRun,
+        available_diagnostics: dict[str, bool],
+        parameter_stability: dict[str, Any],
+        risk_of_ruin: dict[str, Any],
+        simulations: int,
+    ) -> dict[str, str]:
+        score = 0
+        if run.performance.get("total_trades", 0) >= 100:
+            score += 2
+        elif run.performance.get("total_trades", 0) >= 30:
+            score += 1
+        if run.source in {"run_artifacts", "parsed_artifact"}:
+            score += 1
+        if parameter_stability.get("status") != "single_run_only":
+            score += 1
+        if risk_of_ruin.get("status") == "supported":
+            score += 1
+        if simulations >= 500:
+            score += 1
+        if all(available_diagnostics.values()):
+            score += 1
+
+        if score >= 6:
+            level = "high"
+        elif score >= 3:
+            level = "medium"
+        else:
+            level = "low"
+
+        return {
+            "level": level,
+            "summary": (
+                f"Confidence is {level} based on trade sample size, diagnostic completeness, "
+                "and whether sizing-sensitive ruin analysis was fully supported."
+            ),
+        }
+
+    def _report_diagnostics_summary(
+        self,
+        *,
+        available_diagnostics: dict[str, bool],
+        robustness_score: float,
+        monte_carlo: dict[str, Any],
+        parameter_stability: dict[str, Any],
+        execution_sensitivity: dict[str, Any],
+        regime: dict[str, Any],
+        risk_of_ruin: dict[str, Any],
+    ) -> dict[str, dict[str, Any]]:
+        execution_score = float(execution_sensitivity.get("execution_resilience_score", 0.0))
+        return {
+            "overview": {
+                "status": "available" if available_diagnostics["overview"] else "unavailable",
+                "takeaway": f"Topline robustness score is {robustness_score:.1f}/100.",
+                "confidence_impact": "supports" if robustness_score >= 60.0 else "weakens",
+            },
+            "distribution": {
+                "status": "available" if available_diagnostics["distribution"] else "unavailable",
+                "takeaway": "Trade return distribution has been profiled for shape and tail behavior.",
+                "confidence_impact": "supports",
+            },
+            "monte_carlo": {
+                "status": "available" if available_diagnostics["monte_carlo"] else "unavailable",
+                "takeaway": f"Worst simulated drawdown is {float(monte_carlo.get('worst_drawdown_pct', 0.0)):.1f}%.",
+                "confidence_impact": (
+                    "supports" if float(monte_carlo.get("worst_drawdown_pct", 0.0)) > -35.0 else "weakens"
+                ),
+            },
+            "stability": {
+                "status": "available" if available_diagnostics["stability"] else "limited",
+                "takeaway": (
+                    "Stability informed by parameter grid context."
+                    if parameter_stability.get("status") != "single_run_only"
+                    else "Stability currently proxy-only because parameter sweep context is missing."
+                ),
+                "confidence_impact": (
+                    "supports" if parameter_stability.get("status") != "single_run_only" else "weakens"
+                ),
+            },
+            "execution": {
+                "status": "available" if available_diagnostics["execution"] else "unavailable",
+                "takeaway": f"Execution resilience score is {execution_score:.1f}/100 under stress scenarios.",
+                "confidence_impact": "supports" if execution_score >= 60.0 else "weakens",
+            },
+            "regimes": {
+                "status": "available" if available_diagnostics["regimes"] else "unavailable",
+                "takeaway": (
+                    "Regime diagnostics support consistent performance across proxy buckets."
+                    if regime.get("status") == "supported"
+                    else "Regime diagnostics are proxy-limited and should be validated with OHLCV context."
+                ),
+                "confidence_impact": "supports" if regime.get("status") == "supported" else "weakens",
+            },
+            "ruin": {
+                "status": risk_of_ruin.get("status", "limited"),
+                "takeaway": (
+                    "Sizing-aware ruin probability is available."
+                    if risk_of_ruin.get("status") == "supported"
+                    else "Ruin model is limited because explicit sizing assumptions are incomplete."
+                ),
+                "confidence_impact": "supports" if risk_of_ruin.get("status") == "supported" else "weakens",
+            },
+            "report": {
+                "status": "available",
+                "takeaway": "Validation report synthesizes diagnostic evidence into deployment framing.",
+                "confidence_impact": "supports",
+            },
+        }
+
+    def _report_deployment_guidance(
+        self,
+        *,
+        verdict_status: str,
+        confidence_level: str,
+        risk_of_ruin: dict[str, Any],
+        parameter_stability: dict[str, Any],
+        has_trade_only_source: bool,
+        trade_count: int,
+    ) -> dict[str, Any]:
+        deploy_now = verdict_status == "robust" and confidence_level in {"high", "medium"}
+        return {
+            "deploy_now": deploy_now,
+            "recommended_scope": (
+                "Pilot capital with explicit risk caps and monitoring."
+                if deploy_now
+                else "Research/sandbox only until critical evidence gaps are closed."
+            ),
+            "do_not_use_for": [
+                "Full-scale capital deployment without sizing-aware ruin validation.",
+                "Unsupervised production rollout without execution drift monitoring.",
+            ],
+            "required_conditions_before_deploy": [
+                "Provide explicit account_size and risk_per_trade_pct for ruin calibration."
+                if risk_of_ruin.get("status") != "supported"
+                else "Maintain ruin guardrails and enforce sizing limits.",
+                "Validate parameter stability with sweep/grid evidence."
+                if parameter_stability.get("status") == "single_run_only"
+                else "Re-check parameter stability after each major strategy change.",
+                "Expand artifact bundle with OHLCV + benchmark for broader robustness context."
+                if has_trade_only_source or trade_count < 30
+                else "Maintain periodic out-of-sample and regime validation cadence.",
+            ],
+            "narrative": (
+                "Current evidence supports cautious pilot usage only."
+                if deploy_now
+                else "Current evidence does not support live deployment yet."
+            ),
+        }
+
+    def _report_recommendations(
+        self,
+        *,
+        parameter_stability: dict[str, Any],
+        risk_of_ruin: dict[str, Any],
+        has_trade_only_source: bool,
+        diagnostics_summary: dict[str, dict[str, Any]],
+    ) -> list[str]:
+        recommendations: list[str] = []
+        if has_trade_only_source:
+            recommendations.append(
+                "Upload richer artifact bundles (OHLCV, benchmark, parameter grid) to unlock full-fidelity diagnostics."
+            )
+        if parameter_stability.get("status") == "single_run_only":
+            recommendations.append(
+                "Run a parameter sweep and confirm plateau stability before committing capital."
+            )
+        if risk_of_ruin.get("status") != "supported":
+            recommendations.append(
+                "Specify account_size and risk_per_trade_pct, then rerun ruin diagnostics before deployment."
+            )
+        if diagnostics_summary.get("execution", {}).get("confidence_impact") == "weakens":
+            recommendations.append("Reduce sizing and tighten cost assumptions until execution resilience improves.")
+        recommendations.append("Re-validate out-of-sample performance before any production promotion decision.")
+        return recommendations
+
+    def _report_curated_figures(
+        self,
+        *,
+        risk_of_ruin: dict[str, Any],
+    ) -> list[dict[str, str]]:
+        figures = [
+            {
+                "section": "overview",
+                "figure_key": "equity_curve",
+                "title": "Equity curve overview",
+            },
+            {
+                "section": "distribution",
+                "figure_key": "return_histogram",
+                "title": "Trade return distribution histogram",
+            },
+            {
+                "section": "monte_carlo",
+                "figure_key": "fan_chart_paths",
+                "title": "Monte Carlo equity fan",
+            },
+        ]
+        if risk_of_ruin.get("status") == "supported":
+            figures.append(
+                {
+                    "section": "ruin",
+                    "figure_key": "ruin_probability_curve",
+                    "title": "Ruin probability by drawdown threshold",
+                }
+            )
+        return figures
 
 
 def run_analysis_from_parsed_artifact(
