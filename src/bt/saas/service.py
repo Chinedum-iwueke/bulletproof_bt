@@ -1800,62 +1800,163 @@ class StrategyRobustnessLabService:
         fees = trades["fees_paid"].fillna(0.0)
         slippage = trades["slippage"].fillna(0.0)
         spread = trades["spread"].fillna(0.0)
+        notional = (
+            trades["entry_price"].abs().fillna(0.0) * trades["quantity"].abs().fillna(0.0)
+        ).fillna(0.0)
+        resolved_notional = notional.where(notional > 0.0, np.nan)
 
-        multipliers = [1.0, 1.25, 1.5, 2.0, 3.0]
-        fee_curve = []
-        slippage_curve = []
-        blended_curve = []
-        for multiplier in multipliers:
-            fee_stressed = base - ((multiplier - 1.0) * fees)
-            slip_stressed = base - ((multiplier - 1.0) * (slippage + spread))
-            blended_stressed = base - ((multiplier - 1.0) * (fees + slippage + spread))
-            fee_curve.append({"multiplier": multiplier, "ev_net": float(fee_stressed.mean())})
-            slippage_curve.append({"multiplier": multiplier, "ev_net": float(slip_stressed.mean())})
-            blended_curve.append({"multiplier": multiplier, "ev_net": float(blended_stressed.mean())})
+        scenarios = [
+            {"name": "baseline", "spread_bps": 0.0, "slippage_bps": 0.0, "fee_bps": 0.0, "severity": 0},
+            {"name": "moderate_stress", "spread_bps": 5.0, "slippage_bps": 3.0, "fee_bps": 2.0, "severity": 1},
+            {"name": "high_stress", "spread_bps": 10.0, "slippage_bps": 8.0, "fee_bps": 4.0, "severity": 2},
+            {"name": "extreme_stress", "spread_bps": 20.0, "slippage_bps": 15.0, "fee_bps": 8.0, "severity": 3},
+        ]
 
-        break_even_multiplier = next(
-            (point["multiplier"] for point in blended_curve if point["ev_net"] <= 0.0),
-            None,
+        baseline_expectancy = float(base.mean()) if len(base) else 0.0
+        scenario_rows: list[dict[str, Any]] = []
+        for scenario in scenarios:
+            spread_cost = resolved_notional.fillna(0.0) * (float(scenario["spread_bps"]) / 10_000.0)
+            slippage_cost = resolved_notional.fillna(0.0) * (float(scenario["slippage_bps"]) / 10_000.0)
+            fee_cost = resolved_notional.fillna(0.0) * (float(scenario["fee_bps"]) / 10_000.0)
+            stressed_trade_pnl = base - spread_cost - slippage_cost - fee_cost
+            expectancy = float(stressed_trade_pnl.mean()) if len(stressed_trade_pnl) else 0.0
+            if baseline_expectancy == 0.0:
+                edge_decay_pct = 0.0 if expectancy >= 0.0 else 100.0
+            else:
+                edge_decay_pct = max(0.0, ((baseline_expectancy - expectancy) / abs(baseline_expectancy)) * 100.0)
+            if scenario["name"] == "baseline":
+                status = "baseline"
+            elif expectancy <= 0.0:
+                status = "negative"
+            elif edge_decay_pct >= 70.0:
+                status = "fragile"
+            else:
+                status = "survives"
+            scenario_rows.append(
+                {
+                    "name": scenario["name"],
+                    "severity": int(scenario["severity"]),
+                    "spread_bps": float(scenario["spread_bps"]),
+                    "slippage_bps": float(scenario["slippage_bps"]),
+                    "fee_bps": float(scenario["fee_bps"]),
+                    "expectancy": expectancy,
+                    "edge_decay_pct": float(edge_decay_pct),
+                    "status": status,
+                }
+            )
+
+        stressed_row = min(scenario_rows[1:], key=lambda row: row["expectancy"]) if len(scenario_rows) > 1 else scenario_rows[0]
+        stressed_expectancy = float(stressed_row["expectancy"])
+        edge_decay_abs = float(baseline_expectancy - stressed_expectancy)
+        edge_decay_pct = (
+            float(max(0.0, (edge_decay_abs / abs(baseline_expectancy)) * 100.0))
+            if baseline_expectancy != 0.0
+            else (100.0 if stressed_expectancy < 0.0 else 0.0)
         )
-        resilience = 100.0 if break_even_multiplier is None else max(
-            0.0,
-            min(100.0, (float(break_even_multiplier) / 3.0) * 100.0),
-        )
+        total_bps = [row["spread_bps"] + row["slippage_bps"] + row["fee_bps"] for row in scenario_rows]
+        break_even_cost_threshold = None
+        for idx in range(1, len(scenario_rows)):
+            prev_row = scenario_rows[idx - 1]
+            next_row = scenario_rows[idx]
+            prev_exp = float(prev_row["expectancy"])
+            next_exp = float(next_row["expectancy"])
+            if prev_exp > 0.0 >= next_exp:
+                prev_bps = float(total_bps[idx - 1])
+                next_bps = float(total_bps[idx])
+                slope = next_exp - prev_exp
+                if slope == 0.0:
+                    break_even_cost_threshold = next_bps
+                else:
+                    frac = (0.0 - prev_exp) / slope
+                    break_even_cost_threshold = prev_bps + ((next_bps - prev_bps) * frac)
+                break
+        if break_even_cost_threshold is None and scenario_rows and scenario_rows[-1]["expectancy"] > 0.0:
+            break_even_cost_threshold = float(total_bps[-1])
+
+        resilience = 100.0 - min(100.0, edge_decay_pct)
+        richer_cost_fields = bool((spread.abs() > 0).any() or (slippage.abs() > 0).any() or (fees.abs() > 0).any())
+        has_notional = bool(resolved_notional.notna().any())
+        execution_model_type = "enhanced" if (has_notional and richer_cost_fields) else "baseline"
+        dominant = {
+            "spread_bps": float(spread.abs().mean()),
+            "slippage_bps": float(slippage.abs().mean()),
+            "fee_bps": float(fees.abs().mean()),
+        }
+        dominant_dimension = max(dominant.items(), key=lambda item: item[1])[0] if dominant else "fee_bps"
+        interpretation = {
+            "summary": (
+                f"Expectancy decays from {baseline_expectancy:.4f} to {stressed_expectancy:.4f} "
+                f"({edge_decay_pct:.1f}% decay) under stressed execution assumptions."
+            ),
+            "positives": [
+                "Baseline execution sensitivity is computed directly from trade outcomes and explicit cost assumptions.",
+                "Scenario matrix is emitted with discrete stress levels suitable for UI comparison.",
+            ],
+            "cautions": [
+                f"Most impactful observed execution-cost dimension is {dominant_dimension}.",
+                f"Worst stressed scenario '{stressed_row['name']}' is classified as '{stressed_row['status']}'.",
+            ],
+        }
+
+        recommendations = [
+            "Deploy only if expectancy remains positive through at least moderate stress scenarios.",
+            "Improve execution assumptions with venue-specific slippage/spread calibration where possible.",
+            "Include OHLCV and spread proxies to upgrade from baseline to enhanced execution sensitivity realism.",
+        ]
+        if stressed_row["status"] in {"fragile", "negative"}:
+            recommendations.insert(0, "Reduce sizing or tighten trade selection when edge is fragile under execution stress.")
+
+        assumptions = [
+            "Baseline mode recomputes per-trade expectancy from trade PnL and discrete cost-bps scenarios.",
+            "Spread/slippage/fee stress is applied as additive bps of trade notional when entry_price and quantity are available.",
+            "When notional is unavailable, stress falls back to zero additive bps impact and reports baseline-only sensitivity.",
+            f"Execution assumptions are {'inferred from observed cost fields' if richer_cost_fields else 'default/proxy zero-cost fields unless user-provided'} in this run.",
+        ]
+
         return {
             "summary_metrics": {
-                "baseline_ev_net": float(base.mean()) if len(base) else 0.0,
-                "break_even_cost_multiplier": break_even_multiplier,
+                "baseline_expectancy": baseline_expectancy,
+                "stressed_expectancy": stressed_expectancy,
+                "edge_decay_abs": edge_decay_abs,
+                "edge_decay_pct": edge_decay_pct,
+                "break_even_cost_threshold_bps": break_even_cost_threshold,
+                "stressed_scenario": stressed_row["name"],
+                "baseline_ev_net": baseline_expectancy,
                 "execution_resilience_score": resilience,
+                "break_even_cost_multiplier": None,
             },
             "figures": [
                 self._figure_line_series(
-                    figure_id="cost_sensitivity_curve",
-                    title="Execution Cost Sensitivity",
-                    x_label="cost_multiplier",
-                    y_label="ev_net",
-                    x_values=[point["multiplier"] for point in blended_curve],
-                    series=[
-                        {"name": "fees_only", "values": [point["ev_net"] for point in fee_curve]},
-                        {"name": "slippage_spread", "values": [point["ev_net"] for point in slippage_curve]},
-                        {"name": "combined_costs", "values": [point["ev_net"] for point in blended_curve]},
-                    ],
+                    figure_id="execution_expectancy_decay",
+                    title="Execution Expectancy Decay by Scenario",
+                    x_label="scenario_severity",
+                    y_label="expectancy",
+                    x_values=[row["severity"] for row in scenario_rows],
+                    series=[{"name": "expectancy", "values": [row["expectancy"] for row in scenario_rows]}],
                 )
             ],
-            "interpretation": [
-                "Execution diagnostic stresses fees/slippage/spread against realized per-trade outcomes."
-            ],
+            "scenarios": scenario_rows,
+            "interpretation": interpretation,
             "warnings": [],
-            "assumptions": [
-                "Stress multipliers apply proportionally to observed costs and do not model liquidity feedback."
+            "assumptions": assumptions,
+            "limitations": [
+                "No order-book simulation is performed.",
+                "No market-impact model is included.",
+                "No latency modeling is included.",
+                "No venue-specific routing/execution model is included.",
+                "Spread/slippage stress may be proxy-based when richer execution metadata is absent.",
             ],
-            "recommendations": ["Collect venue-level slippage assumptions for richer execution what-if scenarios."],
-            "metadata": {"multipliers": multipliers},
-            "baseline_ev_net": float(base.mean()) if len(base) else 0.0,
-            "fee_curve": fee_curve,
-            "slippage_spread_curve": slippage_curve,
-            "combined_cost_curve": blended_curve,
-            "break_even_cost_multiplier": break_even_multiplier,
+            "recommendations": recommendations,
+            "metadata": {
+                "scenario_count": len(scenario_rows),
+                "scenario_levels": [row["name"] for row in scenario_rows],
+                "stress_shape": "discrete",
+                "execution_model_type": execution_model_type,
+                "dominant_cost_dimension": dominant_dimension,
+            },
+            "baseline_ev_net": baseline_expectancy,
             "execution_resilience_score": resilience,
+            "break_even_cost_multiplier": None,
         }
 
     def _regime_analysis(self, trades: pd.DataFrame) -> dict[str, Any]:

@@ -143,17 +143,20 @@ Richer bundle unlocks:
 ### execution
 
 Minimum:
-- fee/slippage/spread sensitivity
-- break-even cost multiplier
-- resilience score
+- scenario-based fee/slippage/spread sensitivity matrix
+- baseline vs stressed expectancy with edge decay metrics
+- resilience score (derived from stressed edge retention)
+- explicit assumptions, limitations, recommendations, and metadata
 
 Figures:
-- cost sensitivity line series
+- expectancy decay across stress scenarios (line or grouped bar)
 
 Trade-only:
-- valid if cost columns or defaults are available
+- baseline execution sensitivity is valid from trade records plus default/provided cost assumptions
+- must not require OHLCV to emit baseline execution diagnostics
 
 Richer bundle unlocks:
+- OHLCV/spread proxies and richer execution metadata for enhanced realism
 - venue-specific microstructure assumptions
 
 ### stability

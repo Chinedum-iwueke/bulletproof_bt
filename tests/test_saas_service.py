@@ -119,6 +119,27 @@ def test_dashboard_payload_structure_and_json_ready(tmp_path: Path) -> None:
     json.dumps(payload)
 
 
+def test_execution_sensitivity_emits_scenarios_for_trade_only_input(tmp_path: Path) -> None:
+    trade_log = tmp_path / "trade_log.csv"
+    _write_trade_log(trade_log)
+
+    service = StrategyRobustnessLabService()
+    run = service.ingest_trade_log(trade_log)
+    payload = service.build_dashboard_payload(run)["execution_sensitivity"]
+
+    assert "summary_metrics" in payload
+    assert "scenarios" in payload
+    assert len(payload["scenarios"]) >= 2
+    assert payload["scenarios"][0]["name"] == "baseline"
+    assert "figures" in payload and payload["figures"]
+    assert payload["summary_metrics"]["baseline_expectancy"] == pytest.approx(payload["baseline_ev_net"])
+    assert isinstance(payload["interpretation"], dict)
+    cautions = payload["interpretation"].get("cautions", [])
+    assert isinstance(cautions, list)
+    assert "metadata" in payload
+    assert payload["metadata"]["scenario_count"] == len(payload["scenarios"])
+
+
 def test_score_contract_and_weights_exposed(tmp_path: Path) -> None:
     trade_log = tmp_path / "trade_log.csv"
     _write_trade_log(trade_log)
