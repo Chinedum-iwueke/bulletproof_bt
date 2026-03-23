@@ -189,7 +189,7 @@ class StrategyRobustnessLabService:
         )
         parameter_stability = self._parameter_stability_from_single_run(run.performance)
         execution_sensitivity = self._execution_sensitivity(run.trades)
-        regime = self._regime_analysis(run.trades)
+        regime = self._regime_analysis(run.trades, ohlcv=run.metadata.get("_ohlcv_context"))
         risk_of_ruin = self._risk_of_ruin(
             monte_carlo,
             account_size=equity_start,
@@ -334,7 +334,7 @@ class StrategyRobustnessLabService:
             artifact_kind=parsed_artifact.artifact_kind,
             richness=parsed_artifact.richness,
             trade_count=len(parsed_artifact.trades),
-            ohlcv_present=parsed_artifact.ohlcv_present,
+            ohlcv_present=bool(parsed_artifact.ohlcv_present or parsed_artifact.ohlcv),
             benchmark_present=parsed_artifact.benchmark_present,
             has_assumptions=parsed_artifact.assumptions is not None,
             has_params=parsed_artifact.params is not None,
@@ -402,13 +402,15 @@ class StrategyRobustnessLabService:
             {
                 "artifact_kind": parsed_artifact.artifact_kind,
                 "richness": parsed_artifact.richness,
-                "ohlcv_present": parsed_artifact.ohlcv_present,
+                "ohlcv_present": bool(parsed_artifact.ohlcv_present or parsed_artifact.ohlcv),
                 "benchmark_present": parsed_artifact.benchmark_present,
                 "params_present": parsed_artifact.params is not None,
                 "assumptions_present": parsed_artifact.assumptions is not None,
                 "equity_curve_provenance": equity_curve_provenance,
             }
         )
+        if parsed_artifact.ohlcv:
+            metadata["_ohlcv_context"] = self._normalize_ohlcv(parsed_artifact.ohlcv)
 
         return IngestedRun(
             source="parsed_artifact",
@@ -457,12 +459,13 @@ class StrategyRobustnessLabService:
             )
 
         regimes = status_for_trade_based("regimes")
-        if has_trades and not parsed_artifact.ohlcv_present:
+        has_ohlcv_context = bool(parsed_artifact.ohlcv_present or parsed_artifact.ohlcv)
+        if has_trades and not has_ohlcv_context:
             regimes = DiagnosticCapability(
-                status="limited",
-                reason="Regime analysis is trade-sequence based without OHLCV context.",
-                required_inputs=["trades"],
-                optional_enrichments=["ohlcv", "benchmark", "params"],
+                status="unavailable",
+                reason="Regime analysis requires OHLCV or equivalent market context.",
+                required_inputs=["trades", "ohlcv"],
+                optional_enrichments=["benchmark", "params"],
             )
 
         report_status = "supported" if has_trades else "unavailable"
@@ -1959,84 +1962,225 @@ class StrategyRobustnessLabService:
             "break_even_cost_multiplier": None,
         }
 
-    def _regime_analysis(self, trades: pd.DataFrame) -> dict[str, Any]:
-        pnl = trades["pnl_net"].fillna(0.0)
-        entry_hour = trades["entry_ts"].dt.hour
+    def _regime_analysis(self, trades: pd.DataFrame, *, ohlcv: pd.DataFrame | None = None) -> dict[str, Any]:
+        if ohlcv is None or ohlcv.empty:
+            return {
+                "status": "unavailable",
+                "summary_metrics": {},
+                "figures": [],
+                "regime_metrics": [],
+                "interpretation": {
+                    "summary": "Regime analysis unavailable because OHLCV market context was not supplied.",
+                    "dominant_regime": None,
+                    "weak_regime": None,
+                    "classification": "unavailable",
+                },
+                "warnings": [],
+                "assumptions": ["True regime analysis requires trade data plus OHLCV (or equivalent market context)."],
+                "limitations": ["No OHLCV context was provided; trade-only regime proxy mode is intentionally disabled."],
+                "recommendations": ["Provide OHLCV bars aligned to trade timestamps to enable regime classification."],
+                "metadata": {
+                    "regime_definition": "trend_volatility_quadrant",
+                    "classification_method": "ma_slope_plus_atr_threshold",
+                    "number_of_regimes": 4,
+                    "parameters": {},
+                },
+                "regime_consistency_score": 0.0,
+            }
 
-        session_bucket = pd.cut(
-            entry_hour,
-            bins=[-1, 7, 15, 23],
-            labels=["asia", "europe", "us"],
-        )
-        by_session = (
-            pd.DataFrame({"session": session_bucket, "pnl": pnl})
-            .groupby("session", observed=False)["pnl"]
-            .mean()
-            .fillna(0.0)
-            .to_dict()
-        )
+        bars = self._classify_market_regimes(ohlcv)
+        trade_regimes = self._map_trades_to_regimes(trades=trades, classified_bars=bars)
+        regime_metrics = self._compute_regime_metrics(trade_regimes)
 
-        rolling_vol = pnl.rolling(20, min_periods=5).std().fillna(0.0)
-        if len(trades) >= 6:
-            vol_rank = rolling_vol.rank(method="first")
-            vol_regime = pd.qcut(vol_rank, q=3, labels=["low", "mid", "high"])
-        else:
-            vol_regime = pd.Series(["mid"] * len(trades), index=trades.index)
-        vol_expectancy = (
-            pd.DataFrame({"vol_regime": vol_regime, "pnl": pnl})
-            .groupby("vol_regime", observed=False)["pnl"]
-            .mean()
-            .to_dict()
-        )
+        if not regime_metrics:
+            return {
+                "status": "limited",
+                "summary_metrics": {},
+                "figures": [],
+                "regime_metrics": [],
+                "interpretation": {
+                    "summary": "OHLCV was supplied, but no trades mapped to classified bars.",
+                    "dominant_regime": None,
+                    "weak_regime": None,
+                    "classification": "fragile",
+                },
+                "warnings": [],
+                "assumptions": ["Trades are mapped to the most recent classified OHLCV bar using backward asof matching."],
+                "limitations": ["No trade-to-regime mappings were found in the overlapping timestamp window."],
+                "recommendations": ["Align OHLCV timestamps and trade entry timestamps within the same market clock."],
+                "metadata": {
+                    "regime_definition": "trend_volatility_quadrant",
+                    "classification_method": "ma_slope_plus_atr_threshold",
+                    "number_of_regimes": 4,
+                    "parameters": {"trade_mapping": "merge_asof_backward"},
+                    "mapped_trade_count": 0,
+                },
+                "regime_consistency_score": 0.0,
+            }
 
-        trend = pnl.rolling(10, min_periods=4).mean().fillna(0.0)
-        trend_regime = np.where(trend >= 0.0, "trend", "range")
-        trend_expectancy = (
-            pd.DataFrame({"trend_regime": trend_regime, "pnl": pnl})
-            .groupby("trend_regime")["pnl"]
-            .mean()
-            .to_dict()
-        )
-
-        dispersion = float(np.std(list(vol_expectancy.values()))) if vol_expectancy else 0.0
-        consistency = max(0.0, min(100.0, 100.0 - (dispersion * 100.0)))
+        expectancy_values = [float(row["expectancy"]) for row in regime_metrics]
+        counts = [int(row["trade_count"]) for row in regime_metrics]
+        best = max(regime_metrics, key=lambda row: float(row["expectancy"]))
+        worst = min(regime_metrics, key=lambda row: float(row["expectancy"]))
+        dominant = max(regime_metrics, key=lambda row: int(row["trade_count"]))
+        dispersion = float(np.var(expectancy_values)) if expectancy_values else 0.0
+        consistency = float(max(0.0, min(100.0, 100.0 - (dispersion * 100.0))))
+        regime_classification = "regime-agnostic"
+        if expectancy_values and (max(expectancy_values) - min(expectancy_values)) > 0.15:
+            regime_classification = "regime-dependent"
+        if float(worst["expectancy"]) < 0.0 and float(best["expectancy"]) <= 0.0:
+            regime_classification = "fragile"
 
         return {
+            "status": "available",
             "summary_metrics": {
+                "best_regime": str(best["regime"]),
+                "worst_regime": str(worst["regime"]),
+                "dominant_regime": str(dominant["regime"]),
+                "regime_dispersion": dispersion,
                 "regime_consistency_score": consistency,
+                "regime_count_observed": len(regime_metrics),
+                "mapped_trade_count": int(sum(counts)),
             },
             "figures": [
                 {
-                    "id": "session_expectancy_bars",
+                    "id": "regime_expectancy_bars",
                     "type": "bar_groups",
-                    "title": "Session Expectancy",
-                    "x_label": "session",
-                    "y_label": "mean_pnl_net",
-                    "groups": [{"label": str(k), "value": float(v)} for k, v in by_session.items()],
-                },
-                {
-                    "id": "volatility_regime_bars",
-                    "type": "bar_groups",
-                    "title": "Volatility Regime Expectancy",
-                    "x_label": "volatility_regime",
-                    "y_label": "mean_pnl_net",
-                    "groups": [{"label": str(k), "value": float(v)} for k, v in vol_expectancy.items()],
-                },
+                    "title": "Expectancy by Regime",
+                    "x_label": "regime",
+                    "y_label": "expectancy",
+                    "groups": [
+                        {"label": str(row["regime"]), "value": float(row["expectancy"])}
+                        for row in sorted(regime_metrics, key=lambda row: str(row["regime"]))
+                    ],
+                }
             ],
-            "interpretation": [
-                "Regime analysis here is inferred from trade-sequence proxies unless explicit OHLCV regime labels are supplied."
-            ],
+            "regime_metrics": regime_metrics,
+            "interpretation": {
+                "summary": (
+                    f"Best regime is {best['regime']} (expectancy={best['expectancy']:.4f}); "
+                    f"weakest regime is {worst['regime']} (expectancy={worst['expectancy']:.4f})."
+                ),
+                "dominant_regime": str(dominant["regime"]),
+                "weak_regime": str(worst["regime"]),
+                "classification": regime_classification,
+            },
             "warnings": [],
             "assumptions": [
-                "Volatility and trend regimes are proxied from rolling trade PnL statistics in trade-only mode."
+                "Trend is defined from EMA slope and close-vs-EMA context.",
+                "Volatility is defined from ATR percentage relative to its rolling median.",
+                "Trade regime mapping uses nearest prior bar (merge_asof backward).",
+                "Baseline regime taxonomy combines trend/range with high/low volatility quadrants.",
             ],
-            "recommendations": ["Upload OHLCV/regime labels for genuine market-regime decomposition."],
-            "metadata": {"proxy_mode": True},
-            "volatility_regime_expectancy": {str(k): float(v) for k, v in vol_expectancy.items()},
-            "trend_range_expectancy": {str(k): float(v) for k, v in trend_expectancy.items()},
-            "session_expectancy": {str(k): float(v) for k, v in by_session.items()},
+            "limitations": [
+                "Regime classifier is a simplified technical baseline and does not include microstructure states.",
+                "Macro, cross-asset, and event regimes are not modeled.",
+                "No forward regime prediction is produced by this diagnostic.",
+            ],
+            "recommendations": [
+                f"Deploy preferentially in {best['regime']} and avoid {worst['regime']} until edge stabilizes.",
+                "Use this regime signal as a pre-trade filter in strategy routing.",
+                "Improve classification with richer features (realized vol term structure, liquidity, macro tags).",
+            ],
+            "metadata": {
+                "regime_definition": "trend_volatility_quadrant",
+                "classification_method": "ma_slope_plus_atr_threshold",
+                "number_of_regimes": 4,
+                "parameters": {
+                    "trend_ma_span": 20,
+                    "trend_slope_lookback": 5,
+                    "atr_window": 14,
+                    "atr_vol_threshold": 1.0,
+                    "range_slope_epsilon": 0.0002,
+                },
+                "mapped_trade_count": int(sum(counts)),
+                "ohlcv_bar_count": int(len(bars)),
+            },
             "regime_consistency_score": consistency,
         }
+
+    def _normalize_ohlcv(self, rows: list[dict[str, Any]]) -> pd.DataFrame:
+        frame = pd.DataFrame(rows)
+        rename_map = {"timestamp": "ts", "time": "ts", "datetime": "ts"}
+        frame = frame.rename(columns={k: v for k, v in rename_map.items() if k in frame.columns}).copy()
+        required = {"ts", "open", "high", "low", "close"}
+        missing = sorted(required - set(frame.columns))
+        if missing:
+            raise IngestionError(f"OHLCV context missing required columns: {missing}")
+        frame["ts"] = pd.to_datetime(frame["ts"], utc=True, errors="coerce")
+        if frame["ts"].isna().any():
+            raise IngestionError("OHLCV context has invalid timestamps; use ISO-8601 values.")
+        for column in ("open", "high", "low", "close", "volume"):
+            if column in frame.columns:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce")
+        normalized = frame.sort_values("ts").dropna(subset=["open", "high", "low", "close"]).reset_index(drop=True)
+        if normalized.empty:
+            raise IngestionError("OHLCV context has no valid rows after normalization.")
+        return normalized
+
+    def _classify_market_regimes(self, ohlcv: pd.DataFrame) -> pd.DataFrame:
+        bars = ohlcv.copy().sort_values("ts").reset_index(drop=True)
+        bars["ema"] = bars["close"].ewm(span=20, adjust=False).mean()
+        bars["ema_slope"] = (bars["ema"] - bars["ema"].shift(5)) / bars["ema"].shift(5).replace(0.0, np.nan)
+        prev_close = bars["close"].shift(1)
+        tr_components = pd.concat(
+            [
+                bars["high"] - bars["low"],
+                (bars["high"] - prev_close).abs(),
+                (bars["low"] - prev_close).abs(),
+            ],
+            axis=1,
+        )
+        bars["atr"] = tr_components.max(axis=1).rolling(14, min_periods=5).mean()
+        bars["atr_pct"] = bars["atr"] / bars["close"].replace(0.0, np.nan)
+        bars["atr_median"] = bars["atr_pct"].rolling(50, min_periods=10).median()
+
+        slope = bars["ema_slope"].fillna(0.0)
+        close_vs_ema = (bars["close"] - bars["ema"]) / bars["ema"].replace(0.0, np.nan)
+        close_vs_ema = close_vs_ema.fillna(0.0)
+        trend_state = np.where(
+            slope > 0.0002,
+            "uptrend",
+            np.where(slope < -0.0002, "downtrend", "range"),
+        )
+        trend_state = np.where((np.abs(slope) <= 0.0002) & (np.abs(close_vs_ema) <= 0.001), "range", trend_state)
+        vol_ratio = bars["atr_pct"] / bars["atr_median"].replace(0.0, np.nan)
+        vol_state = np.where(vol_ratio.fillna(0.0) >= 1.0, "high_vol", "low_vol")
+        trend_bucket = np.where(trend_state == "range", "range", "trend")
+        bars["regime"] = [f"{v}_{t}" for v, t in zip(vol_state, trend_bucket, strict=False)]
+        return bars[["ts", "regime", "ema_slope", "atr_pct", "atr_median"]]
+
+    def _map_trades_to_regimes(self, *, trades: pd.DataFrame, classified_bars: pd.DataFrame) -> pd.DataFrame:
+        mapping = pd.merge_asof(
+            trades.sort_values("entry_ts"),
+            classified_bars.sort_values("ts"),
+            left_on="entry_ts",
+            right_on="ts",
+            direction="backward",
+        )
+        mapping = mapping.dropna(subset=["regime"]).copy()
+        return mapping
+
+    def _compute_regime_metrics(self, trade_regimes: pd.DataFrame) -> list[dict[str, Any]]:
+        if trade_regimes.empty:
+            return []
+        rows: list[dict[str, Any]] = []
+        for regime, group in trade_regimes.groupby("regime"):
+            pnl = group["pnl_net"].fillna(0.0).astype(float)
+            wins = (pnl > 0).mean() if len(pnl) else 0.0
+            equity = pnl.cumsum()
+            peak = equity.cummax()
+            dd = (equity - peak).min() if len(equity) else 0.0
+            rows.append(
+                {
+                    "regime": str(regime),
+                    "trade_count": int(len(group)),
+                    "expectancy": float(pnl.mean()) if len(pnl) else 0.0,
+                    "win_rate": float(wins),
+                    "drawdown": float(dd),
+                }
+            )
+        return sorted(rows, key=lambda row: row["regime"])
 
     def _risk_of_ruin(
         self,

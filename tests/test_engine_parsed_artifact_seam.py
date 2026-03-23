@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pandas as pd
+
 from bt.saas.models import AnalysisRunConfig, NormalizedTradeRecord, ParsedArtifactInput
 from bt.saas.service import StrategyRobustnessLabService
 
@@ -96,6 +98,36 @@ def _trade_only_artifact_without_excursion_or_exit() -> ParsedArtifactInput:
     )
 
 
+def _trade_plus_ohlcv_artifact() -> ParsedArtifactInput:
+    artifact = _trade_only_artifact()
+    ohlcv = []
+    start = 1704066000  # 2024-01-01T00:20:00Z
+    for i in range(80):
+        ts = start + (i * 300)
+        close = 100.0 + (i * 0.04 if i < 40 else (40 * 0.04) - ((i - 40) * 0.02))
+        high = close + (0.6 if i % 2 == 0 else 0.3)
+        low = close - (0.6 if i % 3 == 0 else 0.2)
+        ohlcv.append(
+            {
+                "timestamp": pd.to_datetime(ts, unit="s", utc=True).isoformat().replace("+00:00", "Z"),
+                "open": close - 0.1,
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": 1000 + i,
+            }
+        )
+    return ParsedArtifactInput(
+        artifact_kind=artifact.artifact_kind,
+        richness="trade_plus_context",
+        strategy_metadata=artifact.strategy_metadata,
+        trades=artifact.trades,
+        parser_notes=artifact.parser_notes,
+        ohlcv=ohlcv,
+        ohlcv_present=True,
+    )
+
+
 def test_run_analysis_from_parsed_artifact_trade_only_degrades_honestly() -> None:
     service = StrategyRobustnessLabService()
 
@@ -107,7 +139,7 @@ def test_run_analysis_from_parsed_artifact_trade_only_degrades_honestly() -> Non
     assert result.run_context.richness == "trade_only"
     assert result.capability_profile.diagnostics["overview"].status == "limited"
     assert result.capability_profile.diagnostics["stability"].status == "limited"
-    assert result.capability_profile.diagnostics["regimes"].status == "limited"
+    assert result.capability_profile.diagnostics["regimes"].status == "unavailable"
     assert result.capability_profile.diagnostics["ruin"].status in {"supported", "limited"}
 
     assert "overview" in result.diagnostics
@@ -231,3 +263,37 @@ def test_run_analysis_from_parsed_artifact_respects_diagnostic_eligibility() -> 
     assert result.diagnostics["report"]["status"] == "skipped"
     assert result.capability_profile.diagnostics["regimes"].status == "unavailable"
     assert result.capability_profile.diagnostics["report"].status == "unavailable"
+
+
+def test_run_analysis_from_parsed_artifact_with_ohlcv_emits_regime_metrics() -> None:
+    service = StrategyRobustnessLabService()
+
+    result = service.run_analysis_from_parsed_artifact(_trade_plus_ohlcv_artifact())
+    regimes = result.diagnostics["regimes"]
+
+    assert result.capability_profile.diagnostics["regimes"].status in {"limited", "supported"}
+    assert regimes["available"] is True
+    assert regimes["summary_metrics"]["best_regime"]
+    assert regimes["summary_metrics"]["worst_regime"]
+    assert regimes["summary_metrics"]["dominant_regime"]
+    assert "regime_dispersion" in regimes["summary_metrics"]
+    assert regimes["regime_metrics"]
+    for row in regimes["regime_metrics"]:
+        assert row["regime"] in {
+            "high_vol_trend",
+            "low_vol_trend",
+            "high_vol_range",
+            "low_vol_range",
+        }
+        assert "trade_count" in row
+        assert "expectancy" in row
+        assert "win_rate" in row
+        assert "drawdown" in row
+    figure_ids = {figure["id"] for figure in regimes["figures"]}
+    assert "regime_expectancy_bars" in figure_ids
+    assert isinstance(regimes["interpretation"], dict)
+    assert regimes["interpretation"]["classification"] in {
+        "regime-dependent",
+        "regime-agnostic",
+        "fragile",
+    }

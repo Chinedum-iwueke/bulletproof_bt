@@ -89,6 +89,7 @@ class ParsedArtifactInput:
     assumptions: dict[str, Any] | None = None
     params: dict[str, Any] | None = None
     parameter_sweep: ParameterSweepInput | None = None
+    ohlcv: list[dict[str, Any]] | None = None
     ohlcv_present: bool = False
     benchmark_present: bool = False
     parser_notes: list[str] = field(default_factory=list)
