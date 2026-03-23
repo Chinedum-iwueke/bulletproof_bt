@@ -33,17 +33,35 @@ def test_resolve_stop_distance_signal_stop_long() -> None:
     assert result.source == "explicit_stop_price"
 
 
-def test_resolve_stop_distance_signal_stop_invalid_side_long() -> None:
-    with pytest.raises(ValueError, match=r"AAPL: invalid stop_price for long: stop=101\.0 entry=100\.0"):
-        resolve_stop_distance(
-            symbol="AAPL",
-            side="long",
-            entry_price=100.0,
-            signal={"stop_price": 101.0},
-            bars_by_symbol={},
-            ctx={},
-            config={},
-        )
+def test_resolve_stop_distance_signal_stop_invalid_side_long_uses_absolute_distance() -> None:
+    result = resolve_stop_distance(
+        symbol="AAPL",
+        side="long",
+        entry_price=100.0,
+        signal={"stop_price": 101.0},
+        bars_by_symbol={},
+        ctx={},
+        config={},
+    )
+
+    assert result.stop_distance == 1.0
+    assert result.details["direction_mismatch_vs_entry"] is True
+
+
+def test_resolve_stop_distance_invalid_side_near_entry_uses_absolute_distance() -> None:
+    result = resolve_stop_distance(
+        symbol="LDOUSDT:USDT",
+        side="long",
+        entry_price=1.2505,
+        signal={"stop_price": 1.2520},
+        bars_by_symbol={},
+        ctx={},
+        config={},
+    )
+
+    assert result.source == "explicit_stop_price"
+    assert result.stop_distance == pytest.approx(0.0015)
+    assert result.details["direction_mismatch_vs_entry"] is True
 
 
 def test_resolve_stop_distance_atr_rule() -> None:
