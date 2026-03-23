@@ -186,3 +186,113 @@ def test_ingest_run_artifacts_reuses_existing_artifacts(tmp_path: Path) -> None:
     assert run.source == "run_artifacts"
     assert run.metadata["strategy_name"] == "run_a"
     assert float(run.performance["final_equity"]) == 100_100.0
+
+
+def test_ingest_parameter_sweep_bundle_supports_manifest_contract(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "sweep_bundle"
+    runs_dir = bundle_dir / "runs"
+    runs_dir.mkdir(parents=True)
+
+    pd.DataFrame(
+        {
+            "entry_time": ["2024-01-01T00:00:00Z", "2024-01-01T01:00:00Z"],
+            "exit_time": ["2024-01-01T00:10:00Z", "2024-01-01T01:10:00Z"],
+            "symbol": ["BTCUSDT", "BTCUSDT"],
+            "side": ["LONG", "SHORT"],
+            "entry_price": [100.0, 101.0],
+            "exit_price": [101.0, 99.0],
+            "quantity": [1.0, 1.0],
+            "fees": [0.05, 0.05],
+        }
+    ).to_csv(runs_dir / "run_1.csv", index=False)
+    pd.DataFrame(
+        {
+            "entry_time": ["2024-01-02T00:00:00Z", "2024-01-02T01:00:00Z"],
+            "exit_time": ["2024-01-02T00:10:00Z", "2024-01-02T01:10:00Z"],
+            "symbol": ["BTCUSDT", "BTCUSDT"],
+            "side": ["LONG", "SHORT"],
+            "entry_price": [100.0, 101.0],
+            "exit_price": [99.5, 102.0],
+            "quantity": [1.0, 1.0],
+            "fees": [0.05, 0.05],
+        }
+    ).to_csv(runs_dir / "run_2.csv", index=False)
+
+    manifest = {
+        "strategy_name": "grid_alpha",
+        "parameter_names": ["lookback", "threshold"],
+        "runs": [
+            {
+                "run_id": "run_1",
+                "params": {"lookback": 10, "threshold": 1.2},
+                "trades_file": "runs/run_1.csv",
+                "summary": {"ev_net": 1.2},
+            },
+            {
+                "run_id": "run_2",
+                "params": {"lookback": 20, "threshold": 1.2},
+                "trades_file": "runs/run_2.csv",
+                "summary": {"ev_net": -0.4},
+            },
+        ],
+    }
+    (bundle_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    service = StrategyRobustnessLabService()
+    parsed = service.ingest_parameter_sweep_bundle(bundle_dir)
+    result = service.run_analysis_from_parsed_artifact(parsed)
+
+    assert parsed.artifact_kind == "parameter_sweep"
+    assert parsed.parameter_sweep is not None
+    assert len(parsed.parameter_sweep.runs) == 2
+    assert result.capability_profile.diagnostics["stability"].status in {"limited", "supported"}
+    assert result.diagnostics["stability"]["status"] == "parameter_sweep"
+    assert result.diagnostics["stability"]["metadata"]["dimensions"] == 2
+    assert len(result.diagnostics["stability"]["heatmap"]) == 2
+
+
+def test_ingest_parameter_sweep_bundle_rejects_inconsistent_params(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "bad_sweep"
+    bundle_dir.mkdir(parents=True)
+    manifest = {
+        "parameter_names": ["lookback", "threshold"],
+        "runs": [
+            {"run_id": "run_1", "params": {"lookback": 10}, "summary": {"ev_net": 1.0}},
+            {"run_id": "run_2", "params": {"lookback": 20, "threshold": 1.2}, "summary": {"ev_net": 0.8}},
+        ],
+    }
+    (bundle_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    service = StrategyRobustnessLabService()
+    with pytest.raises(IngestionError, match="parameter keys must exactly match"):
+        service.ingest_parameter_sweep_bundle(bundle_dir)
+
+
+def test_ingest_parameter_sweep_table_supports_secondary_mode(tmp_path: Path) -> None:
+    table = tmp_path / "sweep_table.csv"
+    pd.DataFrame(
+        {
+            "run_id": ["r1", "r1", "r2", "r2"],
+            "lookback": [10, 10, 20, 20],
+            "threshold": [1.0, 1.0, 1.0, 1.0],
+            "entry_time": [
+                "2024-01-01T00:00:00Z",
+                "2024-01-01T01:00:00Z",
+                "2024-01-02T00:00:00Z",
+                "2024-01-02T01:00:00Z",
+            ],
+            "symbol": ["BTCUSDT", "BTCUSDT", "BTCUSDT", "BTCUSDT"],
+            "side": ["LONG", "SHORT", "LONG", "SHORT"],
+            "entry_price": [100.0, 101.0, 102.0, 103.0],
+            "exit_price": [101.0, 100.0, 101.0, 104.0],
+            "quantity": [1.0, 1.0, 1.0, 1.0],
+            "fees": [0.1, 0.1, 0.1, 0.1],
+        }
+    ).to_csv(table, index=False)
+
+    service = StrategyRobustnessLabService()
+    parsed = service.ingest_parameter_sweep_table(table, parameter_names=["lookback", "threshold"])
+
+    assert parsed.parameter_sweep is not None
+    assert len(parsed.parameter_sweep.runs) == 2
+    assert parsed.parser_notes
