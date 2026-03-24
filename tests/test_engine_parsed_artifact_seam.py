@@ -291,6 +291,12 @@ def test_run_analysis_from_parsed_artifact_respects_diagnostic_eligibility() -> 
 
     assert result.diagnostics["regimes"]["status"] == "skipped"
     assert result.diagnostics["report"]["status"] == "skipped"
+    assert result.diagnostics["regimes"]["summary_metrics"] == {}
+    assert result.diagnostics["regimes"]["figures"] == []
+    assert result.diagnostics["regimes"]["warnings"] == []
+    assert result.diagnostics["regimes"]["assumptions"] == []
+    assert result.diagnostics["regimes"]["recommendations"] == []
+    assert result.diagnostics["regimes"]["metadata"]["skip_reason"]
     assert result.capability_profile.diagnostics["regimes"].status == "unavailable"
     assert result.capability_profile.diagnostics["report"].status == "unavailable"
 
@@ -327,3 +333,15 @@ def test_run_analysis_from_parsed_artifact_with_ohlcv_emits_regime_metrics() -> 
         "regime-agnostic",
         "fragile",
     }
+
+
+def test_run_analysis_from_parsed_artifact_emits_canonical_interpretation_shape_for_stability() -> None:
+    service = StrategyRobustnessLabService()
+    result = service.run_analysis_from_parsed_artifact(_trade_only_artifact())
+
+    stability = result.diagnostics["stability"]
+    interpretation = stability["interpretation"]
+    assert isinstance(interpretation, dict)
+    assert set(["summary", "positives", "cautions"]).issubset(interpretation.keys())
+    assert isinstance(interpretation["positives"], list)
+    assert isinstance(interpretation["cautions"], list)

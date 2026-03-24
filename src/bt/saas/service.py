@@ -577,7 +577,22 @@ class StrategyRobustnessLabService:
 
             filtered[name] = {
                 "status": "skipped",
-                "reason": reason,
+                "available": False,
+                "limited": False,
+                "reason_unavailable": reason,
+                "summary_metrics": {},
+                "figures": [],
+                "interpretation": None,
+                "warnings": [],
+                "assumptions": [],
+                "limitations": [reason] if reason else [],
+                "recommendations": [],
+                "metadata": {
+                    "skip_reason": reason,
+                    "compatibility": {
+                        "reason": reason,
+                    },
+                },
             }
 
             if capability is not None:
@@ -606,32 +621,99 @@ class StrategyRobustnessLabService:
         capability: DiagnosticCapability,
     ) -> dict[str, Any]:
         if payload.get("status") == "skipped":
-            return payload
+            return {
+                "status": "skipped",
+                "available": False,
+                "limited": False,
+                "reason_unavailable": payload.get("reason_unavailable"),
+                "summary_metrics": payload.get("summary_metrics", {}),
+                "figures": payload.get("figures", []),
+                "interpretation": self._normalize_interpretation(payload.get("interpretation"), name=name),
+                "warnings": payload.get("warnings", []),
+                "assumptions": payload.get("assumptions", []),
+                "limitations": payload.get("limitations", []),
+                "recommendations": payload.get("recommendations", []),
+                "metadata": payload.get("metadata", {}),
+                "payload": payload,
+            }
 
         available = capability.status != "unavailable"
         limited = capability.status == "limited"
         reason_unavailable = None if available else capability.reason
-        limitations = [capability.reason] if capability.reason else []
+        payload_limitations = payload.get("limitations", [])
+        limitations: list[str] = []
+        if isinstance(payload_limitations, list):
+            limitations.extend(str(item) for item in payload_limitations)
+        if capability.reason:
+            limitations.append(capability.reason)
+        limitations = list(dict.fromkeys(limitations))
         assumptions = payload.get("assumptions", [])
         if name == "report":
             assumptions = self._unwrap_report_assumptions(payload)
 
-        decorated = {
+        status = "unavailable" if not available else ("limited" if limited else "available")
+        decorated: dict[str, Any] = {
+            "status": status,
             "available": available,
             "limited": limited,
             "reason_unavailable": reason_unavailable,
             "limitations": limitations,
             "summary_metrics": payload.get("summary_metrics", {}),
             "figures": payload.get("figures", []),
-            "interpretation": payload.get("interpretation", []),
+            "interpretation": self._normalize_interpretation(payload.get("interpretation"), name=name),
             "warnings": payload.get("warnings", []),
             "assumptions": assumptions,
             "recommendations": payload.get("recommendations", []),
             "metadata": payload.get("metadata", {}),
             "payload": payload,
         }
-        decorated.update(payload)
+        if name == "report":
+            decorated["report"] = payload.get("report", {})
+        if "status" in payload and payload.get("status") != status:
+            decorated["source_status"] = payload.get("status")
+        reserved = set(decorated.keys())
+        reserved.update({"status", "available", "limited", "reason_unavailable"})
+        for key, value in payload.items():
+            if key in reserved:
+                continue
+            decorated[key] = value
         return decorated
+
+    def _normalize_interpretation(self, interpretation: Any, *, name: str) -> dict[str, Any] | None:
+        if interpretation is None:
+            return None
+        if isinstance(interpretation, dict):
+            summary = interpretation.get("summary")
+            positives = interpretation.get("positives", [])
+            cautions = interpretation.get("cautions", [])
+            normalized: dict[str, Any] = {
+                "summary": str(summary) if summary is not None else "",
+                "positives": [str(item) for item in positives] if isinstance(positives, list) else [],
+                "cautions": [str(item) for item in cautions] if isinstance(cautions, list) else [],
+            }
+            for key, value in interpretation.items():
+                if key not in normalized:
+                    normalized[key] = value
+            return normalized
+        if isinstance(interpretation, list):
+            lines = [str(item) for item in interpretation if str(item).strip()]
+            return {
+                "summary": lines[0] if lines else "",
+                "positives": [],
+                "cautions": lines[1:] if len(lines) > 1 else [],
+            }
+        if isinstance(interpretation, str):
+            message = interpretation.strip()
+            return {
+                "summary": message,
+                "positives": [],
+                "cautions": [],
+            }
+        return {
+            "summary": f"{name} interpretation emitted unsupported type {type(interpretation).__name__}.",
+            "positives": [],
+            "cautions": [],
+        }
 
     def parameter_stability_from_grid(
         self,
@@ -2661,75 +2743,77 @@ class StrategyRobustnessLabService:
         analysis_date = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         strategy_name = run.metadata.get("strategy_name")
 
-        return {
-            "report": {
-                "executive_verdict": executive_verdict,
-                "confidence_level": confidence_level,
-                "executive_summary": {
-                    "summary": (
-                        f"Analyzed {trade_count} realized trades for strategy '{strategy_name or 'unknown_strategy'}' "
-                        f"with deterministic diagnostics; robustness score is {robustness_score:.1f}/100, "
-                        f"with win rate {float(win_rate or 0.0):.1%} and expectancy {float(expectancy or 0.0):.4f}."
-                    ),
-                    "operational_implications": deployment_guidance["narrative"],
-                    "what_matters_now": recommendations[:3],
-                },
-                "diagnostics_summary": diagnostics_summary,
-                "methodology": {
-                    "engine": "StrategyRobustnessLabService",
-                    "runtime_seam": "run_analysis_from_parsed_artifact / build_dashboard_payload",
-                    "artifact_richness": run.metadata.get("richness", "trade_only"),
-                    "ingestion_source": run.source,
-                    "modeling_assumptions": [
-                        "Deterministic metric synthesis from uploaded artifacts.",
-                        "Monte Carlo uses IID bootstrap sequencing of realized trade outcomes.",
-                        "Execution stress scenarios perturb fees/slippage/spread from baseline assumptions.",
-                    ],
-                    "monte_carlo": {
-                        "enabled": bool(simulations > 0),
-                        "seed": int(seed),
-                        "simulations": int(simulations),
-                        "ruin_drawdown_levels": list(monte_carlo.get("metadata", {}).get("drawdown_levels", [])),
-                    },
-                    "parser_notes": list(run.metadata.get("parser_notes", [])),
-                },
-                "limitations": limitations,
-                "deployment_guidance": deployment_guidance,
-                "recommendations": recommendations,
-                "key_metrics_snapshot": {
-                    "robustness_score": robustness_score,
-                    "win_rate": float(win_rate) if win_rate is not None else None,
-                    "expectancy": float(expectancy) if expectancy is not None else None,
-                    "worst_simulated_drawdown_pct": float(monte_carlo.get("worst_drawdown_pct", 0.0)),
-                    "probability_of_ruin": risk_of_ruin.get("probability_of_ruin"),
-                    "edge_decay_pct": execution_sensitivity.get("summary_metrics", {}).get("edge_decay_pct"),
-                },
-                "report_figures": self._report_curated_figures(
-                    risk_of_ruin=risk_of_ruin,
+        canonical_report = {
+            "executive_verdict": executive_verdict,
+            "confidence_level": confidence_level,
+            "executive_summary": {
+                "summary": (
+                    f"Analyzed {trade_count} realized trades for strategy '{strategy_name or 'unknown_strategy'}' "
+                    f"with deterministic diagnostics; robustness score is {robustness_score:.1f}/100, "
+                    f"with win rate {float(win_rate or 0.0):.1%} and expectancy {float(expectancy or 0.0):.4f}."
                 ),
-                "metadata": {
-                    "report_scope": "validation_report",
-                    "artifact_label": strategy_name,
-                    "analysis_date": analysis_date,
-                    "analysis_id": f"{strategy_name or 'strategy'}::{analysis_date}",
-                    "available_diagnostics": available_diagnostics,
-                    "export_readiness": {
-                        "screen_rendering_ready": True,
-                        "pdf_ready_core_sections": True,
-                        "audit_share_structured": True,
-                    },
+                "operational_implications": deployment_guidance["narrative"],
+                "what_matters_now": recommendations[:3],
+            },
+            "diagnostics_summary": diagnostics_summary,
+            "methodology": {
+                "engine": "StrategyRobustnessLabService",
+                "runtime_seam": "run_analysis_from_parsed_artifact / build_dashboard_payload",
+                "artifact_richness": run.metadata.get("richness", "trade_only"),
+                "ingestion_source": run.source,
+                "modeling_assumptions": [
+                    "Deterministic metric synthesis from uploaded artifacts.",
+                    "Monte Carlo uses IID bootstrap sequencing of realized trade outcomes.",
+                    "Execution stress scenarios perturb fees/slippage/spread from baseline assumptions.",
+                ],
+                "monte_carlo": {
+                    "enabled": bool(simulations > 0),
+                    "seed": int(seed),
+                    "simulations": int(simulations),
+                    "ruin_drawdown_levels": list(monte_carlo.get("metadata", {}).get("drawdown_levels", [])),
+                },
+                "parser_notes": list(run.metadata.get("parser_notes", [])),
+            },
+            "limitations": limitations,
+            "deployment_guidance": deployment_guidance,
+            "recommendations": recommendations,
+            "key_metrics_snapshot": {
+                "robustness_score": robustness_score,
+                "win_rate": float(win_rate) if win_rate is not None else None,
+                "expectancy": float(expectancy) if expectancy is not None else None,
+                "worst_simulated_drawdown_pct": float(monte_carlo.get("worst_drawdown_pct", 0.0)),
+                "probability_of_ruin": risk_of_ruin.get("probability_of_ruin"),
+                "edge_decay_pct": execution_sensitivity.get("summary_metrics", {}).get("edge_decay_pct"),
+            },
+            "report_figures": self._report_curated_figures(
+                risk_of_ruin=risk_of_ruin,
+            ),
+            "metadata": {
+                "report_scope": "validation_report",
+                "artifact_label": strategy_name,
+                "analysis_date": analysis_date,
+                "analysis_id": f"{strategy_name or 'strategy'}::{analysis_date}",
+                "available_diagnostics": available_diagnostics,
+                "export_readiness": {
+                    "screen_rendering_ready": True,
+                    "pdf_ready_core_sections": True,
+                    "audit_share_structured": True,
                 },
             },
+        }
+        return {
+            "report": canonical_report,
             "summary_metrics": {
                 "robustness_score": robustness_score,
                 "trade_count": trade_count,
                 "available_diagnostic_count": int(sum(1 for enabled in available_diagnostics.values() if enabled)),
             },
             "figures": [],
-            "interpretation": [
-                f"Final posture: {executive_verdict['headline']}.",
-                "Report summarizes only diagnostics that were truthfully computable from supplied inputs.",
-            ],
+            "interpretation": {
+                "summary": f"Final posture: {executive_verdict['headline']}.",
+                "positives": [],
+                "cautions": ["Report summarizes only diagnostics that were truthfully computable from supplied inputs."],
+            },
             "warnings": [],
             "assumptions": [
                 "Report sections are synthesized from deterministic diagnostics using configured Monte Carlo seed."
@@ -2745,64 +2829,30 @@ class StrategyRobustnessLabService:
                     "deployment_guidance",
                     "recommendations",
                 ],
-            },
-            "header": {
-                "strategy_name": strategy_name,
-                "date_start": run.metadata.get("date_start"),
-                "date_end": run.metadata.get("date_end"),
-                "source": run.source,
-            },
-            "executive_summary": {
-                "verdict": executive_verdict["headline"],
-                "robustness_score": robustness_score,
-                "top_risks": [
-                    "Monte Carlo drawdown profile",
-                    "Execution cost sensitivity",
-                ],
-            },
-            "validation_posture": {
-                "deterministic": True,
-                "seed": int(seed),
-                "simulations": int(simulations),
-            },
-            "limitations": limitations,
-            "diagnostics_summary": diagnostics_summary,
-            "methodology": {
-                "engine": "StrategyRobustnessLabService",
-                "seed": int(seed),
-                "simulations": int(simulations),
-                "deterministic": True,
-            },
-            "deployment_guidance": deployment_guidance,
-            "confidence_level": confidence_level,
-            "executive_verdict": executive_verdict,
-            "key_metrics_snapshot": {
-                "robustness_score": robustness_score,
-                "win_rate": float(win_rate) if win_rate is not None else None,
-                "expectancy": float(expectancy) if expectancy is not None else None,
-                "worst_simulated_drawdown_pct": float(monte_carlo.get("worst_drawdown_pct", 0.0)),
-                "probability_of_ruin": risk_of_ruin.get("probability_of_ruin"),
-            },
-            "report_figures": self._report_curated_figures(
-                risk_of_ruin=risk_of_ruin,
-            ),
-            "strategy_summary": run.metadata,
-            "assumptions_detail": {
-                "ingestion_source": run.source,
-                "monte_carlo_seed": seed,
-                "monte_carlo_simulations": simulations,
-                "deterministic": True,
-            },
-            "performance_summary": run.performance,
-            "monte_carlo_diagnostics": monte_carlo,
-            "parameter_stability": parameter_stability,
-            "execution_sensitivity": execution_sensitivity,
-            "regime_analysis": regime,
-            "risk_of_ruin": risk_of_ruin,
-            "score": score,
-            "final_verdict": {
-                "robustness_score": robustness_score,
-                "interpretation": executive_verdict["headline"],
+                "compatibility": {
+                    "deprecated_aliases_removed": [
+                        "executive_summary",
+                        "validation_posture",
+                        "diagnostics_summary",
+                        "methodology",
+                        "deployment_guidance",
+                        "confidence_level",
+                        "executive_verdict",
+                        "key_metrics_snapshot",
+                        "report_figures",
+                        "strategy_summary",
+                        "assumptions_detail",
+                        "performance_summary",
+                        "monte_carlo_diagnostics",
+                        "parameter_stability",
+                        "execution_sensitivity",
+                        "regime_analysis",
+                        "risk_of_ruin",
+                        "score",
+                        "final_verdict",
+                    ],
+                    "canonical_report_path": "diagnostics.report.report",
+                },
             },
         }
 

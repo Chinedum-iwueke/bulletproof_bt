@@ -9,22 +9,31 @@ This document defines the engine-native payload emitted by:
 
 Each diagnostic block (`overview`, `distribution`, `monte_carlo`, `execution`, `stability`, `regimes`, `ruin`, `report`) is emitted with a stable envelope:
 
+- `status: "available" | "limited" | "unavailable" | "skipped"` (**canonical status field**)
 - `available: bool`
 - `limited: bool`
 - `reason_unavailable: str | null`
 - `limitations: list[str]`
 - `summary_metrics: dict[str, scalar | null]`
 - `figures: list[FigurePayload]`
-- `interpretation: list[str] | dict[str, Any]` (diagnostic-specific; overview emits structured narrative)
+- `interpretation: {"summary": str, "positives": list[str], "cautions": list[str], ...} | null`
 - `warnings: list[str]`
 - `assumptions: list[str]`
 - `recommendations: list[str]`
 - `metadata: dict[str, Any]`
 - `payload: dict[str, Any]` (full native diagnostic payload for backward compatibility)
 
-Skipped diagnostics are emitted as:
+Status semantics:
+- `available`: diagnostic computed normally.
+- `limited`: diagnostic computed with truthful constraints.
+- `unavailable`: diagnostic could not be computed from supplied inputs.
+- `skipped`: diagnostic intentionally skipped (for example by `diagnostic_eligibility`).
 
-- `{"status": "skipped", "reason": "..."}`
+Skipped diagnostics still emit the full envelope scaffold with empty collections and explicit `limitations` / `metadata.skip_reason` rather than sparse `{status, reason}` payloads.
+
+Compatibility note:
+- `available` / `limited` booleans are retained as derived compatibility fields.
+- `status` is canonical for consumer branching.
 
 ## Figure Payload Types
 
@@ -228,6 +237,10 @@ Richer bundle unlocks:
 - policy-aware and dynamic sizing stress curves
 
 ### report
+
+Canonical source-of-truth:
+- Report-native content is emitted only in `diagnostics.report.report`.
+- Legacy mirrored top-level report aliases have been removed from the producer payload to reduce ambiguous branching.
 
 Minimum report-ready sections:
 - `executive_verdict`

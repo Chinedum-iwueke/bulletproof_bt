@@ -188,25 +188,22 @@ def test_report_payload_assembly(tmp_path: Path) -> None:
     run = service.ingest_trade_log(trade_log)
     report = service.build_dashboard_payload(run, seed=99)["validation_report"]
 
-    assert "strategy_summary" in report
-    assert "assumptions" in report
-    assert "performance_summary" in report
-    assert "monte_carlo_diagnostics" in report
-    assert "final_verdict" in report
-    assert "executive_verdict" in report
-    assert report["executive_verdict"]["status"] in {
+    report_native = report["report"]
+    assert report_native["executive_verdict"]["status"] in {
         "robust",
         "conditional",
         "fragile",
         "not_deployment_ready",
     }
-    assert report["confidence_level"]["level"] in {"high", "medium", "low"}
-    assert "deployment_guidance" in report
-    assert "diagnostics_summary" in report
-    assert "key_metrics_snapshot" in report
-    assert "report" in report
-    assert "metadata" in report["report"]
-    assert "report_figures" in report["report"]
+    assert report_native["confidence_level"]["level"] in {"high", "medium", "low"}
+    assert "deployment_guidance" in report_native
+    assert "diagnostics_summary" in report_native
+    assert "key_metrics_snapshot" in report_native
+    assert "metadata" in report_native
+    assert "report_figures" in report_native
+    assert report["interpretation"]["summary"]
+    assert isinstance(report["interpretation"]["positives"], list)
+    assert isinstance(report["interpretation"]["cautions"], list)
 
 
 def test_report_payload_assembly_for_richer_run_artifacts(tmp_path: Path) -> None:
@@ -347,7 +344,8 @@ def test_ingest_parameter_sweep_bundle_supports_manifest_contract(tmp_path: Path
     assert parsed.parameter_sweep is not None
     assert len(parsed.parameter_sweep.runs) == 2
     assert result.capability_profile.diagnostics["stability"].status in {"limited", "supported"}
-    assert result.diagnostics["stability"]["status"] == "parameter_sweep"
+    assert result.diagnostics["stability"]["status"] in {"available", "limited"}
+    assert result.diagnostics["stability"]["source_status"] == "parameter_sweep"
     assert result.diagnostics["stability"]["metadata"]["dimensions"] == 2
     assert len(result.diagnostics["stability"]["heatmap"]) == 2
 
