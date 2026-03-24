@@ -53,7 +53,13 @@ class NormalizedTradeRecord:
     quantity: float | None = None
     fees: float | None = None
     pnl: float | None = None
+    gross_pnl: float | None = None
     pnl_pct: float | None = None
+    slippage: float | None = None
+    risk_amount: float | None = None
+    stop_distance: float | None = None
+    r_multiple_net: float | None = None
+    r_multiple_gross: float | None = None
     mae: float | None = None
     mfe: float | None = None
     duration_seconds: float | None = None
@@ -116,6 +122,7 @@ class DiagnosticCapability:
 @dataclass(frozen=True)
 class AnalysisCapabilityProfile:
     diagnostics: dict[DiagnosticName, DiagnosticCapability]
+    artifact_capabilities: dict[str, bool] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -175,6 +175,13 @@ class StrategyRobustnessLabService:
         account_size: float | None = None,
         risk_per_trade_pct: float | None = None,
     ) -> dict[str, Any]:
+        semantic_capabilities = self._semantic_trade_capabilities(
+            trades=run.trades,
+            ohlcv_present=bool(run.metadata.get("ohlcv_present", False) or run.metadata.get("_ohlcv_context") is not None),
+            benchmark_present=bool(run.metadata.get("benchmark_present", False)),
+            params_present=bool(run.metadata.get("params_present", False)),
+            parameter_sweep_present=False,
+        )
         equity_start = float(
             account_size
             if account_size is not None
@@ -187,9 +194,10 @@ class StrategyRobustnessLabService:
             simulations=simulations,
             initial_equity=equity_start,
             drawdown_levels=ruin_drawdown_levels,
+            semantic_capabilities=semantic_capabilities,
         )
         parameter_stability = self._parameter_stability_from_single_run(run.performance)
-        execution_sensitivity = self._execution_sensitivity(run.trades)
+        execution_sensitivity = self._execution_sensitivity(run.trades, semantic_capabilities=semantic_capabilities)
         regime = self._regime_analysis(run.trades, ohlcv=run.metadata.get("_ohlcv_context"))
         risk_of_ruin = self._risk_of_ruin(
             monte_carlo,
@@ -197,6 +205,7 @@ class StrategyRobustnessLabService:
             account_size=equity_start,
             explicit_account_size=account_size,
             risk_per_trade_pct=risk_per_trade_pct,
+            semantic_capabilities=semantic_capabilities,
         )
         score = self._score(
             performance=run.performance,
@@ -212,7 +221,7 @@ class StrategyRobustnessLabService:
             monte_carlo=monte_carlo,
             risk_of_ruin=risk_of_ruin,
         )
-        trade_distribution = self._trade_distribution(run.trades)
+        trade_distribution = self._trade_distribution(run.trades, semantic_capabilities=semantic_capabilities)
         report = self._validation_report(
             run=run,
             monte_carlo=monte_carlo,
@@ -235,6 +244,7 @@ class StrategyRobustnessLabService:
             "risk_of_ruin": risk_of_ruin,
             "score": asdict(score),
             "validation_report": report,
+            "artifact_capabilities": semantic_capabilities,
         }
 
     def ingest_parameter_sweep_table(
@@ -313,8 +323,20 @@ class StrategyRobustnessLabService:
             "report": payload["validation_report"],
         }
 
+        artifact_capabilities = self._semantic_trade_capabilities(
+            trades=run.trades,
+            ohlcv_present=bool(parsed_artifact.ohlcv_present or parsed_artifact.ohlcv),
+            benchmark_present=parsed_artifact.benchmark_present,
+            params_present=parsed_artifact.params is not None,
+            parameter_sweep_present=parsed_artifact.parameter_sweep is not None,
+        )
         capability_profile = AnalysisCapabilityProfile(
-            diagnostics=self._diagnostic_capability_profile(parsed_artifact, config=config)
+            diagnostics=self._diagnostic_capability_profile(
+                parsed_artifact,
+                config=config,
+                artifact_capabilities=artifact_capabilities,
+            ),
+            artifact_capabilities=artifact_capabilities,
         )
         diagnostics = self._apply_diagnostic_eligibility(
             diagnostics=diagnostics,
@@ -371,8 +393,14 @@ class StrategyRobustnessLabService:
                 "quantity": trade.quantity,
                 "fees": trade.fees,
                 "pnl": trade.pnl,
+                "pnl_price": trade.gross_pnl,
                 "mae_price": trade.mae,
                 "mfe_price": trade.mfe,
+                "stop_distance": trade.stop_distance,
+                "risk_amount": trade.risk_amount,
+                "slippage": trade.slippage,
+                "r_multiple_net": trade.r_multiple_net,
+                "r_multiple_gross": trade.r_multiple_gross,
                 "strategy_name": trade.strategy_name,
                 "timeframe": trade.timeframe,
                 "market": trade.market,
@@ -423,15 +451,78 @@ class StrategyRobustnessLabService:
             metadata=metadata,
         )
 
+    def _semantic_trade_capabilities(
+        self,
+        *,
+        trades: pd.DataFrame,
+        ohlcv_present: bool,
+        benchmark_present: bool,
+        params_present: bool,
+        parameter_sweep_present: bool,
+    ) -> dict[str, bool]:
+        def _has_non_null(column: str) -> bool:
+            return bool(column in trades.columns and trades[column].notna().any())
+
+        has_trade_timestamps = _has_non_null("entry_ts")
+        has_exit_timestamps = _has_non_null("exit_ts")
+        has_entry_exit_prices = _has_non_null("entry_price") and _has_non_null("exit_price")
+        has_quantity = _has_non_null("quantity")
+        has_net_pnl = _has_non_null("pnl_net")
+        has_gross_pnl = _has_non_null("pnl_price")
+        has_fee_fields = _has_non_null("fees_paid")
+        has_slippage_fields = _has_non_null("slippage")
+        has_cost_fields = has_fee_fields or has_slippage_fields or _has_non_null("spread")
+        has_excursion_fields = _has_non_null("mae_price") and _has_non_null("mfe_price")
+        has_risk_fields = _has_non_null("risk_amount")
+        has_stop_distance_fields = _has_non_null("stop_distance")
+        has_r_multiple_fields = _has_non_null("r_multiple_net") or _has_non_null("r_multiple_gross")
+        has_equity_series = has_net_pnl
+        has_market_context = bool(ohlcv_present)
+        has_benchmark_context = bool(benchmark_present)
+        has_parameter_grid = bool(params_present or parameter_sweep_present)
+
+        return {
+            "has_trade_timestamps": has_trade_timestamps,
+            "has_exit_timestamps": has_exit_timestamps,
+            "has_entry_exit_prices": has_entry_exit_prices,
+            "has_quantity": has_quantity,
+            "has_net_pnl": has_net_pnl,
+            "has_gross_pnl": has_gross_pnl,
+            "has_cost_fields": has_cost_fields,
+            "has_fee_fields": has_fee_fields,
+            "has_slippage_fields": has_slippage_fields,
+            "has_excursion_fields": has_excursion_fields,
+            "has_risk_fields": has_risk_fields,
+            "has_stop_distance_fields": has_stop_distance_fields,
+            "has_r_multiple_fields": has_r_multiple_fields,
+            "has_equity_series": has_equity_series,
+            "has_market_context": has_market_context,
+            "has_benchmark_context": has_benchmark_context,
+            "has_parameter_grid": has_parameter_grid,
+            "can_build_equity_curve": has_equity_series and has_trade_timestamps,
+            "can_build_duration_distribution": has_trade_timestamps and has_exit_timestamps,
+            "can_build_histogram_from_returns": has_net_pnl,
+            "can_build_histogram_from_r_multiples": has_r_multiple_fields,
+            "can_build_mae_mfe_scatter": has_excursion_fields,
+            "can_build_cost_drag_summary": has_net_pnl and (has_cost_fields or has_gross_pnl),
+            "can_build_execution_sensitivity_baseline": has_net_pnl,
+            "can_build_monte_carlo_paths": has_net_pnl,
+            "can_build_ruin_model": has_net_pnl and has_risk_fields,
+            "can_build_regime_analysis": has_market_context and has_net_pnl,
+            "can_build_parameter_stability": has_parameter_grid,
+            "can_build_trade_distribution": has_net_pnl,
+        }
+
     def _diagnostic_capability_profile(
         self,
         parsed_artifact: ParsedArtifactInput,
         *,
         config: AnalysisRunConfig,
+        artifact_capabilities: dict[str, bool],
     ) -> dict[str, DiagnosticCapability]:
         trade_count = len(parsed_artifact.trades)
         has_trades = trade_count > 0
-        has_params = parsed_artifact.params is not None or parsed_artifact.parameter_sweep is not None
+        has_params = bool(artifact_capabilities.get("has_parameter_grid"))
         def status_for_trade_based(name: str) -> DiagnosticCapability:
             if not has_trades:
                 return DiagnosticCapability(
@@ -464,7 +555,7 @@ class StrategyRobustnessLabService:
             )
 
         regimes = status_for_trade_based("regimes")
-        has_ohlcv_context = bool(parsed_artifact.ohlcv_present or parsed_artifact.ohlcv)
+        has_ohlcv_context = bool(artifact_capabilities.get("has_market_context"))
         if has_trades and not has_ohlcv_context:
             regimes = DiagnosticCapability(
                 status="unavailable",
@@ -527,8 +618,26 @@ class StrategyRobustnessLabService:
 
         return {
             "overview": status_for_trade_based("overview"),
-            "distribution": status_for_trade_based("distribution"),
-            "monte_carlo": status_for_trade_based("monte_carlo"),
+            "distribution": (
+                status_for_trade_based("distribution")
+                if artifact_capabilities.get("can_build_trade_distribution")
+                else DiagnosticCapability(
+                    status="unavailable",
+                    reason="Trade distribution requires normalized trade outcomes.",
+                    required_inputs=["trades", "pnl_net"],
+                    optional_enrichments=["duration", "mae_mfe", "r_multiple"],
+                )
+            ),
+            "monte_carlo": (
+                status_for_trade_based("monte_carlo")
+                if artifact_capabilities.get("can_build_monte_carlo_paths")
+                else DiagnosticCapability(
+                    status="unavailable",
+                    reason="Monte Carlo requires normalized per-trade return outcomes.",
+                    required_inputs=["trades", "pnl_net"],
+                    optional_enrichments=["equity_curve", "account_size"],
+                )
+            ),
             "stability": stability,
             "execution": (
                 DiagnosticCapability(
@@ -844,6 +953,12 @@ class StrategyRobustnessLabService:
                     quantity=float(row["quantity"]) if pd.notna(row.get("quantity")) else None,
                     fees=float(row["fees_paid"]) if pd.notna(row.get("fees_paid")) else None,
                     pnl=float(row["pnl_net"]) if pd.notna(row.get("pnl_net")) else None,
+                    gross_pnl=float(row["pnl_price"]) if pd.notna(row.get("pnl_price")) else None,
+                    slippage=float(row["slippage"]) if pd.notna(row.get("slippage")) else None,
+                    risk_amount=float(row["risk_amount"]) if pd.notna(row.get("risk_amount")) else None,
+                    stop_distance=float(row["stop_distance"]) if pd.notna(row.get("stop_distance")) else None,
+                    r_multiple_net=float(row["r_multiple_net"]) if pd.notna(row.get("r_multiple_net")) else None,
+                    r_multiple_gross=float(row["r_multiple_gross"]) if pd.notna(row.get("r_multiple_gross")) else None,
                     mae=float(row["mae_price"]) if pd.notna(row.get("mae_price")) else None,
                     mfe=float(row["mfe_price"]) if pd.notna(row.get("mfe_price")) else None,
                     strategy_name=str(row["strategy_name"]) if pd.notna(row.get("strategy_name")) else None,
@@ -869,11 +984,27 @@ class StrategyRobustnessLabService:
             "fees": "fees_paid",
             "commission": "fees_paid",
             "pnl": "pnl_net",
+            "net_pnl": "pnl_net",
+            "gross_pnl": "pnl_price",
+            "pnl_gross": "pnl_price",
             "risk": "risk_amount",
+            "entry_stop_distance": "stop_distance",
+            "stop_loss_distance": "stop_distance",
+            "mae": "mae_price",
+            "mfe": "mfe_price",
+            "r_multiple": "r_multiple_net",
+            "r": "r_multiple_net",
+            "cost": "fees_paid",
         }
-        normalized = trades.rename(
-            columns={key: value for key, value in rename_map.items() if key in trades.columns}
-        ).copy()
+        rename_columns: dict[str, str] = {}
+        existing = set(trades.columns)
+        for source, target in rename_map.items():
+            if source not in existing:
+                continue
+            if target in existing and source != target:
+                continue
+            rename_columns[source] = target
+        normalized = trades.rename(columns=rename_columns).copy()
 
         missing_base = sorted(REQUIRED_BASE_COLUMNS - set(normalized.columns))
         if missing_base:
@@ -904,6 +1035,7 @@ class StrategyRobustnessLabService:
             "slippage": 0.0,
             "spread": 0.0,
             "risk_amount": np.nan,
+            "stop_distance": np.nan,
             "mae_price": np.nan,
             "mfe_price": np.nan,
             "r_multiple_net": np.nan,
@@ -1259,7 +1391,13 @@ class StrategyRobustnessLabService:
             warnings.append("Non-positive expectancy detected.")
         return warnings
 
-    def _trade_distribution(self, trades: pd.DataFrame) -> dict[str, Any]:
+    def _trade_distribution(
+        self,
+        trades: pd.DataFrame,
+        *,
+        semantic_capabilities: dict[str, bool] | None = None,
+    ) -> dict[str, Any]:
+        semantic_capabilities = semantic_capabilities or {}
         pnl = trades["pnl_net"].fillna(0.0)
         pnl_values = [float(value) for value in pnl.tolist()]
         trade_count = int(len(pnl))
@@ -1284,8 +1422,8 @@ class StrategyRobustnessLabService:
             )
             if not np.isnan(mae) and not np.isnan(mfe)
         ]
-        has_mae_mfe = bool(mae_mfe_points)
-        has_duration = bool(durations)
+        has_mae_mfe = bool(semantic_capabilities.get("can_build_mae_mfe_scatter", bool(mae_mfe_points)))
+        has_duration = bool(semantic_capabilities.get("can_build_duration_distribution", bool(durations))) and bool(durations)
 
         r_values = [float(value) for value in trades["r_multiple_net"].dropna().tolist()]
         r_summary = summarize_r(r_values)
@@ -1458,6 +1596,16 @@ class StrategyRobustnessLabService:
                     bins=self._histogram_bins(durations, bins=min(max(int(np.sqrt(len(durations))) + 4, 6), 20)),
                 )
             )
+        if semantic_capabilities.get("can_build_histogram_from_r_multiples") and r_values:
+            figures.append(
+                self._figure_histogram(
+                    figure_id="r_multiple_histogram",
+                    title="R-Multiple Distribution",
+                    x_label="r_multiple_net",
+                    y_label="trade_count",
+                    bins=self._histogram_bins(r_values, bins=min(max(int(np.sqrt(len(r_values))) + 4, 6), 20)),
+                )
+            )
 
         warnings = []
         if profit_factor is None or payoff_ratio is None:
@@ -1515,6 +1663,7 @@ class StrategyRobustnessLabService:
                     "win_loss_available": True,
                     "mae_mfe_available": has_mae_mfe,
                     "duration_available": has_duration,
+                    "r_multiple_available": bool(semantic_capabilities.get("can_build_histogram_from_r_multiples") and r_values),
                 },
                 "completeness_notes": limitations,
                 "has_durations": has_duration,
@@ -1568,8 +1717,10 @@ class StrategyRobustnessLabService:
         simulations: int,
         initial_equity: float,
         drawdown_levels: tuple[float, ...],
+        semantic_capabilities: dict[str, bool] | None = None,
         fan_chart_paths: int = 50,
     ) -> dict[str, Any]:
+        semantic_capabilities = semantic_capabilities or {}
         pnl = trades["pnl_net"].fillna(0.0).to_numpy(dtype=float)
         ruin_threshold_fraction = 0.5
         method = "bootstrap_iid_trade_pnl"
@@ -1615,6 +1766,7 @@ class StrategyRobustnessLabService:
                     "trades_in_bootstrap": int(pnl.size),
                     "horizon_trades": int(pnl.size),
                     "ruin_threshold_fraction": ruin_threshold_fraction,
+                    "capability_used": bool(semantic_capabilities.get("can_build_monte_carlo_paths", False)),
                 },
             }
 
@@ -1775,6 +1927,7 @@ class StrategyRobustnessLabService:
                 "fan_chart_band_percentiles": [5, 25, 50, 75, 95],
                 "drawdown_distribution_mode": "max_drawdown_histogram_and_percentiles",
                 "compute_simplifications": ["iid_resampling", "fixed_horizon_equal_to_observed_trade_count"],
+                "capability_used": bool(semantic_capabilities.get("can_build_monte_carlo_paths", True)),
             },
         }
 
@@ -1921,7 +2074,13 @@ class StrategyRobustnessLabService:
             "axes": {"x": x_key, "y": y_key, "value": "metric"},
         }
 
-    def _execution_sensitivity(self, trades: pd.DataFrame) -> dict[str, Any]:
+    def _execution_sensitivity(
+        self,
+        trades: pd.DataFrame,
+        *,
+        semantic_capabilities: dict[str, bool] | None = None,
+    ) -> dict[str, Any]:
+        semantic_capabilities = semantic_capabilities or {}
         base = trades["pnl_net"].fillna(0.0)
         fees = trades["fees_paid"].fillna(0.0)
         slippage = trades["slippage"].fillna(0.0)
@@ -2079,6 +2238,8 @@ class StrategyRobustnessLabService:
                 "stress_shape": "discrete",
                 "execution_model_type": execution_model_type,
                 "dominant_cost_dimension": dominant_dimension,
+                "capability_used": bool(semantic_capabilities.get("can_build_execution_sensitivity_baseline", True)),
+                "cost_drag_supported": bool(semantic_capabilities.get("can_build_cost_drag_summary", False)),
             },
             "baseline_ev_net": baseline_expectancy,
             "execution_resilience_score": resilience,
@@ -2313,7 +2474,9 @@ class StrategyRobustnessLabService:
         account_size: float,
         explicit_account_size: float | None,
         risk_per_trade_pct: float | None,
+        semantic_capabilities: dict[str, bool] | None = None,
     ) -> dict[str, Any]:
+        semantic_capabilities = semantic_capabilities or {}
         pnl = trades["pnl_net"].fillna(0.0).to_numpy(dtype=float)
         levels = monte_carlo.get("probability_by_drawdown_threshold", {})
         mc_summary = monte_carlo.get("summary_metrics", {})
@@ -2406,6 +2569,7 @@ class StrategyRobustnessLabService:
                     "missing_required_inputs": required_missing,
                     "ruin_threshold_fraction": ruin_threshold_fraction,
                     "ruin_threshold_equity": ruin_threshold_equity if monte_carlo_linked else None,
+                    "capability_used": bool(semantic_capabilities.get("can_build_ruin_model", False)),
                 },
                 "probability_of_ruin": None,
                 "expected_stress_drawdown": expected_stress_drawdown,
@@ -2445,6 +2609,7 @@ class StrategyRobustnessLabService:
                     "missing_required_inputs": [],
                     "ruin_threshold_fraction": ruin_threshold_fraction,
                     "ruin_threshold_equity": ruin_threshold_equity,
+                    "capability_used": bool(semantic_capabilities.get("can_build_ruin_model", False)),
                 },
                 "probability_of_ruin": None,
                 "expected_stress_drawdown": None,
@@ -2575,6 +2740,7 @@ class StrategyRobustnessLabService:
                 "missing_required_inputs": [],
                 "ruin_threshold_fraction": ruin_threshold_fraction,
                 "ruin_threshold_equity": ruin_threshold_equity,
+                "capability_used": bool(semantic_capabilities.get("can_build_ruin_model", True)),
                 "sizing_model": "fixed_fractional",
                 "compounding_model": "fixed_notional_over_horizon",
                 "iid_trade_sequencing_assumed": True,

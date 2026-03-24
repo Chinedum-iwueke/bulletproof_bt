@@ -39,11 +39,48 @@ Use one of:
 ## Behavior
 
 - Engine normalizes records into internal trade frame via existing normalization pipeline.
+- Normalization is semantic/alias-driven (`entry_time|timestamp -> entry_ts`, `qty|size -> quantity`, `pnl|net_pnl -> pnl_net`, etc.) so parsed artifacts are not coupled to one CSV schema.
 - For `parameter_sweep`, parser validation enforces consistent parameter keys per run and at least two unique parameter combinations.
 - If `pnl` is absent, the engine infers net PnL when entry/exit/quantity/side are present.
 - If `equity_curve` is absent or incomplete, equity is reconstructed from trade PnL.
 - Metadata from parsed artifact is merged into run metadata.
 - Parameter stability uses full sweep topology when `parameter_sweep` is present; otherwise it falls back to single-run proxy mode.
+
+### Capability-driven model (parsed artifacts)
+
+Parsed artifact analysis now executes as:
+
+1. accepted dataset → semantic normalization
+2. semantic normalization → canonical capability detection
+3. capabilities → diagnostic/figure emission
+
+Canonical semantic capabilities emitted in `capability_profile.artifact_capabilities` include:
+
+- `has_trade_timestamps`, `has_exit_timestamps`
+- `has_entry_exit_prices`, `has_quantity`
+- `has_net_pnl`, `has_gross_pnl`
+- `has_cost_fields`, `has_fee_fields`, `has_slippage_fields`
+- `has_excursion_fields`
+- `has_risk_fields`, `has_stop_distance_fields`, `has_r_multiple_fields`
+- `has_equity_series`
+- `has_market_context`, `has_benchmark_context`
+- `has_parameter_grid`
+
+Derived figure/diagnostic capabilities include:
+
+- `can_build_equity_curve`
+- `can_build_duration_distribution`
+- `can_build_histogram_from_returns`
+- `can_build_histogram_from_r_multiples`
+- `can_build_mae_mfe_scatter`
+- `can_build_cost_drag_summary`
+- `can_build_execution_sensitivity_baseline`
+- `can_build_monte_carlo_paths`
+- `can_build_ruin_model`
+- `can_build_regime_analysis`
+- `can_build_parameter_stability`
+
+Diagnostic emitters consume these capabilities to decide which sub-diagnostics and figures are emitted (for example MAE/MFE scatter, duration histogram, R-multiple histogram, cost-drag metadata), rather than keying only off coarse artifact kind.
 
 ## Recommended on-disk upload format (primary)
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 
 from bt.saas.models import AnalysisRunConfig, NormalizedTradeRecord, ParsedArtifactInput
@@ -345,3 +347,51 @@ def test_run_analysis_from_parsed_artifact_emits_canonical_interpretation_shape_
     assert set(["summary", "positives", "cautions"]).issubset(interpretation.keys())
     assert isinstance(interpretation["positives"], list)
     assert isinstance(interpretation["cautions"], list)
+
+
+def test_reference_rich_trade_artifact_unlocks_richer_capability_driven_outputs() -> None:
+    service = StrategyRobustnessLabService()
+    artifact_path = Path("examples/reference_artifacts/trades_rich_reference.csv")
+    frame = pd.read_csv(artifact_path)
+    parsed = ParsedArtifactInput(
+        artifact_kind="trade_csv",
+        richness="trade_plus_metadata",
+        trades=service._records_from_trade_frame(frame),  # noqa: SLF001 - test seam validation
+        strategy_metadata={"strategy_name": "reference_rich_fixture"},
+    )
+
+    result = service.run_analysis_from_parsed_artifact(
+        parsed,
+        config=AnalysisRunConfig(seed=21, simulations=200, account_size=100_000.0, risk_per_trade_pct=0.01),
+    )
+
+    capabilities = result.capability_profile.artifact_capabilities
+    assert capabilities["has_trade_timestamps"] is True
+    assert capabilities["has_net_pnl"] is True
+    assert capabilities["has_risk_fields"] is True
+    assert capabilities["has_stop_distance_fields"] is True
+    assert capabilities["has_excursion_fields"] is True
+    assert capabilities["can_build_histogram_from_r_multiples"] is True
+    assert capabilities["can_build_mae_mfe_scatter"] is True
+    assert capabilities["can_build_duration_distribution"] is True
+    assert capabilities["can_build_execution_sensitivity_baseline"] is True
+    assert capabilities["can_build_monte_carlo_paths"] is True
+    assert capabilities["can_build_ruin_model"] is True
+
+    distribution_figures = {figure["id"] for figure in result.diagnostics["distribution"]["figures"]}
+    assert "duration_histogram" in distribution_figures
+    assert "mae_mfe_scatter" in distribution_figures
+    assert "r_multiple_histogram" in distribution_figures
+    assert result.diagnostics["distribution"]["metadata"]["available_subdiagnostics"]["r_multiple_available"] is True
+
+    execution = result.diagnostics["execution"]
+    assert execution["metadata"]["cost_drag_supported"] is True
+    assert execution["metadata"]["capability_used"] is True
+
+    monte_carlo = result.diagnostics["monte_carlo"]
+    assert monte_carlo["metadata"]["capability_used"] is True
+    assert monte_carlo["figures"]
+
+    ruin = result.diagnostics["ruin"]
+    assert ruin["summary_metrics"]["probability_of_ruin"] is not None
+    assert ruin["metadata"]["capability_used"] is True
