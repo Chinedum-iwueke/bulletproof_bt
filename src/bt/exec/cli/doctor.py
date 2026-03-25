@@ -13,6 +13,7 @@ from bt.exec.adapters.bybit import BybitBrokerAdapter, BybitRESTClient, resolve_
 from bt.exec.adapters.bybit.client_ws_private import BybitPrivateWSClient
 from bt.exec.adapters.bybit.client_ws_public import BybitPublicWSClient
 from bt.exec.adapters.bybit.errors import BybitAdapterError
+from bt.exec.services.live_controls import load_canary_policy
 
 
 @dataclass(frozen=True)
@@ -33,8 +34,13 @@ def _load_exec_config(config_path: str, override_paths: list[str] | None) -> dic
     return resolve_config(cfg)
 
 
-def run_doctor_diagnosis(*, config: dict[str, Any], check_ws: bool) -> DoctorSummary:
+def run_doctor_diagnosis(*, config: dict[str, Any], check_ws: bool, live_readiness: bool = False) -> DoctorSummary:
     bybit_cfg = resolve_bybit_config(config)
+    canary_ok = True
+    try:
+        _ = load_canary_policy(config)
+    except Exception:
+        canary_ok = False
     api_key, api_secret = bybit_cfg.auth.resolve()
     rest = BybitRESTClient(
         base_url=bybit_cfg.rest_base_url,
@@ -44,6 +50,7 @@ def run_doctor_diagnosis(*, config: dict[str, Any], check_ws: bool) -> DoctorSum
         timeout_ms=bybit_cfg.request_timeout_ms,
         max_retries=bybit_cfg.max_retries,
         retry_backoff_ms=bybit_cfg.retry_backoff_ms,
+        environment=bybit_cfg.environment,
     )
     adapter = BybitBrokerAdapter(
         config=bybit_cfg,
@@ -65,14 +72,19 @@ def run_doctor_diagnosis(*, config: dict[str, Any], check_ws: bool) -> DoctorSum
             "fetch_open_orders": True,
             "fetch_fills": True,
             "instrument_lookup": instrument is not None,
-            "ws_checked": check_ws,
+            "ws_checked": True,
+            "canary_config_valid": canary_ok,
+            "private_stream_ready": adapter.private_stream_ready() if check_ws else True,
         }
+        if live_readiness:
+            checks["live_environment"] = bybit_cfg.environment == "live"
+
         health = {
             "adapter": asdict(adapter.get_health()),
         }
         health["adapter"]["ts"] = str(pd.Timestamp(health["adapter"]["ts"]).isoformat())
         return DoctorSummary(
-            ok=True,
+            ok=all(checks.values()),
             venue="bybit",
             environment=bybit_cfg.environment,
             checks=checks,
@@ -96,11 +108,12 @@ def main() -> None:
     parser.add_argument("--config", default="configs/exec/bybit_demo.yaml")
     parser.add_argument("--override", action="append", default=[])
     parser.add_argument("--check-ws", action="store_true")
+    parser.add_argument("--live-readiness", action="store_true")
     args = parser.parse_args()
 
     config = _load_exec_config(args.config, args.override or None)
     try:
-        summary = run_doctor_diagnosis(config=config, check_ws=args.check_ws)
+        summary = run_doctor_diagnosis(config=config, check_ws=args.check_ws, live_readiness=args.live_readiness)
     except Exception as exc:
         failure = {
             "ok": False,

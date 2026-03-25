@@ -34,6 +34,8 @@ from bt.exec.runtime.health import RuntimeHealthMonitor
 from bt.exec.runtime.loop import ReconciliationConfig, RuntimeLoop, RuntimeLoopState
 from bt.exec.runtime.scheduler import HeartbeatScheduler
 from bt.exec.services.execution_router import ExecutionRouter
+from bt.exec.services.kill_switch import KillSwitch
+from bt.exec.services.live_controls import CanaryGuard, load_canary_policy
 from bt.exec.services.portfolio_runner import PortfolioRunner
 from bt.exec.services.risk_runner import RiskRunner
 from bt.exec.services.strategy_runner import StrategyRunner
@@ -99,6 +101,7 @@ def _build_components(config: dict[str, Any]) -> tuple[StrategyRunner, RiskRunne
             timeout_ms=bybit_cfg.request_timeout_ms,
             max_retries=bybit_cfg.max_retries,
             retry_backoff_ms=bybit_cfg.retry_backoff_ms,
+            environment=bybit_cfg.environment,
         )
         adapter: BrokerAdapter = BybitBrokerAdapter(
             config=bybit_cfg,
@@ -148,6 +151,34 @@ def _resolve_reconcile_config(config: dict[str, Any]) -> tuple[ReconciliationCon
     )
 
 
+def _run_live_startup_gate(*, adapter: BrokerAdapter, execution_router: ExecutionRouter, portfolio_runner: PortfolioRunner, rid: str, reconcile_scope: ReconciliationScope, fill_tol: float, pos_tol: float, bal_tol: float, policy: ReconciliationPolicy, require_private_stream_ready: bool) -> tuple[bool, str | None]:
+    if require_private_stream_ready and hasattr(adapter, "private_stream_ready") and not bool(getattr(adapter, "private_stream_ready")()):
+        return False, "private_stream_not_ready"
+    local_positions = list(portfolio_runner.portfolio.position_book.all_positions().values())
+    local_balances = adapter.fetch_balances()
+    inputs = ReconciliationInputs(
+        run_id=rid,
+        ts=pd.Timestamp.now(tz="UTC"),
+        local_open_orders=execution_router.current_open_orders(),
+        adapter_open_orders=adapter.fetch_open_orders(),
+        adapter_completed_orders=adapter.fetch_completed_orders(),
+        local_fills=execution_router.local_fills(),
+        adapter_fills=adapter.fetch_recent_fills_or_executions(),
+        local_positions=local_positions,
+        adapter_positions=adapter.fetch_positions(),
+        local_balances=local_balances,
+        adapter_balances=adapter.fetch_balances(),
+        scope=reconcile_scope,
+        material_fill_qty_tolerance=fill_tol,
+        material_position_qty_tolerance=pos_tol,
+        material_balance_tolerance=bal_tol,
+    )
+    result = ReconciliationEngine().reconcile(inputs=inputs, policy=policy)
+    if result.decision.action.value == "freeze":
+        return False, "startup_reconciliation_freeze"
+    return True, None
+
+
 def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: str | None = None, override_paths: list[str] | None = None, run_id: str | None = None) -> str:
     config = _load_exec_config(config_path, override_paths)
     exec_cfg = config.setdefault("exec", {})
@@ -164,11 +195,15 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
 
     strategy_runner, risk_runner, portfolio_runner, adapter = _build_components(config)
     broker_cfg = config.get("broker") if isinstance(config.get("broker"), dict) else {}
+    environment = str(broker_cfg.get("environment", "demo")).lower()
+    is_live_mode = mode == "live_broker"
     if mode == "paper_broker":
         if str(broker_cfg.get("venue", "")).lower() != "bybit":
             raise ValueError("exec.mode=paper_broker currently requires broker.venue=bybit")
-        if str(broker_cfg.get("environment", "")).lower() != "demo":
+        if environment != "demo":
             raise ValueError("exec.mode=paper_broker is demo-only in Phase 5")
+    if is_live_mode and environment != "live":
+        raise ValueError("exec.mode=live_broker requires broker.environment=live")
 
     checkpoint_ts: pd.Timestamp | None = None
     order_seq = 0
@@ -195,7 +230,7 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
         state_store.record_session_liveness(session)
 
     artifacts = ExecArtifactWriters(run_dir=run_dir, run_id=rid, mode=mode, config=config, data_path=data_path, resumed_from_run_id=resumed_from_run_id)
-    artifacts.write_status(state="running")
+    artifacts.write_status(state="running", extra={"environment": environment})
 
     checkpoint_cadence = CheckpointCadence(interval_seconds=checkpoint_interval_seconds)
 
@@ -251,6 +286,11 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
         result = reconciliation_engine.reconcile(inputs=inputs, policy=reconcile_policy)
         return reconciliation_record(result)
 
+    kill_switch = KillSwitch(
+        allow_reduce_only_exits=bool((config.get("live_controls") or {}).get("allow_reduce_only_when_frozen", True))
+    ) if is_live_mode else None
+    canary_guard = CanaryGuard(load_canary_policy(config)) if is_live_mode else None
+
     loop = RuntimeLoop(
         feed=load_feed(data_path, config),
         strategy_runner=strategy_runner,
@@ -266,13 +306,64 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
         reconciliation=reconcile_cfg,
         reconcile_fn=_run_reconcile,
         on_bar_complete=_checkpoint_callback,
+        kill_switch=kill_switch,
+        canary_guard=canary_guard,
     )
 
     final_state = loop.state
     try:
         adapter.start()
+        if is_live_mode:
+            startup_ok, startup_reason = _run_live_startup_gate(
+                adapter=adapter,
+                execution_router=execution_router,
+                portfolio_runner=portfolio_runner,
+                rid=rid,
+                reconcile_scope=reconcile_scope,
+                fill_tol=fill_tol,
+                pos_tol=pos_tol,
+                bal_tol=bal_tol,
+                policy=reconcile_policy,
+                require_private_stream_ready=bool(exec_cfg.get("require_private_stream_ready", True)),
+            )
+            read_only_startup = bool((config.get("live_controls") or {}).get("read_only_startup", False))
+            if not startup_ok:
+                if kill_switch is not None:
+                    kill_switch.freeze(reason=startup_reason or "startup_blocked", ts=pd.Timestamp.now(tz="UTC"))
+                artifacts.write_status(
+                    state="running",
+                    extra={
+                        "environment": environment,
+                        "startup_gate_result": "blocked",
+                        "startup_blocked_reason": startup_reason,
+                        "frozen": True,
+                        "read_only": True,
+                    },
+                )
+                if not read_only_startup:
+                    raise RuntimeError(f"live startup blocked: {startup_reason}")
+            if hasattr(adapter, "set_live_mutations_enabled") and startup_ok and not read_only_startup:
+                getattr(adapter, "set_live_mutations_enabled")(True)
+            artifacts.write_status(
+                state="running",
+                extra={
+                    "environment": environment,
+                    "startup_gate_result": "passed" if startup_ok else "blocked",
+                    "frozen": False if startup_ok else True,
+                    "read_only": read_only_startup or (not startup_ok),
+                    "canary_enabled": canary_guard.policy.enabled if canary_guard is not None else False,
+                },
+            )
+
         final_state = loop.run()
-        artifacts.write_status(state="stopped")
+        artifacts.write_status(
+            state="stopped",
+            extra={
+                "environment": environment,
+                "frozen": final_state.frozen,
+                "freeze_reason": None if kill_switch is None else kill_switch.state().reason,
+            },
+        )
         if state_store is not None:
             if save_checkpoints:
                 checkpoint = build_runtime_checkpoint(
@@ -288,7 +379,7 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
                 save_checkpoint(store=state_store, checkpoint=checkpoint)
             state_store.mark_session_final_status(run_id=rid, status="stopped", ts=pd.Timestamp.now(tz="UTC"))
     except Exception as exc:
-        artifacts.write_status(state="failed", error=str(exc))
+        artifacts.write_status(state="failed", error=str(exc), extra={"environment": environment})
         if state_store is not None:
             state_store.mark_session_final_status(run_id=rid, status="failed", ts=pd.Timestamp.now(tz="UTC"), error=str(exc))
         raise

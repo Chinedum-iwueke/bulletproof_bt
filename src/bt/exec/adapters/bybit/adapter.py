@@ -39,6 +39,10 @@ class BybitBrokerAdapter:
         self._ws_private = ws_private
         self._instrument_cache = BybitInstrumentCache(rest_client=rest_client, category=config.category)
         self._started = False
+        self._live_mutations_enabled = False
+
+    def set_live_mutations_enabled(self, enabled: bool) -> None:
+        self._live_mutations_enabled = enabled
 
     def start(self) -> None:
         self._started = True
@@ -50,6 +54,9 @@ class BybitBrokerAdapter:
         self._started = False
         self._ws_public.stop()
         self._ws_private.stop()
+
+    def private_stream_ready(self) -> bool:
+        return self._ws_private.health().status == AdapterHealthStatus.HEALTHY
 
     def iter_events(self) -> list[object]:
         output: list[object] = []
@@ -76,7 +83,7 @@ class BybitBrokerAdapter:
         return output
 
     def submit_order(self, request: BrokerOrderRequest) -> str:
-        self._require_demo_mutations()
+        self._require_mutations_allowed()
         payload: dict[str, object] = {
             "category": self._config.category,
             "symbol": request.symbol,
@@ -114,7 +121,7 @@ class BybitBrokerAdapter:
         return order_id
 
     def cancel_order(self, request: BrokerOrderCancelRequest) -> None:
-        self._require_demo_mutations()
+        self._require_mutations_allowed()
         response = self._rest.post_private(
             "/v5/order/cancel",
             payload={
@@ -132,7 +139,7 @@ class BybitBrokerAdapter:
             )
 
     def amend_order(self, request: BrokerOrderAmendRequest) -> None:
-        self._require_demo_mutations()
+        self._require_mutations_allowed()
         self._rest.post_private(
             "/v5/order/amend",
             payload={
@@ -144,9 +151,12 @@ class BybitBrokerAdapter:
             },
         )
 
-    def _require_demo_mutations(self) -> None:
-        if self._config.environment != "demo":
-            raise BybitAdapterError("Bybit mutation endpoints are disabled unless broker.environment=demo")
+    def _require_mutations_allowed(self) -> None:
+        if self._config.environment == "demo":
+            return
+        if self._config.environment == "live" and self._live_mutations_enabled:
+            return
+        raise BybitAdapterError("Bybit live mutation is blocked until live startup/canary controls pass")
 
     def _fetch(self, endpoint: str, **params: object) -> dict[str, Any]:
         merged = {"category": self._config.category, **params}
@@ -186,5 +196,15 @@ class BybitBrokerAdapter:
                 "environment": self._config.environment,
                 "public_ws": public_health.status.value,
                 "private_ws": private_health.status.value,
+                "last_private_message_ts": (
+                    None if self._ws_private.last_message_ts() is None else self._ws_private.last_message_ts().isoformat()
+                ),
+                "last_private_auth_ts": (
+                    None
+                    if self._ws_private.last_auth_success_ts() is None
+                    else self._ws_private.last_auth_success_ts().isoformat()
+                ),
+                "rate_limit_status": self._rest.latest_rate_limit_status(),
+                "live_mutations_enabled": self._live_mutations_enabled,
             },
         )

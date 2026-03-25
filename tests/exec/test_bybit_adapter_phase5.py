@@ -99,3 +99,13 @@ def test_live_environment_mutations_blocked() -> None:
     adapter = _make_adapter(environment="live")
     with pytest.raises(BybitAdapterError):
         adapter.submit_order(BrokerOrderRequest(client_order_id="x", symbol="BTCUSDT", side="buy", qty=1.0, order_type="market", limit_price=None))
+
+
+def test_live_environment_mutations_allowed_only_after_enable() -> None:
+    adapter = _make_adapter(environment="live")
+    adapter.set_live_mutations_enabled(True)
+    adapter.start()
+    order_id = adapter.submit_order(
+        BrokerOrderRequest(client_order_id="x", symbol="BTCUSDT", side="buy", qty=1.0, order_type="market", limit_price=None)
+    )
+    assert order_id == "by-123"

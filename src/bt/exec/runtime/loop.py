@@ -10,6 +10,8 @@ from bt.exec.logging.heartbeats import heartbeat_record
 from bt.exec.logging.schemas import DecisionArtifactRecord
 from bt.exec.reconcile import ReconciliationResult
 from bt.exec.services.execution_router import ExecutionRouter, build_submitted_order_artifact
+from bt.exec.services.kill_switch import KillSwitch
+from bt.exec.services.live_controls import CanaryGuard
 from bt.exec.services.portfolio_runner import PortfolioRunner
 from bt.exec.services.risk_runner import RiskRunner
 from bt.exec.services.strategy_runner import StrategyRunner, build_positions_context
@@ -50,6 +52,8 @@ class RuntimeLoop:
     reconciliation: ReconciliationConfig
     reconcile_fn: ReconcileFn | None = None
     on_bar_complete: Callable[[pd.Timestamp, RuntimeLoopState], None] | None = None
+    kill_switch: KillSwitch | None = None
+    canary_guard: CanaryGuard | None = None
 
     def run(self) -> RuntimeLoopState:
         last_reconcile_ts: pd.Timestamp | None = None
@@ -75,12 +79,15 @@ class RuntimeLoop:
                     result = self.reconcile_fn(ts)
                     if result is not None:
                         self.artifacts.write_reconciliation(result)
+                        action = ""
                         if isinstance(result, dict):
                             action = str(((result.get("decision") or {}) if isinstance(result.get("decision"), dict) else {}).get("action", ""))
-                            if action == "freeze":
-                                self.state.frozen = True
-                        elif result.decision.action.value == "freeze":
+                        else:
+                            action = result.decision.action.value
+                        if action == "freeze":
                             self.state.frozen = True
+                            if self.kill_switch is not None:
+                                self.kill_switch.freeze(reason="reconciliation_freeze", ts=ts)
                     last_reconcile_ts = ts
 
             for fill_artifact in self.execution_router.process_broker_events():
@@ -94,7 +101,8 @@ class RuntimeLoop:
             signals = self.strategy_runner.run(ts=ts, bars_by_symbol=bars_by_symbol, tradeable=tradeable, ctx=ctx)
 
             for signal in signals:
-                if self.state.frozen:
+                frozen = self.state.frozen or (self.kill_switch.state().freeze_new_orders if self.kill_switch is not None else False)
+                if frozen:
                     break
                 bar = bars_by_symbol.get(signal.symbol)
                 if bar is None:
@@ -116,8 +124,33 @@ class RuntimeLoop:
                 )
                 if not decision.approved or decision.order_intent is None or self.mode == "shadow":
                     continue
+
+                if self.canary_guard is not None:
+                    canary_error = self.canary_guard.validate_intent(
+                        intent=decision.order_intent,
+                        open_orders=self.execution_router.current_open_orders(),
+                        positions=list(self.portfolio_runner.portfolio.position_book.all_positions().values()),
+                        current_price=float(getattr(bar, "close", 0.0) or 0.0),
+                    )
+                    if canary_error is not None:
+                        if self.kill_switch is not None:
+                            self.kill_switch.freeze(reason=f"canary_guard:{canary_error}", ts=ts)
+                        self.state.frozen = True
+                        break
+
                 self.state.client_order_seq += 1
-                submit_result = self.execution_router.submit_order(order_seq=self.state.client_order_seq, intent=decision.order_intent, ts=ts)
+                try:
+                    submit_result = self.execution_router.submit_order(order_seq=self.state.client_order_seq, intent=decision.order_intent, ts=ts)
+                    if self.canary_guard is not None:
+                        self.canary_guard.record_submission()
+                    if self.kill_switch is not None:
+                        self.kill_switch.clear_transport_errors()
+                except Exception:
+                    if self.kill_switch is not None:
+                        self.kill_switch.record_transport_error(ts=ts, max_consecutive_transport_errors=1)
+                    self.state.frozen = True
+                    raise
+
                 self.artifacts.write_order(
                     build_submitted_order_artifact(
                         ts=ts,

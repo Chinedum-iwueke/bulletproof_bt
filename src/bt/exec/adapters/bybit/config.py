@@ -61,6 +61,36 @@ class BybitBrokerConfig:
     ws: BybitWSConfig
 
 
+def _validate_endpoints(*, environment: str, rest_base_url: str, public_ws_url: str, private_ws_url: str) -> None:
+    if environment == "demo":
+        if "api.bybit.com" in rest_base_url:
+            raise BybitConfigError("Demo environment cannot use live REST endpoint")
+        if "stream.bybit.com" in public_ws_url or "stream.bybit.com" in private_ws_url:
+            raise BybitConfigError("Demo environment cannot use live websocket endpoints")
+    if environment == "live":
+        if "api-demo.bybit.com" in rest_base_url:
+            raise BybitConfigError("Live environment cannot use demo REST endpoint")
+        if "stream-demo.bybit.com" in public_ws_url or "stream-demo.bybit.com" in private_ws_url:
+            raise BybitConfigError("Live environment cannot use demo websocket endpoints")
+
+
+def _resolve_auth_config(*, broker: dict[str, Any], environment: str) -> BybitAuthConfig:
+    auth_raw = broker.get("auth")
+    if not isinstance(auth_raw, dict):
+        raise BybitConfigError("broker.auth block is required")
+    key_env = str(auth_raw.get("api_key_env", "")).strip()
+    secret_env = str(auth_raw.get("api_secret_env", "")).strip()
+    if not key_env:
+        key_env = "BYBIT_API_KEY" if environment == "live" else "BYBIT_DEMO_API_KEY"
+    if not secret_env:
+        secret_env = "BYBIT_API_SECRET" if environment == "live" else "BYBIT_DEMO_API_SECRET"
+    if environment == "live" and "DEMO" in key_env.upper():
+        raise BybitConfigError("Live environment cannot use demo auth env vars")
+    if environment == "live" and "DEMO" in secret_env.upper():
+        raise BybitConfigError("Live environment cannot use demo auth env vars")
+    return BybitAuthConfig(api_key_env=key_env, api_secret_env=secret_env)
+
+
 def resolve_bybit_config(config: dict[str, Any]) -> BybitBrokerConfig:
     broker = config.get("broker")
     if not isinstance(broker, dict):
@@ -78,19 +108,14 @@ def resolve_bybit_config(config: dict[str, Any]) -> BybitBrokerConfig:
     rest_base_url = str(endpoints_raw.get("rest_base_url", defaults["rest_base_url"]))
     public_ws_url = str(endpoints_raw.get("public_ws_url", defaults["public_ws_url"]))
     private_ws_url = str(endpoints_raw.get("private_ws_url", defaults["private_ws_url"]))
-
-    if environment == "demo" and "api.bybit.com" in rest_base_url:
-        raise BybitConfigError("Demo environment cannot use live REST endpoint")
-    if environment == "live" and "api-demo.bybit.com" in rest_base_url:
-        raise BybitConfigError("Live environment cannot use demo REST endpoint")
-
-    auth_raw = broker.get("auth")
-    if not isinstance(auth_raw, dict):
-        raise BybitConfigError("broker.auth block is required")
-    auth = BybitAuthConfig(
-        api_key_env=str(auth_raw.get("api_key_env", "BYBIT_API_KEY")),
-        api_secret_env=str(auth_raw.get("api_secret_env", "BYBIT_API_SECRET")),
+    _validate_endpoints(
+        environment=environment,
+        rest_base_url=rest_base_url,
+        public_ws_url=public_ws_url,
+        private_ws_url=private_ws_url,
     )
+
+    auth = _resolve_auth_config(broker=broker, environment=environment)
 
     ws_raw = broker.get("ws") if isinstance(broker.get("ws"), dict) else {}
     ws = BybitWSConfig(
