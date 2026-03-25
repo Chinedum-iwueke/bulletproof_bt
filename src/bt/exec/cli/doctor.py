@@ -21,6 +21,7 @@ class DoctorSummary:
     ok: bool
     venue: str
     environment: str
+    readiness: str
     checks: dict[str, bool]
     health: dict[str, Any]
     counts: dict[str, int]
@@ -78,15 +79,26 @@ def run_doctor_diagnosis(*, config: dict[str, Any], check_ws: bool, live_readine
         }
         if live_readiness:
             checks["live_environment"] = bybit_cfg.environment == "live"
+            checks["startup_gate_prereqs"] = bool(config.get("exec", {}).get("require_private_stream_ready", True)) if isinstance(config.get("exec"), dict) else True
 
         health = {
             "adapter": asdict(adapter.get_health()),
         }
         health["adapter"]["ts"] = str(pd.Timestamp(health["adapter"]["ts"]).isoformat())
+        readiness = "healthy_demo"
+        if live_readiness and checks.get("live_environment") and checks.get("private_stream_ready") and checks.get("canary_config_valid"):
+            readiness = "healthy_live_readiness"
+        elif not checks.get("rest_auth", True):
+            readiness = "blocked_config_auth"
+        elif not checks.get("private_stream_ready", True):
+            readiness = "blocked_stream_readiness"
+        elif live_readiness and not checks.get("canary_config_valid", False):
+            readiness = "blocked_canary_or_startup_prereqs"
         return DoctorSummary(
             ok=all(checks.values()),
             venue="bybit",
             environment=bybit_cfg.environment,
+            readiness=readiness,
             checks=checks,
             health=health,
             counts={
@@ -109,6 +121,7 @@ def main() -> None:
     parser.add_argument("--override", action="append", default=[])
     parser.add_argument("--check-ws", action="store_true")
     parser.add_argument("--live-readiness", action="store_true")
+    parser.add_argument("--out", default=None, help="Optional output path for readiness summary JSON.")
     args = parser.parse_args()
 
     config = _load_exec_config(args.config, args.override or None)
@@ -123,7 +136,12 @@ def main() -> None:
         print(json.dumps(failure, indent=2, sort_keys=True))
         raise SystemExit(2) from exc
 
-    print(json.dumps(asdict(summary), indent=2, sort_keys=True))
+    payload = json.dumps(asdict(summary), indent=2, sort_keys=True)
+    if args.out:
+        from pathlib import Path
+
+        Path(args.out).write_text(payload + "\n", encoding="utf-8")
+    print(payload)
 
 
 if __name__ == "__main__":

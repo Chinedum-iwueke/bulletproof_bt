@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import asdict, is_dataclass
+import json
 from typing import Any
 
 from bt.logging.formatting import write_json_deterministic
@@ -30,6 +31,7 @@ class ExecArtifactWriters:
         self.fills = JsonlWriter(run_dir / "fills.jsonl")
         self.heartbeat = JsonlWriter(run_dir / "heartbeat.jsonl")
         self.reconciliation = JsonlWriter(run_dir / "reconciliation.jsonl")
+        self.incidents = JsonlWriter(run_dir / "incidents.jsonl")
         self.write_manifest(config=config, data_path=data_path)
 
     @staticmethod
@@ -50,7 +52,17 @@ class ExecArtifactWriters:
         write_json_deterministic(self.run_dir / "run_manifest.json", payload)
 
     def write_status(self, *, state: str, error: str | None = None, extra: dict[str, Any] | None = None) -> None:
-        payload: dict[str, Any] = {"schema_version": 1, "run_id": self.run_id, "mode": self.mode, "state": state, "updated_at_utc": self._utc_now()}
+        payload: dict[str, Any] = {
+            "schema_version": 2,
+            "run_id": self.run_id,
+            "mode": self.mode,
+            "state": state,
+            "updated_at_utc": self._utc_now(),
+        }
+        if self._status_path.exists():
+            existing = json.loads(self._status_path.read_text(encoding="utf-8"))
+            if isinstance(existing, dict):
+                payload = {**existing, **payload}
         if error:
             payload["error"] = error
         if self.resumed_from_run_id:
@@ -65,6 +77,7 @@ class ExecArtifactWriters:
         self.fills.close()
         self.heartbeat.close()
         self.reconciliation.close()
+        self.incidents.close()
 
     @staticmethod
     def _normalize_record(record: object) -> dict[str, Any]:
@@ -88,3 +101,6 @@ class ExecArtifactWriters:
 
     def write_reconciliation(self, record: object) -> None:
         self.reconciliation.write(self._normalize_record(record))
+
+    def write_incident(self, record: object) -> None:
+        self.incidents.write(self._normalize_record(record))

@@ -54,3 +54,27 @@ reconcile:
   material_fill_qty_tolerance: 0.0
   material_position_qty_tolerance: 0.0
   material_balance_tolerance: 0.0
+
+alerts:
+  enabled: true
+  channels:
+    stdout: true
+    incident_file: true
+    telegram:
+      enabled: false
+      bot_token_env: TELEGRAM_BOT_TOKEN
+      chat_id_env: TELEGRAM_CHAT_ID
+    slack:
+      enabled: false
+      webhook_url_env: SLACK_WEBHOOK_URL
+
+exports:
+  include_state_metadata: true
+  include_incident_summary: true
+  include_session_summary: true
+  bundle_format: directory
+
+ops:
+  persist_incidents: true
+  emit_alerts_on_freeze: true
+  emit_alerts_on_startup_block: true

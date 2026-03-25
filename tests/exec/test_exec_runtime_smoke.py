@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from bt.exec.runtime.app import run_exec_session
@@ -46,5 +47,18 @@ def test_exec_shadow_and_paper_smoke_artifacts(tmp_path: Path) -> None:
         assert (run_dir / 'orders.jsonl').exists()
         assert (run_dir / 'fills.jsonl').exists()
         assert (run_dir / 'heartbeat.jsonl').exists()
+        status = json.loads((run_dir / "run_status.json").read_text(encoding="utf-8"))
+        for key in (
+            "trading_enabled",
+            "mutation_enabled",
+            "read_only",
+            "frozen",
+            "startup_gate_result",
+            "private_stream_ready",
+            "public_stream_ready",
+            "canary_enabled",
+            "live_controls_enabled",
+        ):
+            assert key in status
 
     assert (paper_dir / 'fills.jsonl').read_text(encoding='utf-8').strip() != ''

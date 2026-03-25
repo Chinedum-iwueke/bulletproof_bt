@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -28,6 +29,18 @@ from bt.exec.adapters.bybit.client_ws_private import BybitPrivateWSClient
 from bt.exec.adapters.bybit.client_ws_public import BybitPublicWSClient
 from bt.exec.adapters.simulated import SimulatedBrokerAdapter
 from bt.exec.logging.exec_artifacts import ExecArtifactWriters
+from bt.exec.logging.session_summary import build_session_summary, write_session_summary
+from bt.exec.observability.alerts import Alert, AlertEmitter, AlertEventType, AlertSeverity
+from bt.exec.observability.channels import FileAlertChannel, StdoutAlertChannel
+from bt.exec.observability.incidents import (
+    IncidentRecord,
+    IncidentRecorder,
+    IncidentSeverity,
+    IncidentTaxonomy,
+    load_incidents,
+    summarize_incidents,
+    write_incident_summary,
+)
 from bt.exec.reconcile import ReconciliationEngine, ReconciliationInputs, ReconciliationPolicy, ReconciliationScope, reconciliation_record
 from bt.exec.runtime.bar_gate import ClosedBarGate
 from bt.exec.runtime.health import RuntimeHealthMonitor
@@ -230,7 +243,69 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
         state_store.record_session_liveness(session)
 
     artifacts = ExecArtifactWriters(run_dir=run_dir, run_id=rid, mode=mode, config=config, data_path=data_path, resumed_from_run_id=resumed_from_run_id)
-    artifacts.write_status(state="running", extra={"environment": environment})
+    ops_cfg = config.get("ops", {}) if isinstance(config.get("ops"), dict) else {}
+    incident_recorder = IncidentRecorder(run_dir=run_dir, run_id=rid, enabled=bool(ops_cfg.get("persist_incidents", True)))
+    alerts_cfg = config.get("alerts", {}) if isinstance(config.get("alerts"), dict) else {}
+    channels_cfg = alerts_cfg.get("channels", {}) if isinstance(alerts_cfg.get("channels"), dict) else {}
+    alert_channels: list[Any] = []
+    if bool(channels_cfg.get("stdout", True)):
+        alert_channels.append(StdoutAlertChannel())
+    if bool(channels_cfg.get("incident_file", True)):
+        alert_channels.append(FileAlertChannel(run_dir / "alerts.jsonl"))
+    alert_emitter = AlertEmitter(channels=cast(list[Any], alert_channels)) if bool(alerts_cfg.get("enabled", True)) else AlertEmitter(channels=[])
+
+    def _emit_incident(*, incident_type: str, taxonomy: IncidentTaxonomy, severity: IncidentSeverity, message: str, context: dict[str, Any] | None = None) -> None:
+        record = IncidentRecord(
+            ts=pd.Timestamp.now(tz="UTC"),
+            run_id=rid,
+            incident_type=incident_type,
+            taxonomy=taxonomy,
+            severity=severity,
+            message=message,
+            context=context or {},
+        )
+        payload = record.to_jsonable()
+        incident_recorder.record(record)
+        artifacts.write_incident(payload)
+
+    if resumed_from_run_id:
+        _emit_incident(
+            incident_type="recovery_resume_started",
+            taxonomy=IncidentTaxonomy.RECOVERY,
+            severity=IncidentSeverity.INFO,
+            message=f"Resuming from prior run {resumed_from_run_id}",
+        )
+        alert_emitter.emit(
+            Alert(
+                ts=pd.Timestamp.now(tz="UTC"),
+                run_id=rid,
+                event_type=AlertEventType.RECOVERY_RESUME_STARTED,
+                severity=AlertSeverity.INFO,
+                message=f"Resuming from prior run {resumed_from_run_id}",
+            )
+        )
+
+    artifacts.write_status(
+        state="running",
+        extra={
+            "environment": environment,
+            "broker_venue": str(broker_cfg.get("venue", "simulated")),
+            "trading_enabled": False,
+            "trading_enabled_ever": False,
+            "mutation_enabled": False,
+            "mutation_enabled_ever": False,
+            "read_only": mode == "shadow",
+            "frozen": False,
+            "freeze_reason": None,
+            "startup_gate_result": "pending" if is_live_mode else "not_applicable",
+            "startup_gate_reason": None,
+            "private_stream_ready": bool(getattr(adapter, "private_stream_ready", lambda: True)()),
+            "public_stream_ready": True,
+            "reconciliation_ok": True,
+            "canary_enabled": False,
+            "live_controls_enabled": bool((config.get("live_controls") or {}).get("enabled", False)),
+        },
+    )
 
     checkpoint_cadence = CheckpointCadence(interval_seconds=checkpoint_interval_seconds)
 
@@ -335,10 +410,26 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
                     extra={
                         "environment": environment,
                         "startup_gate_result": "blocked",
-                        "startup_blocked_reason": startup_reason,
+                        "startup_gate_reason": startup_reason,
                         "frozen": True,
                         "read_only": True,
                     },
+                )
+                _emit_incident(
+                    incident_type="startup_blocked",
+                    taxonomy=IncidentTaxonomy.STARTUP,
+                    severity=IncidentSeverity.ERROR,
+                    message=f"Startup blocked: {startup_reason}",
+                    context={"startup_gate_reason": startup_reason},
+                )
+                alert_emitter.emit(
+                    Alert(
+                        ts=pd.Timestamp.now(tz="UTC"),
+                        run_id=rid,
+                        event_type=AlertEventType.STARTUP_BLOCKED,
+                        severity=AlertSeverity.ERROR,
+                        message=f"Startup blocked: {startup_reason}",
+                    )
                 )
                 if not read_only_startup:
                     raise RuntimeError(f"live startup blocked: {startup_reason}")
@@ -349,11 +440,26 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
                 extra={
                     "environment": environment,
                     "startup_gate_result": "passed" if startup_ok else "blocked",
+                    "startup_gate_reason": startup_reason,
                     "frozen": False if startup_ok else True,
                     "read_only": read_only_startup or (not startup_ok),
+                    "trading_enabled": startup_ok and not read_only_startup,
+                    "trading_enabled_ever": startup_ok and not read_only_startup,
+                    "mutation_enabled": startup_ok and not read_only_startup,
+                    "mutation_enabled_ever": startup_ok and not read_only_startup,
                     "canary_enabled": canary_guard.policy.enabled if canary_guard is not None else False,
                 },
             )
+            if startup_ok:
+                alert_emitter.emit(
+                    Alert(
+                        ts=pd.Timestamp.now(tz="UTC"),
+                        run_id=rid,
+                        event_type=AlertEventType.STARTUP_SUCCEEDED,
+                        severity=AlertSeverity.INFO,
+                        message="Startup gate passed",
+                    )
+                )
 
         final_state = loop.run()
         artifacts.write_status(
@@ -362,8 +468,25 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
                 "environment": environment,
                 "frozen": final_state.frozen,
                 "freeze_reason": None if kill_switch is None else kill_switch.state().reason,
+                "trading_enabled": not final_state.frozen,
             },
         )
+        alert_emitter.emit(
+            Alert(
+                ts=pd.Timestamp.now(tz="UTC"),
+                run_id=rid,
+                event_type=AlertEventType.SHUTDOWN_CLEAN,
+                severity=AlertSeverity.INFO,
+                message="Runtime stopped cleanly",
+            )
+        )
+        if final_state.frozen:
+            _emit_incident(
+                incident_type="runtime_frozen",
+                taxonomy=IncidentTaxonomy.FREEZE,
+                severity=IncidentSeverity.CRITICAL,
+                message=f"Runtime frozen: {kill_switch.state().reason if kill_switch is not None else 'unknown'}",
+            )
         if state_store is not None:
             if save_checkpoints:
                 checkpoint = build_runtime_checkpoint(
@@ -380,12 +503,34 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
             state_store.mark_session_final_status(run_id=rid, status="stopped", ts=pd.Timestamp.now(tz="UTC"))
     except Exception as exc:
         artifacts.write_status(state="failed", error=str(exc), extra={"environment": environment})
+        _emit_incident(
+            incident_type="startup_failed",
+            taxonomy=IncidentTaxonomy.STARTUP,
+            severity=IncidentSeverity.CRITICAL,
+            message=str(exc),
+        )
+        alert_emitter.emit(
+            Alert(
+                ts=pd.Timestamp.now(tz="UTC"),
+                run_id=rid,
+                event_type=AlertEventType.SHUTDOWN_UNCLEAN,
+                severity=AlertSeverity.CRITICAL,
+                message=str(exc),
+            )
+        )
         if state_store is not None:
             state_store.mark_session_final_status(run_id=rid, status="failed", ts=pd.Timestamp.now(tz="UTC"), error=str(exc))
         raise
     finally:
         adapter.stop()
         artifacts.close()
+        incident_recorder.close()
+        write_session_summary(run_dir, build_session_summary(run_dir))
+        final_status = json.loads((run_dir / "run_status.json").read_text(encoding="utf-8")) if (run_dir / "run_status.json").exists() else {}
+        write_incident_summary(
+            run_dir=run_dir,
+            summary=summarize_incidents(run_id=rid, incidents=load_incidents(run_dir / "incidents.jsonl"), final_status=final_status),
+        )
         if state_store is not None:
             state_store.close()
     return str(run_dir)

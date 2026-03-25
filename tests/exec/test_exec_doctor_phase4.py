@@ -63,6 +63,7 @@ def test_doctor_success(monkeypatch: pytest.MonkeyPatch) -> None:
     summary = doctor.run_doctor_diagnosis(config=_cfg(), check_ws=False)
     assert summary.ok
     assert summary.checks["rest_auth"]
+    assert summary.readiness == "healthy_demo"
 
 
 def test_doctor_failure_path(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -84,3 +85,4 @@ def test_doctor_live_readiness_marks_wrong_environment(monkeypatch: pytest.Monke
     summary = doctor.run_doctor_diagnosis(config=_cfg(), check_ws=False, live_readiness=True)
     assert not summary.ok
     assert summary.checks["live_environment"] is False
+    assert summary.readiness == "healthy_demo"
