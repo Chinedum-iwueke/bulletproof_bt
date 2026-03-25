@@ -25,7 +25,27 @@ broker:
 
 live_controls:
   enabled: true
-  canary_mode: false
-  read_only_startup: true
+  canary_mode: true
+  read_only_startup: false
   freeze_on_startup_mismatch: true
   allow_reduce_only_when_frozen: true
+
+canary:
+  max_symbols: 1
+  allowed_symbols: [BTCUSDT]
+  max_total_open_positions: 1
+  max_open_orders_total: 2
+  max_notional_usd: 100
+  max_order_qty: 0.001
+  max_orders_per_hour: 10
+
+health:
+  max_consecutive_transport_errors: 5
+  max_private_stream_stale_seconds: 15
+  max_public_stream_stale_seconds: 15
+  max_rate_limit_breaches: 2
+
+reconcile:
+  enabled: true
+  interval_seconds: 30
+  policy: freeze_on_material

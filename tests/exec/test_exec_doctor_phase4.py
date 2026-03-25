@@ -57,6 +57,8 @@ def _cfg() -> dict[str, object]:
 def test_doctor_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BYBIT_API_KEY", "k")
     monkeypatch.setenv("BYBIT_API_SECRET", "s")
+    monkeypatch.setenv("BYBIT_DEMO_API_KEY", "k")
+    monkeypatch.setenv("BYBIT_DEMO_API_SECRET", "s")
     monkeypatch.setattr(doctor, "BybitBrokerAdapter", lambda **_kwargs: _FakeAdapter())
     summary = doctor.run_doctor_diagnosis(config=_cfg(), check_ws=False)
     assert summary.ok
@@ -66,6 +68,19 @@ def test_doctor_success(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_doctor_failure_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BYBIT_API_KEY", "k")
     monkeypatch.setenv("BYBIT_API_SECRET", "s")
+    monkeypatch.setenv("BYBIT_DEMO_API_KEY", "k")
+    monkeypatch.setenv("BYBIT_DEMO_API_SECRET", "s")
     monkeypatch.setattr(doctor, "BybitBrokerAdapter", lambda **_kwargs: _FakeAdapter(fail=True))
     with pytest.raises(BybitAdapterError):
         doctor.run_doctor_diagnosis(config=_cfg(), check_ws=False)
+
+
+def test_doctor_live_readiness_marks_wrong_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BYBIT_API_KEY", "k")
+    monkeypatch.setenv("BYBIT_API_SECRET", "s")
+    monkeypatch.setenv("BYBIT_DEMO_API_KEY", "k")
+    monkeypatch.setenv("BYBIT_DEMO_API_SECRET", "s")
+    monkeypatch.setattr(doctor, "BybitBrokerAdapter", lambda **_kwargs: _FakeAdapter())
+    summary = doctor.run_doctor_diagnosis(config=_cfg(), check_ws=False, live_readiness=True)
+    assert not summary.ok
+    assert summary.checks["live_environment"] is False

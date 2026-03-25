@@ -7,13 +7,15 @@ from bt.exec.adapters.bybit.errors import BybitConfigError
 
 
 def _base(environment: str) -> dict[str, object]:
+    key_env = "BYBIT_API_KEY" if environment == "live" else "BYBIT_DEMO_API_KEY"
+    secret_env = "BYBIT_API_SECRET" if environment == "live" else "BYBIT_DEMO_API_SECRET"
     return {
         "broker": {
             "venue": "bybit",
             "environment": environment,
             "category": "linear",
             "symbols": ["BTCUSDT"],
-            "auth": {"api_key_env": "K", "api_secret_env": "S"},
+            "auth": {"api_key_env": key_env, "api_secret_env": secret_env},
         }
     }
 

@@ -36,6 +36,7 @@ class BybitRESTClient:
         timeout_ms: int,
         max_retries: int,
         retry_backoff_ms: int,
+        environment: str = "demo",
         time_provider: Callable[[], int] | None = None,
         sleeper: Callable[[float], None] | None = None,
         opener: Callable[[urllib.request.Request, float], Any] | None = None,
@@ -45,11 +46,15 @@ class BybitRESTClient:
         self._api_secret = api_secret
         self._recv_window_ms = recv_window_ms
         self._timeout_seconds = timeout_ms / 1000.0
-        self._max_retries = max_retries
+        self._max_retries = max_retries if environment != "live" else min(max_retries, 2)
         self._retry_backoff_ms = retry_backoff_ms
         self._time_provider = time_provider or (lambda: int(time.time() * 1000))
         self._sleeper = sleeper or time.sleep
         self._opener = opener or (lambda req, timeout: urllib.request.urlopen(req, timeout=timeout))
+        self._last_rate_limit_status: str | None = None
+
+    def latest_rate_limit_status(self) -> str | None:
+        return self._last_rate_limit_status
 
     def _signature_payload(self, *, timestamp_ms: int, query_or_body: str) -> str:
         return f"{timestamp_ms}{self._api_key}{self._recv_window_ms}{query_or_body}"
@@ -105,15 +110,19 @@ class BybitRESTClient:
                 if ret_code != 0:
                     if ret_code in {10003, 10004, 10005, 10007}:
                         raise BybitAuthError(f"Bybit auth failed retCode={ret_code} retMsg={ret_msg}")
+                    if ret_code in {10006, 10429}:
+                        raise BybitTransportError(f"Bybit rate limit retCode={ret_code} retMsg={ret_msg}")
                     raise BybitAPIError(ret_code=ret_code, ret_msg=ret_msg, endpoint=endpoint)
                 result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+                rate_limit_status = response.headers.get("X-Bapi-Limit-Status")
+                self._last_rate_limit_status = rate_limit_status
                 return BybitRESTResponse(
                     endpoint=endpoint,
                     ret_code=ret_code,
                     ret_msg=ret_msg,
                     result=result,
                     time_utc=pd.Timestamp.now(tz="UTC"),
-                    rate_limit_status=response.headers.get("X-Bapi-Limit-Status"),
+                    rate_limit_status=rate_limit_status,
                 )
             except BybitAuthError:
                 raise

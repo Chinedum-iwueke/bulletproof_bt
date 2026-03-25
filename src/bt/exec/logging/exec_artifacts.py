@@ -49,12 +49,14 @@ class ExecArtifactWriters:
             payload["resumed_from_run_id"] = self.resumed_from_run_id
         write_json_deterministic(self.run_dir / "run_manifest.json", payload)
 
-    def write_status(self, *, state: str, error: str | None = None) -> None:
+    def write_status(self, *, state: str, error: str | None = None, extra: dict[str, Any] | None = None) -> None:
         payload: dict[str, Any] = {"schema_version": 1, "run_id": self.run_id, "mode": self.mode, "state": state, "updated_at_utc": self._utc_now()}
         if error:
             payload["error"] = error
         if self.resumed_from_run_id:
             payload["resumed_from_run_id"] = self.resumed_from_run_id
+        if extra:
+            payload.update(extra)
         write_json_deterministic(self._status_path, payload)
 
     def close(self) -> None:
