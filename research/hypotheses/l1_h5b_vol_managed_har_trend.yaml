@@ -1,0 +1,123 @@
+hypothesis_id: "L1-H5B"
+title: "Volatility-Managed Exposure Overlay on HAR-Gated Trend Continuation"
+description: "L1-H3A baseline (HAR RV_hat percentile gate + fixed close*sqrt(RV_hat) stop) with deterministic causal inverse-volatility quantity scaling on completed 15m bars."
+research_layer: "L1"
+hypothesis_family: "trend_continuation"
+version: "1.0.0"
+author: "bulletproof_bt"
+created_at: "2026-03-27T00:00:00Z"
+
+required_indicators:
+  - ema
+
+indicator_defaults:
+  ema_fast_period: 20
+  ema_slow_period: 50
+  return_formula: "ln(close_t/close_t-1)"
+  vol_estimator: "sqrt(mean(r^2))"
+  sigma_reference_model: "rolling_median"
+  sigma_reference_window_hours: 72
+
+parameter_grid:
+  fit_window_days: [180, 365]
+  gate_quantile: [0.3, 0.7]
+  k: [1.5, 2.0]
+  T_hold: [24, 48]
+  vol_window_hours: [24, 72]
+  s_max: [1.0, 1.5]
+  s_min: [0.25, 0.5]
+
+gates:
+  - field: "rvhat_pct_t"
+    op: ">="
+    param: "gate_quantile"
+  - field: "trend_dir_t"
+    op: "!="
+    value: 0
+
+entry:
+  strategy: "l1_h5b_vol_managed_har_trend"
+  signal_timeframe: "15m"
+  timeframe: "15m"
+  base_execution_timeframe: "1m"
+  order_timing: "bar_close_submit_next_bar_execution"
+  disallow_flip: true
+  no_pyramiding: true
+
+exit:
+  stop_kind: "close_sqrt_rvhat_multiple"
+  stop_model: "fixed_close_sqrt_rvhat_multiple"
+  stop_param: "k"
+  stop_update_policy: "frozen_at_entry"
+  time_stop_param: "T_hold"
+  hold_time_unit: "signal_bars"
+  exit_monitoring_timeframe: "1m"
+  atr_source_timeframe: "none"
+  take_profit:
+    enabled: false
+
+execution_semantics:
+  signal_timeframe: "15m"
+  base_execution_timeframe: "1m"
+  base_data_frequency_expected: "1m"
+  exit_monitoring_timeframe: "1m"
+  strategy_family: "trend_continuation"
+  baseline_reference: "L1-H3A"
+  gate_model: "har_rv_percentile"
+  stop_model: "fixed_close_sqrt_rvhat_multiple"
+  stop_update_policy: "frozen_at_entry"
+  tp_update_policy: "none"
+  hold_time_unit: "signal_bars"
+  atr_source_timeframe: "none"
+  coefficient_refit_cadence: "daily_on_completed_signal_day"
+  fit_method: "deterministic_ols"
+  fit_window_unit: "calendar_days"
+  overlay_type: "volatility_managed_exposure"
+  vol_estimator: "sqrt_mean_squared_returns"
+  sigma_reference_model: "rolling_median"
+  sizing_model: "qty_R_times_clipped_inverse_vol"
+  no_pyramiding: true
+
+sizing:
+  mode: "constant_r"
+  formula: "qty_R=(equity*r_per_trade)/(k*close_t*sqrt(RV_hat_t)); sigma_t=sqrt(mean(r^2,last_W)); sigma_star=rolling_median(sigma_t,past_only); s_t=clip(sigma_star/sigma_t,s_min,s_max); qty_final=qty_R*s_t"
+
+risk_controls:
+  max_positions: 5
+  enforce_max_leverage: true
+  enforce_free_margin_constraints: true
+
+evaluation:
+  required_tiers: ["Tier2", "Tier3"]
+
+logging:
+  schema_version: "1.0"
+  required_fields:
+    - run_id
+    - hypothesis_id
+    - tier
+    - ev_r_gross
+    - ev_r_net
+    - status
+    - sigma_t
+    - sigma_star
+    - s_t
+    - cap_hit_lower
+    - cap_hit_upper
+    - qty_R
+    - qty_final
+    - vol_window_hours
+    - signal_timeframe
+    - exit_monitoring_timeframe
+    - RV_hat_t
+    - rvhat_pct_t
+    - fit_ts_used
+    - trend_dir_t
+    - stop_distance
+
+notes:
+  falsification_criteria:
+    - "If tail reduction (p99(-R), drawdown, drawdown duration) is not achieved without material EV destruction versus L1-H3A, reject L1-H5B baseline."
+  failure_modes:
+    - "Volatility scaling can under-size during trend accelerations and reduce upside capture."
+    - "Clip-bound saturation can indicate unstable sigma reference calibration."
