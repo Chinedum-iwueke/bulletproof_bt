@@ -582,23 +582,32 @@ class RiskEngine:
 
         qty_base = float(desired_qty)
         size_factor_t = None
-        cap_multiplier = None
+        size_factor_min = None
+        size_factor_max = None
         if isinstance(signal.metadata, dict) and "size_factor_t" in signal.metadata:
             raw = signal.metadata.get("size_factor_t")
-            raw_cap = signal.metadata.get("cap_multiplier")
+            raw_min = signal.metadata.get("size_factor_min", signal.metadata.get("cap_multiplier"))
+            raw_max = signal.metadata.get("size_factor_max", 1.0)
             try:
                 size_factor_t = float(raw)
             except (TypeError, ValueError):
                 size_factor_t = None
             try:
-                cap_multiplier = float(raw_cap) if raw_cap is not None else 0.0
+                size_factor_min = float(raw_min) if raw_min is not None else 0.0
             except (TypeError, ValueError):
-                cap_multiplier = 0.0
+                size_factor_min = 0.0
+            try:
+                size_factor_max = float(raw_max) if raw_max is not None else 1.0
+            except (TypeError, ValueError):
+                size_factor_max = 1.0
+            if size_factor_min > size_factor_max:
+                size_factor_min, size_factor_max = size_factor_max, size_factor_min
             if size_factor_t is not None:
-                size_factor_t = float(min(1.0, max(cap_multiplier, size_factor_t)))
+                size_factor_t = float(min(size_factor_max, max(size_factor_min, size_factor_t)))
                 desired_qty = float(desired_qty) * size_factor_t
                 risk_meta["size_factor_t"] = size_factor_t
-                risk_meta["cap_multiplier"] = cap_multiplier
+                risk_meta["size_factor_min"] = size_factor_min
+                risk_meta["size_factor_max"] = size_factor_max
                 risk_meta["qty_base"] = qty_base
                 risk_meta["qty_adj"] = float(desired_qty)
 
@@ -750,7 +759,8 @@ class RiskEngine:
                 "used_legacy_stop_proxy": bool(risk_meta.get("used_legacy_stop_proxy", False)),
                 "stop_resolution_mode": stop_resolution_mode,
                 "size_factor_t": risk_meta.get("size_factor_t"),
-                "cap_multiplier": risk_meta.get("cap_multiplier"),
+                "size_factor_min": risk_meta.get("size_factor_min"),
+                "size_factor_max": risk_meta.get("size_factor_max"),
                 "qty_base": risk_meta.get("qty_base"),
                 "qty_adj": risk_meta.get("qty_adj"),
                 "current_qty": cur_qty,

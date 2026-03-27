@@ -1,0 +1,108 @@
+hypothesis_id: "L1-H5A"
+title: "Volatility-Managed Exposure Overlay on L1-H1 Trend Continuation"
+description: "L1-H1 baseline trend continuation with deterministic causal inverse-volatility position-size scaling on the 15m signal clock."
+research_layer: "L1"
+hypothesis_family: "trend_continuation"
+version: "1.0.0"
+author: "bulletproof_bt"
+created_at: "2026-03-27T00:00:00Z"
+
+required_indicators:
+  - ema
+  - atr
+
+indicator_defaults:
+  ema_fast_period: 20
+  ema_slow_period: 50
+  atr_period: 14
+  return_formula: "ln(close_t/close_t-1)"
+  vol_estimator: "sqrt(mean(r^2))"
+  sigma_reference_model: "rolling_median"
+
+parameter_grid:
+  vol_window_hours: [24, 72]
+  s_max: [1.0, 1.5]
+  s_min: [0.25, 0.5]
+  k_atr: [2.0, 2.5]
+  T_hold: [24, 48]
+
+entry:
+  strategy: "l1_h5a_vol_managed_trend"
+  signal_timeframe: "15m"
+  timeframe: "15m"
+  base_execution_timeframe: "1m"
+  order_timing: "bar_close_submit_next_bar_execution"
+  disallow_flip: true
+
+exit:
+  stop_kind: "atr_multiple"
+  stop_model: "fixed_atr_multiple"
+  stop_atr_param: "k_atr"
+  stop_update_policy: "frozen_at_entry"
+  atr_source_timeframe: "signal_timeframe"
+  time_stop_param: "T_hold"
+  hold_time_unit: "signal_bars"
+  exit_monitoring_timeframe: "1m"
+  take_profit:
+    enabled: false
+
+execution_semantics:
+  signal_timeframe: "15m"
+  base_execution_timeframe: "1m"
+  base_data_frequency_expected: "1m"
+  exit_monitoring_timeframe: "1m"
+  strategy_family: "trend_continuation"
+  baseline_reference: "L1-H1"
+  overlay_type: "volatility_managed_exposure"
+  vol_estimator: "sqrt_mean_squared_returns"
+  sigma_reference_model: "rolling_median"
+  sizing_model: "qty_R_times_clipped_inverse_vol"
+  stop_model: "fixed_atr_multiple"
+  stop_update_policy: "frozen_at_entry"
+  tp_update_policy: "none"
+  hold_time_unit: "signal_bars"
+  atr_source_timeframe: "signal_timeframe"
+  no_pyramiding: true
+
+sizing:
+  mode: "constant_r"
+  formula: "qty_R=(equity*r_per_trade)/(k_atr*atr_entry_signal); sigma_t=sqrt(mean(r^2,last_W)); sigma_star=rolling_median(sigma_t, past_only); s_t=clip(sigma_star/sigma_t,s_min,s_max); qty_final=qty_R*s_t"
+
+risk_controls:
+  max_positions: 5
+  forbid_adding_to_losers: true
+  enforce_margin_snapshot_non_negative: true
+
+evaluation:
+  required_tiers: ["Tier2", "Tier3"]
+
+logging:
+  schema_version: "1.0"
+  required_fields:
+    - run_id
+    - hypothesis_id
+    - tier
+    - ev_r_gross
+    - ev_r_net
+    - status
+    - sigma_t
+    - sigma_star
+    - size_factor_t
+    - cap_hit_lower
+    - cap_hit_upper
+    - qty_R
+    - qty_final
+    - vol_window_hours
+    - signal_timeframe
+    - exit_monitoring_timeframe
+    - trend_dir_t
+    - atr_entry
+    - stop_distance
+    - stop_price
+
+notes:
+  falsification_criteria:
+    - "If volatility scaling reduces EV_r_net more than it reduces crash-tail losses (p99(-R), drawdown), reject L1-H5A for that component."
+  failure_modes:
+    - "Lagged sigma_t can downsize ahead of trend bursts and reduce upside capture."
+    - "Jump regimes can produce stale sigma_star reference and delayed adaptation."

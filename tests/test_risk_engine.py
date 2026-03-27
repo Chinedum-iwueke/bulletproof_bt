@@ -352,3 +352,34 @@ def test_signal_to_order_intent_includes_canonical_margin_fields_and_non_negativ
     assert order_intent.metadata["mark_price_used_for_margin"] == pytest.approx(105.0)
     assert order_intent.metadata["maintenance_required"] == pytest.approx(order_intent.metadata["margin_required"])
     assert order_intent.metadata["free_margin_post"] >= 0.0
+
+def test_signal_to_order_intent_supports_size_factor_above_one_when_allowed() -> None:
+    engine = RiskEngine(max_positions=5, config=_risk_config())
+    ts = pd.Timestamp("2024-01-01T00:00:00Z")
+    bar = _bar(ts=ts, symbol="BTC", high=110, low=100, close=105)
+    signal = Signal(
+        ts=ts,
+        symbol="BTC",
+        side=Side.BUY,
+        signal_type="unit",
+        confidence=1.0,
+        metadata={"stop_price": 95.0, "size_factor_t": 1.5, "size_factor_min": 0.25, "size_factor_max": 1.5},
+    )
+
+    order_intent, reason = engine.signal_to_order_intent(
+        ts=ts,
+        signal=signal,
+        bar=bar,
+        equity=10_000,
+        free_margin=10_000,
+        open_positions=0,
+        max_leverage=2.0,
+        current_qty=0.0,
+    )
+
+    assert order_intent is not None
+    assert reason == "risk_approved"
+    assert order_intent.qty == pytest.approx(15.0)
+    assert order_intent.metadata["size_factor_t"] == pytest.approx(1.5)
+    assert order_intent.metadata["size_factor_min"] == pytest.approx(0.25)
+    assert order_intent.metadata["size_factor_max"] == pytest.approx(1.5)

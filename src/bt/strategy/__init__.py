@@ -47,6 +47,7 @@ from bt.strategy.l1_h4a_liquidity_gate_mean_reversion import L1H4ALiquidityGateM
 from bt.strategy.l1_h4b_liquidity_gate_size_adjusted_mean_reversion import L1H4BLiquidityGateSizeAdjustedMeanReversionStrategy  # noqa: E402
 from bt.strategy.l1_h1b_salvage import L1H1BSalvageStrategy  # noqa: E402
 from bt.strategy.l1_h2b_confirmed_fade import L1H2BConfirmedFadeStrategy  # noqa: E402
+from bt.strategy.l1_h5a_vol_managed_trend import L1H5AVolManagedTrendStrategy  # noqa: E402
 
 __all__ = [
     "STRATEGY_REGISTRY",
@@ -64,4 +65,5 @@ __all__ = [
     "L1H4BLiquidityGateSizeAdjustedMeanReversionStrategy",
     "L1H1BSalvageStrategy",
     "L1H2BConfirmedFadeStrategy",
+    "L1H5AVolManagedTrendStrategy",
 ]
