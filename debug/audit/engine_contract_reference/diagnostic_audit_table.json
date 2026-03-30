@@ -1,0 +1,388 @@
+[
+  {
+    "diagnostic": "overview",
+    "figure_count": 1,
+    "figure_types": [
+      "line_series"
+    ],
+    "figures": [
+      {
+        "id": "equity_curve",
+        "payload_keys": [
+          "x",
+          "series"
+        ],
+        "payload_materially_populated": true,
+        "payload_shape": {
+          "series": [
+            {
+              "name": "str",
+              "values": [
+                "float"
+              ]
+            }
+          ],
+          "x": [
+            "str"
+          ]
+        },
+        "type": "line_series"
+      }
+    ],
+    "status": "available",
+    "summary_metric_keys": [
+      "confidence",
+      "expectancy",
+      "overfitting_risk",
+      "payoff_ratio",
+      "posture",
+      "profit_factor",
+      "realized_max_drawdown_pct",
+      "robustness_score",
+      "ruin_probability",
+      "trade_count",
+      "win_rate",
+      "worst_mc_drawdown_pct"
+    ]
+  },
+  {
+    "diagnostic": "distribution",
+    "figure_count": 5,
+    "figure_types": [
+      "bar_groups",
+      "histogram",
+      "scatter"
+    ],
+    "figures": [
+      {
+        "id": "trade_return_histogram",
+        "payload_keys": [
+          "bins",
+          "metadata"
+        ],
+        "payload_materially_populated": true,
+        "payload_shape": {
+          "bins": [
+            {
+              "count": "float",
+              "end": "float",
+              "start": "float"
+            }
+          ],
+          "metadata": {
+            "bin_count": "int",
+            "mean_marker": "float",
+            "median_marker": "float",
+            "percentile_10_marker": "float",
+            "percentile_90_marker": "float",
+            "trade_count": "int",
+            "value_field": "str"
+          }
+        },
+        "type": "histogram"
+      },
+      {
+        "id": "win_loss_distribution",
+        "payload_keys": [
+          "groups"
+        ],
+        "payload_materially_populated": true,
+        "payload_shape": {
+          "groups": [
+            {
+              "count": "int",
+              "label": "str",
+              "pct": "float"
+            }
+          ]
+        },
+        "type": "bar_groups"
+      },
+      {
+        "id": "mae_mfe_scatter",
+        "payload_keys": [
+          "points"
+        ],
+        "payload_materially_populated": true,
+        "payload_shape": {
+          "points": [
+            {
+              "label": "str",
+              "x": "float",
+              "y": "float"
+            }
+          ]
+        },
+        "type": "scatter"
+      },
+      {
+        "id": "duration_histogram",
+        "payload_keys": [
+          "bins"
+        ],
+        "payload_materially_populated": true,
+        "payload_shape": {
+          "bins": [
+            {
+              "count": "float",
+              "end": "float",
+              "start": "float"
+            }
+          ]
+        },
+        "type": "histogram"
+      },
+      {
+        "id": "r_multiple_histogram",
+        "payload_keys": [
+          "bins"
+        ],
+        "payload_materially_populated": true,
+        "payload_shape": {
+          "bins": [
+            {
+              "count": "float",
+              "end": "float",
+              "start": "float"
+            }
+          ]
+        },
+        "type": "histogram"
+      }
+    ],
+    "status": "available",
+    "summary_metric_keys": [
+      "avg_duration_minutes",
+      "expectancy",
+      "gross_loss",
+      "gross_loss_abs",
+      "gross_profit",
+      "kurtosis",
+      "mean_duration",
+      "mean_return",
+      "median_duration",
+      "median_duration_minutes",
+      "median_return",
+      "payoff_ratio",
+      "percentile_10",
+      "percentile_90",
+      "profit_factor",
+      "return_std",
+      "skewness",
+      "trade_count",
+      "win_rate"
+    ]
+  },
+  {
+    "diagnostic": "monte_carlo",
+    "figure_count": 2,
+    "figure_types": [
+      "fan_chart",
+      "histogram"
+    ],
+    "figures": [
+      {
+        "id": "equity_fan_chart",
+        "payload_keys": [
+          "x",
+          "bands"
+        ],
+        "payload_materially_populated": true,
+        "payload_shape": {
+          "bands": {
+            "p25": [
+              "float"
+            ],
+            "p5": [
+              "float"
+            ],
+            "p50": [
+              "float"
+            ],
+            "p75": [
+              "float"
+            ],
+            "p95": [
+              "float"
+            ]
+          },
+          "x": [
+            "int"
+          ]
+        },
+        "type": "fan_chart"
+      },
+      {
+        "id": "drawdown_histogram",
+        "payload_keys": [
+          "bins"
+        ],
+        "payload_materially_populated": true,
+        "payload_shape": {
+          "bins": [
+            {
+              "count": "float",
+              "end": "float",
+              "start": "float"
+            }
+          ]
+        },
+        "type": "histogram"
+      }
+    ],
+    "status": "available",
+    "summary_metric_keys": [
+      "drawdown_p95_pct",
+      "expected_drawdown",
+      "median_drawdown",
+      "median_drawdown_pct",
+      "p5_drawdown",
+      "p95_drawdown",
+      "p_ruin",
+      "path_dispersion_terminal_equity_p10",
+      "path_dispersion_terminal_equity_p90",
+      "probability_of_ruin",
+      "recovery_median_trades",
+      "recovery_success_rate",
+      "ruin_threshold_equity",
+      "worst_drawdown",
+      "worst_simulated_drawdown_pct"
+    ]
+  },
+  {
+    "diagnostic": "stability",
+    "figure_count": 0,
+    "figure_types": [],
+    "figures": [],
+    "status": "limited",
+    "summary_metric_keys": [
+      "peak_fragility",
+      "plateau_ratio",
+      "stability_score"
+    ]
+  },
+  {
+    "diagnostic": "execution",
+    "figure_count": 1,
+    "figure_types": [
+      "line_series"
+    ],
+    "figures": [
+      {
+        "id": "execution_expectancy_decay",
+        "payload_keys": [
+          "x",
+          "series"
+        ],
+        "payload_materially_populated": true,
+        "payload_shape": {
+          "series": [
+            {
+              "name": "str",
+              "values": [
+                "float"
+              ]
+            }
+          ],
+          "x": [
+            "int"
+          ]
+        },
+        "type": "line_series"
+      }
+    ],
+    "status": "available",
+    "summary_metric_keys": [
+      "baseline_ev_net",
+      "baseline_expectancy",
+      "break_even_cost_multiplier",
+      "break_even_cost_threshold_bps",
+      "edge_decay_abs",
+      "edge_decay_pct",
+      "execution_resilience_score",
+      "stressed_expectancy",
+      "stressed_scenario"
+    ]
+  },
+  {
+    "diagnostic": "regimes",
+    "figure_count": 0,
+    "figure_types": [],
+    "figures": [],
+    "status": "unavailable",
+    "summary_metric_keys": []
+  },
+  {
+    "diagnostic": "ruin",
+    "figure_count": 2,
+    "figure_types": [
+      "line_series"
+    ],
+    "figures": [
+      {
+        "id": "ruin_probability_curve",
+        "payload_keys": [
+          "x",
+          "series"
+        ],
+        "payload_materially_populated": true,
+        "payload_shape": {
+          "series": [
+            {
+              "name": "str",
+              "values": [
+                "float"
+              ]
+            }
+          ],
+          "x": [
+            "float"
+          ]
+        },
+        "type": "line_series"
+      },
+      {
+        "id": "risk_per_trade_sensitivity",
+        "payload_keys": [
+          "x",
+          "series"
+        ],
+        "payload_materially_populated": true,
+        "payload_shape": {
+          "series": [
+            {
+              "name": "str",
+              "values": [
+                "float"
+              ]
+            }
+          ],
+          "x": [
+            "float"
+          ]
+        },
+        "type": "line_series"
+      }
+    ],
+    "status": "available",
+    "summary_metric_keys": [
+      "expected_stress_drawdown",
+      "max_tolerable_risk_per_trade",
+      "minimum_survivable_capital",
+      "probability_of_ruin",
+      "survival_probability"
+    ]
+  },
+  {
+    "diagnostic": "report",
+    "figure_count": 0,
+    "figure_types": [],
+    "figures": [],
+    "status": "available",
+    "summary_metric_keys": [
+      "available_diagnostic_count",
+      "robustness_score",
+      "trade_count"
+    ]
+  }
+]
