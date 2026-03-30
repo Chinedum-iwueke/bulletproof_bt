@@ -1289,7 +1289,7 @@ class StrategyRobustnessLabService:
                 "diagnostics_used": ["performance", "score", "equity_curve", "benchmark_comparison"],
                 "figure_provenance": {
                     "equity_curve": figure_provenance,
-                    "benchmark_overlay": "normalized_timeseries_payload",
+                    "benchmark_overlay": "normalized_line_series_overlay",
                 },
                 "artifact_richness": str(run.metadata.get("richness", run.source)),
                 "completeness_flags": {

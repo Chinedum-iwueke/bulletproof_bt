@@ -49,7 +49,8 @@ def test_build_benchmark_overview_payload_available(tmp_path) -> None:
     assert comparison["limited"] is False
     assert comparison["summary_metrics"]["benchmark_selected"] == "BTC"
     assert comparison["metadata"]["point_count"] == 3
-    assert comparison["figure"]["type"] == "timeseries_overlay"
+    assert comparison["figure"]["id"] == "benchmark_overlay"
+    assert comparison["figure"]["type"] == "line_series"
     assert len(comparison["figure"]["series"]) == 2
 
 

@@ -51,10 +51,14 @@ def test_emit_artifact_available_payload_structure_and_figure() -> None:
     assert payload["metadata"]["point_count"] == 3
 
     figure = payload["figure"]
-    assert figure["type"] == "timeseries_overlay"
+    assert figure["id"] == "benchmark_overlay"
+    assert figure["type"] == "line_series"
+    assert figure["x_label"] == "timestamp"
+    assert figure["y_label"] == "normalized_index"
+    assert len(figure["x"]) == 3
     assert len(figure["series"]) == 2
-    assert len(figure["series"][0]["points"]) == 3
-    assert len(figure["series"][1]["points"]) == 3
+    assert len(figure["series"][0]["values"]) == 3
+    assert len(figure["series"][1]["values"]) == 3
 
 
 def test_emit_artifact_unavailable_payload_has_reason_and_no_fake_data() -> None:

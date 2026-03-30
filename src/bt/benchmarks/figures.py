@@ -10,28 +10,32 @@ def _format_ts(ts: pd.Timestamp) -> str:
     return utc_ts.isoformat().replace("+00:00", "Z")
 
 
-def _series_points(frame: pd.DataFrame, *, value_column: str) -> list[tuple[str, float]]:
-    return [
-        (_format_ts(ts), float(value))
-        for ts, value in zip(frame["ts"], frame[value_column], strict=True)
-    ]
+def _x_values(frame: pd.DataFrame) -> list[str]:
+    return [_format_ts(ts) for ts in frame["ts"]]
+
+
+def _series_values(frame: pd.DataFrame, *, value_column: str) -> list[float]:
+    return [float(value) for value in frame[value_column]]
 
 
 def build_benchmark_comparison_figure(
     normalized_result: NormalizedBenchmarkComparison,
 ) -> BenchmarkComparisonFigure:
+    x_values = _x_values(normalized_result.strategy_points)
     strategy = BenchmarkComparisonFigureSeries(
-        id="strategy",
-        label="Strategy",
-        points=_series_points(normalized_result.strategy_points, value_column="normalized"),
+        name="strategy_equity_normalized",
+        values=_series_values(normalized_result.strategy_points, value_column="normalized"),
     )
     benchmark = BenchmarkComparisonFigureSeries(
-        id=f"benchmark_{normalized_result.benchmark_id}",
-        label=normalized_result.benchmark_id,
-        points=_series_points(normalized_result.benchmark_points, value_column="normalized"),
+        name=f"benchmark_{normalized_result.benchmark_id}_normalized",
+        values=_series_values(normalized_result.benchmark_points, value_column="normalized"),
     )
     return BenchmarkComparisonFigure(
-        type="timeseries_overlay",
+        id="benchmark_overlay",
+        type="line_series",
         title="Strategy vs Benchmark",
+        x_label="timestamp",
+        y_label="normalized_index",
+        x=x_values,
         series=[strategy, benchmark],
     )

@@ -144,15 +144,18 @@ BenchmarkMetricResult: TypeAlias = BenchmarkComparisonMetrics | BenchmarkCompari
 
 @dataclass(frozen=True)
 class BenchmarkComparisonFigureSeries:
-    id: str
-    label: str
-    points: list[tuple[str, float]]
+    name: str
+    values: list[float]
 
 
 @dataclass(frozen=True)
 class BenchmarkComparisonFigure:
-    type: Literal["timeseries_overlay"]
+    id: Literal["benchmark_overlay"]
+    type: Literal["line_series"]
     title: str
+    x_label: Literal["timestamp"]
+    y_label: Literal["normalized_index"]
+    x: list[str]
     series: list[BenchmarkComparisonFigureSeries]
 
 

@@ -77,7 +77,8 @@ def test_end_to_end_pipeline_produces_valid_payload_and_is_deterministic(tmp_pat
     assert comparison["metadata"]["point_count"] == 3
     assert comparison["metadata"]["comparison_window_start"] == "2025-01-01T00:00:00Z"
     assert comparison["metadata"]["comparison_window_end"] == "2025-01-03T00:00:00Z"
-    assert comparison["figure"]["type"] == "timeseries_overlay"
+    assert comparison["figure"]["id"] == "benchmark_overlay"
+    assert comparison["figure"]["type"] == "line_series"
 
     assert _canonicalize(payload_a) == _canonicalize(payload_b)
 
