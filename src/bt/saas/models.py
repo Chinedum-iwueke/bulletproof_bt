@@ -109,6 +109,7 @@ class AnalysisRunConfig:
     ruin_drawdown_levels: tuple[float, ...] = (0.30, 0.50)
     account_size: float | None = None
     risk_per_trade_pct: float | None = None
+    benchmark: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

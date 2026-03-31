@@ -300,6 +300,24 @@ class StrategyRobustnessLabService:
     ) -> EngineAnalysisResult:
         config = config or AnalysisRunConfig()
         run = self._ingested_run_from_parsed_artifact(parsed_artifact)
+
+        runtime_metadata: dict[str, Any] = {
+            "seed": config.seed,
+            "simulations": config.simulations,
+            "ruin_drawdown_levels": list(config.ruin_drawdown_levels),
+        }
+        if config.account_size is not None:
+            runtime_metadata["account_size"] = config.account_size
+        if config.risk_per_trade_pct is not None:
+            runtime_metadata["risk_per_trade_pct"] = config.risk_per_trade_pct
+
+        benchmark_cfg = getattr(config, "benchmark", None)
+        if isinstance(benchmark_cfg, dict):
+            runtime_metadata["benchmark_config"] = benchmark_cfg
+            run.metadata["benchmark_present"] = bool(benchmark_cfg.get("enabled", False))
+
+        run.metadata.update(runtime_metadata)
+
         payload = self.build_dashboard_payload(
             run,
             seed=config.seed,
