@@ -2118,49 +2118,112 @@ class StrategyRobustnessLabService:
             trades["entry_price"].abs().fillna(0.0) * trades["quantity"].abs().fillna(0.0)
         ).fillna(0.0)
         resolved_notional = notional.where(notional > 0.0, np.nan)
+        risk_amount = trades["risk_amount"].abs().replace(0.0, np.nan) if "risk_amount" in trades.columns else pd.Series(np.nan, index=trades.index)
+
+        def _profit_factor(pnl_series: pd.Series) -> float | None:
+            gross_profit = float(pnl_series[pnl_series > 0.0].sum())
+            gross_loss_abs = abs(float(pnl_series[pnl_series < 0.0].sum()))
+            if gross_loss_abs <= 0.0:
+                return None
+            return float(gross_profit / gross_loss_abs)
 
         scenarios = [
-            {"name": "baseline", "spread_bps": 0.0, "slippage_bps": 0.0, "fee_bps": 0.0, "severity": 0},
-            {"name": "moderate_stress", "spread_bps": 5.0, "slippage_bps": 3.0, "fee_bps": 2.0, "severity": 1},
-            {"name": "high_stress", "spread_bps": 10.0, "slippage_bps": 8.0, "fee_bps": 4.0, "severity": 2},
-            {"name": "extreme_stress", "spread_bps": 20.0, "slippage_bps": 15.0, "fee_bps": 8.0, "severity": 3},
+            {
+                "name": "baseline",
+                "spread_rate": 0.0,
+                "slippage_rate": 0.0,
+                "fee_rate": 0.0,
+                "severity": 0,
+            },
+            {
+                "name": "moderate_stress",
+                "spread_rate": 0.0005,
+                "slippage_rate": 0.0005,
+                "fee_rate": 0.0004,
+                "severity": 1,
+            },
+            {
+                "name": "high_stress",
+                "spread_rate": 0.0015,
+                "slippage_rate": 0.0015,
+                "fee_rate": 0.0007,
+                "severity": 2,
+            },
+            {
+                "name": "extreme_stress",
+                "spread_rate": 0.0030,
+                "slippage_rate": 0.0030,
+                "fee_rate": 0.0010,
+                "severity": 3,
+            },
         ]
 
         baseline_expectancy = float(base.mean()) if len(base) else 0.0
+        baseline_win_rate = float((base > 0.0).mean()) if len(base) else 0.0
+        baseline_profit_factor = _profit_factor(base)
         scenario_rows: list[dict[str, Any]] = []
         for scenario in scenarios:
-            spread_cost = resolved_notional.fillna(0.0) * (float(scenario["spread_bps"]) / 10_000.0)
-            slippage_cost = resolved_notional.fillna(0.0) * (float(scenario["slippage_bps"]) / 10_000.0)
-            fee_cost = resolved_notional.fillna(0.0) * (float(scenario["fee_bps"]) / 10_000.0)
-            stressed_trade_pnl = base - spread_cost - slippage_cost - fee_cost
+            spread_cost = resolved_notional.fillna(0.0) * float(scenario["spread_rate"])
+            slippage_cost = resolved_notional.fillna(0.0) * float(scenario["slippage_rate"])
+            fee_cost = resolved_notional.fillna(0.0) * float(scenario["fee_rate"])
+            stressed_trade_pnl = base - slippage_cost - spread_cost - fee_cost
             expectancy = float(stressed_trade_pnl.mean()) if len(stressed_trade_pnl) else 0.0
+            win_rate = float((stressed_trade_pnl > 0.0).mean()) if len(stressed_trade_pnl) else 0.0
+            profit_factor = _profit_factor(stressed_trade_pnl)
             if baseline_expectancy == 0.0:
                 edge_decay_pct = 0.0 if expectancy >= 0.0 else 100.0
             else:
                 edge_decay_pct = max(0.0, ((baseline_expectancy - expectancy) / abs(baseline_expectancy)) * 100.0)
             if scenario["name"] == "baseline":
-                status = "baseline"
+                classification = "baseline"
             elif expectancy <= 0.0:
-                status = "negative"
+                classification = "negative"
             elif edge_decay_pct >= 70.0:
-                status = "fragile"
+                classification = "fragile"
             else:
-                status = "survives"
+                classification = "survives"
+            average_r = None
+            if risk_amount.notna().any():
+                average_r = float((stressed_trade_pnl / risk_amount).replace([np.inf, -np.inf], np.nan).dropna().mean())
             scenario_rows.append(
                 {
                     "name": scenario["name"],
                     "severity": int(scenario["severity"]),
-                    "spread_bps": float(scenario["spread_bps"]),
-                    "slippage_bps": float(scenario["slippage_bps"]),
-                    "fee_bps": float(scenario["fee_bps"]),
+                    "spread_assumption": {
+                        "rate": float(scenario["spread_rate"]),
+                        "pct": float(scenario["spread_rate"] * 100.0),
+                        "bps": float(scenario["spread_rate"] * 10_000.0),
+                        "formula": "spread_cost = entry_price * quantity * spread_rate",
+                    },
+                    "slippage_assumption": {
+                        "rate": float(scenario["slippage_rate"]),
+                        "pct": float(scenario["slippage_rate"] * 100.0),
+                        "bps": float(scenario["slippage_rate"] * 10_000.0),
+                        "formula": "slippage_cost = entry_price * quantity * slippage_rate",
+                    },
+                    "fee_assumption": {
+                        "rate": float(scenario["fee_rate"]),
+                        "pct": float(scenario["fee_rate"] * 100.0),
+                        "bps": float(scenario["fee_rate"] * 10_000.0),
+                        "formula": "fee_cost = entry_price * quantity * taker_fee_rate",
+                    },
+                    "spread_bps": float(scenario["spread_rate"] * 10_000.0),
+                    "slippage_bps": float(scenario["slippage_rate"] * 10_000.0),
+                    "fee_bps": float(scenario["fee_rate"] * 10_000.0),
                     "expectancy": expectancy,
+                    "win_rate": win_rate,
+                    "profit_factor": profit_factor,
+                    "average_r": average_r,
                     "edge_decay_pct": float(edge_decay_pct),
-                    "status": status,
+                    "classification": classification,
+                    "status": classification,
                 }
             )
 
         stressed_row = min(scenario_rows[1:], key=lambda row: row["expectancy"]) if len(scenario_rows) > 1 else scenario_rows[0]
         stressed_expectancy = float(stressed_row["expectancy"])
+        stressed_win_rate = float(stressed_row["win_rate"])
+        stressed_profit_factor = float(stressed_row["profit_factor"]) if stressed_row["profit_factor"] is not None else None
         edge_decay_abs = float(baseline_expectancy - stressed_expectancy)
         edge_decay_pct = (
             float(max(0.0, (edge_decay_abs / abs(baseline_expectancy)) * 100.0))
@@ -2203,28 +2266,30 @@ class StrategyRobustnessLabService:
                 f"({edge_decay_pct:.1f}% decay) under stressed execution assumptions."
             ),
             "positives": [
-                "Baseline execution sensitivity is computed directly from trade outcomes and explicit cost assumptions.",
-                "Scenario matrix is emitted with discrete stress levels suitable for UI comparison.",
+                "Execution sensitivity is computed directly from trade records without OHLCV dependence.",
+                "Scenario matrix is deterministic and fully declared for auditability and UI comparison.",
             ],
             "cautions": [
                 f"Most impactful observed execution-cost dimension is {dominant_dimension}.",
-                f"Worst stressed scenario '{stressed_row['name']}' is classified as '{stressed_row['status']}'.",
+                f"Worst stressed scenario '{stressed_row['name']}' is classified as '{stressed_row['classification']}'.",
             ],
         }
 
         recommendations = [
             "Deploy only if expectancy remains positive through at least moderate stress scenarios.",
-            "Improve execution assumptions with venue-specific slippage/spread calibration where possible.",
-            "Include OHLCV and spread proxies to upgrade from baseline to enhanced execution sensitivity realism.",
+            "Calibrate deterministic fee/slippage/spread schedules to your venue before production sizing.",
+            "Treat this diagnostic as conservative proxy stress; it does not model market impact or latency.",
         ]
-        if stressed_row["status"] in {"fragile", "negative"}:
+        if stressed_row["classification"] in {"fragile", "negative"}:
             recommendations.insert(0, "Reduce sizing or tighten trade selection when edge is fragile under execution stress.")
 
         assumptions = [
-            "Baseline mode recomputes per-trade expectancy from trade PnL and discrete cost-bps scenarios.",
-            "Spread/slippage/fee stress is applied as additive bps of trade notional when entry_price and quantity are available.",
-            "When notional is unavailable, stress falls back to zero additive bps impact and reports baseline-only sensitivity.",
-            f"Execution assumptions are {'inferred from observed cost fields' if richer_cost_fields else 'default/proxy zero-cost fields unless user-provided'} in this run.",
+            "Deterministic trade-level proxy model: pnl_net_adjusted = pnl_net_original - slippage_cost - spread_cost - fee_cost.",
+            "Notional proxy is strictly entry_price * quantity from persisted trade fields.",
+            "Slippage and spread use identical schedules per scenario: baseline 0.00%, moderate 0.05%, high 0.15%, extreme 0.30%.",
+            "Deterministic taker-fee schedule: baseline 0.00%, moderate 0.04%, high 0.07%, extreme 0.10%.",
+            "No stochastic simulation, OHLCV-derived regime context, or hidden parameters are used in execution sensitivity.",
+            f"Execution assumptions are {'augmented with observed cost fields for metadata context' if richer_cost_fields else 'pure deterministic proxies because explicit cost fields are sparse'} in this run.",
         ]
 
         return {
@@ -2233,6 +2298,10 @@ class StrategyRobustnessLabService:
                 "stressed_expectancy": stressed_expectancy,
                 "edge_decay_abs": edge_decay_abs,
                 "edge_decay_pct": edge_decay_pct,
+                "baseline_win_rate": baseline_win_rate,
+                "stressed_win_rate": stressed_win_rate,
+                "baseline_profit_factor": baseline_profit_factor,
+                "stressed_profit_factor": stressed_profit_factor,
                 "break_even_cost_threshold_bps": break_even_cost_threshold,
                 "stressed_scenario": stressed_row["name"],
                 "baseline_ev_net": baseline_expectancy,
@@ -2243,9 +2312,9 @@ class StrategyRobustnessLabService:
                 self._figure_line_series(
                     figure_id="execution_expectancy_decay",
                     title="Execution Expectancy Decay by Scenario",
-                    x_label="scenario_severity",
+                    x_label="scenario",
                     y_label="expectancy",
-                    x_values=[row["severity"] for row in scenario_rows],
+                    x_values=[row["name"] for row in scenario_rows],
                     series=[{"name": "expectancy", "values": [row["expectancy"] for row in scenario_rows]}],
                 )
             ],
@@ -2258,7 +2327,7 @@ class StrategyRobustnessLabService:
                 "No market-impact model is included.",
                 "No latency modeling is included.",
                 "No venue-specific routing/execution model is included.",
-                "Spread/slippage stress may be proxy-based when richer execution metadata is absent.",
+                "Proxy costs are based on entry notional only and do not account for intrabar spread dynamics.",
             ],
             "recommendations": recommendations,
             "metadata": {
@@ -2266,9 +2335,34 @@ class StrategyRobustnessLabService:
                 "scenario_levels": [row["name"] for row in scenario_rows],
                 "stress_shape": "discrete",
                 "execution_model_type": execution_model_type,
+                "methodology": "deterministic_trade_notional_proxy",
+                "deterministic_proxy": {
+                    "notional_formula": "entry_price * quantity",
+                    "pnl_adjustment_formula": "pnl_net - slippage_cost - spread_cost - fee_cost",
+                    "slippage_schedule_pct": {
+                        "baseline": 0.00,
+                        "moderate_stress": 0.05,
+                        "high_stress": 0.15,
+                        "extreme_stress": 0.30,
+                    },
+                    "spread_schedule_pct": {
+                        "baseline": 0.00,
+                        "moderate_stress": 0.05,
+                        "high_stress": 0.15,
+                        "extreme_stress": 0.30,
+                    },
+                    "taker_fee_schedule_pct": {
+                        "baseline": 0.00,
+                        "moderate_stress": 0.04,
+                        "high_stress": 0.07,
+                        "extreme_stress": 0.10,
+                    },
+                },
                 "dominant_cost_dimension": dominant_dimension,
                 "capability_used": bool(semantic_capabilities.get("can_build_execution_sensitivity_baseline", True)),
                 "cost_drag_supported": bool(semantic_capabilities.get("can_build_cost_drag_summary", False)),
+                "uses_ohlcv": False,
+                "stochastic_modeling": False,
             },
             "baseline_ev_net": baseline_expectancy,
             "execution_resilience_score": resilience,
