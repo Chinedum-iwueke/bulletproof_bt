@@ -1153,6 +1153,7 @@ class StrategyRobustnessLabService:
             "title": title,
             "x_label": x_label,
             "y_label": y_label,
+            "x_values": x_values,
             "x": x_values,
             "series": series,
         }
@@ -2216,7 +2217,6 @@ class StrategyRobustnessLabService:
                     "average_r": average_r,
                     "edge_decay_pct": float(edge_decay_pct),
                     "classification": classification,
-                    "status": classification,
                 }
             )
 
@@ -2337,8 +2337,26 @@ class StrategyRobustnessLabService:
                 "execution_model_type": execution_model_type,
                 "methodology": "deterministic_trade_notional_proxy",
                 "deterministic_proxy": {
-                    "notional_formula": "entry_price * quantity",
-                    "pnl_adjustment_formula": "pnl_net - slippage_cost - spread_cost - fee_cost",
+                    "notional_formula": "abs(entry_price) * abs(quantity)",
+                    "pnl_adjustment_formula": "pnl_net_adjusted = pnl_net_original - slippage_cost - spread_cost - fee_cost",
+                    "slippage_schedule_rate": {
+                        "baseline": 0.0000,
+                        "moderate_stress": 0.0005,
+                        "high_stress": 0.0015,
+                        "extreme_stress": 0.0030,
+                    },
+                    "spread_schedule_rate": {
+                        "baseline": 0.0000,
+                        "moderate_stress": 0.0005,
+                        "high_stress": 0.0015,
+                        "extreme_stress": 0.0030,
+                    },
+                    "fee_schedule_rate": {
+                        "baseline": 0.0000,
+                        "moderate_stress": 0.0004,
+                        "high_stress": 0.0007,
+                        "extreme_stress": 0.0010,
+                    },
                     "slippage_schedule_pct": {
                         "baseline": 0.00,
                         "moderate_stress": 0.05,
