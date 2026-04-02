@@ -2627,6 +2627,122 @@ class StrategyRobustnessLabService:
         ruin_threshold_equity = float(monte_carlo.get("ruin_threshold_equity", account_size * ruin_threshold_fraction))
         expected_worst_drawdown = mc_summary.get("expected_drawdown")
         expected_stress_drawdown = float(expected_worst_drawdown) if expected_worst_drawdown is not None else None
+        mc_probability_of_ruin = mc_summary.get("probability_of_ruin", monte_carlo.get("probability_of_ruin"))
+        p95_drawdown_pct = mc_summary.get("p95_drawdown", mc_summary.get("drawdown_p95_pct"))
+        worst_simulated_drawdown_pct = mc_summary.get(
+            "worst_simulated_drawdown_pct",
+            mc_summary.get("worst_drawdown", monte_carlo.get("worst_drawdown_pct")),
+        )
+        median_simulated_drawdown_pct = mc_summary.get(
+            "median_drawdown_pct",
+            mc_summary.get("median_drawdown", monte_carlo.get("median_drawdown_pct")),
+        )
+
+        def _streak_lengths(mask: np.ndarray) -> list[int]:
+            lengths: list[int] = []
+            run = 0
+            for value in mask.tolist():
+                if bool(value):
+                    run += 1
+                elif run > 0:
+                    lengths.append(run)
+                    run = 0
+            if run > 0:
+                lengths.append(run)
+            return lengths
+
+        def _loss_streak_payload(values: np.ndarray) -> dict[str, Any]:
+            losses = values < 0.0
+            wins = values > 0.0
+            loss_lengths = _streak_lengths(losses)
+            win_lengths = _streak_lengths(wins)
+            max_losses = int(max(loss_lengths) if loss_lengths else 0)
+            max_wins = int(max(win_lengths) if win_lengths else 0)
+            avg_loss_streak = float(np.mean(loss_lengths)) if loss_lengths else 0.0
+            median_loss_streak = float(np.median(loss_lengths)) if loss_lengths else 0.0
+            avg_win_streak = float(np.mean(win_lengths)) if win_lengths else 0.0
+            median_win_streak = float(np.median(win_lengths)) if win_lengths else 0.0
+
+            longest_loss_pnl = 0.0
+            if max_losses > 0:
+                running_len = 0
+                running_sum = 0.0
+                streak_sums: list[float] = []
+                for point in values.tolist():
+                    if point < 0.0:
+                        running_len += 1
+                        running_sum += float(point)
+                    else:
+                        if running_len == max_losses:
+                            streak_sums.append(running_sum)
+                        running_len = 0
+                        running_sum = 0.0
+                if running_len == max_losses:
+                    streak_sums.append(running_sum)
+                longest_loss_pnl = float(min(streak_sums)) if streak_sums else 0.0
+
+            unique_lengths, counts = (
+                np.unique(np.asarray(loss_lengths, dtype=int), return_counts=True) if loss_lengths else ([], [])
+            )
+            distribution = [
+                {"streak_length": int(length), "count": int(count)}
+                for length, count in zip(unique_lengths, counts, strict=False)
+            ]
+
+            largest_single_loss = float(values.min()) if values.size else 0.0
+            return {
+                "max_consecutive_losses": max_losses,
+                "max_consecutive_wins": max_wins,
+                "average_losing_streak": avg_loss_streak,
+                "median_losing_streak": median_loss_streak,
+                "average_winning_streak": avg_win_streak,
+                "median_winning_streak": median_win_streak,
+                "longest_losing_streak_pnl": longest_loss_pnl,
+                "loss_streak_distribution": distribution,
+                "largest_single_loss": largest_single_loss,
+            }
+
+        def _historical_drawdown(values: np.ndarray, base_capital: float) -> dict[str, Any]:
+            if values.size == 0 or base_capital <= 0:
+                return {
+                    "worst_drawdown_pct": 0.0,
+                    "worst_drawdown_duration_trades": 0,
+                    "recovery_trades_after_worst_drawdown": None,
+                }
+            equity = base_capital + np.cumsum(values)
+            full_equity = np.concatenate([[base_capital], equity])
+            running_peak = np.maximum.accumulate(full_equity)
+            drawdowns = np.where(running_peak > 0, (full_equity - running_peak) / running_peak, 0.0)
+            worst_idx = int(np.argmin(drawdowns))
+            worst_pct = float(drawdowns[worst_idx] * 100.0)
+
+            longest_duration = 0
+            active_start: int | None = None
+            for idx in range(1, full_equity.size):
+                if full_equity[idx] < running_peak[idx]:
+                    if active_start is None:
+                        active_start = idx
+                elif active_start is not None:
+                    longest_duration = max(longest_duration, idx - active_start)
+                    active_start = None
+            if active_start is not None:
+                longest_duration = max(longest_duration, (full_equity.size - 1) - active_start + 1)
+
+            recovery_trades: int | None = None
+            if worst_idx > 0:
+                prior_peak = running_peak[worst_idx]
+                recovery_slice = np.where(full_equity[worst_idx:] >= prior_peak)[0]
+                if recovery_slice.size > 0 and int(recovery_slice[0]) > 0:
+                    recovery_trades = int(recovery_slice[0])
+
+            return {
+                "worst_drawdown_pct": worst_pct,
+                "worst_drawdown_duration_trades": int(longest_duration),
+                "recovery_trades_after_worst_drawdown": recovery_trades,
+            }
+
+        streak_stats = _loss_streak_payload(pnl)
+        historical_drawdown_stats = _historical_drawdown(pnl, float(account_size))
 
         required_missing: list[str] = []
         if explicit_account_size is None:
@@ -2667,33 +2783,93 @@ class StrategyRobustnessLabService:
             ]
         )
 
+        baseline_summary_metrics = {
+            "probability_of_ruin": float(mc_probability_of_ruin) if mc_probability_of_ruin is not None else None,
+            "expected_stress_drawdown": expected_stress_drawdown,
+            "survival_probability": (
+                float(1.0 - float(mc_probability_of_ruin)) if mc_probability_of_ruin is not None else None
+            ),
+            "max_tolerable_risk_per_trade": None,
+            "minimum_survivable_capital": None,
+            "max_consecutive_losses": int(streak_stats["max_consecutive_losses"]),
+            "max_consecutive_wins": int(streak_stats["max_consecutive_wins"]),
+            "average_losing_streak": float(streak_stats["average_losing_streak"]),
+            "median_losing_streak": float(streak_stats["median_losing_streak"]),
+            "average_winning_streak": float(streak_stats["average_winning_streak"]),
+            "median_winning_streak": float(streak_stats["median_winning_streak"]),
+            "longest_losing_streak_pnl": float(streak_stats["longest_losing_streak_pnl"]),
+            "longest_losing_streak_r": None,
+            "largest_single_loss": float(streak_stats["largest_single_loss"]),
+            "largest_single_loss_r": None,
+            "worst_drawdown_pct": float(historical_drawdown_stats["worst_drawdown_pct"]),
+            "worst_drawdown_duration_trades": int(historical_drawdown_stats["worst_drawdown_duration_trades"]),
+            "recovery_trades_after_worst_drawdown": historical_drawdown_stats["recovery_trades_after_worst_drawdown"],
+            "risk_amount_per_trade": None,
+        }
+
+        baseline_figures: list[dict[str, Any]] = [
+            {
+                "id": "loss_streak_distribution",
+                "type": "bar_groups",
+                "title": "Loss Streak Distribution",
+                "x_label": "consecutive_losses",
+                "y_label": "occurrences",
+                "groups": [
+                    {
+                        "label": str(row["streak_length"]),
+                        "value": int(row["count"]),
+                    }
+                    for row in streak_stats["loss_streak_distribution"]
+                ],
+            }
+        ]
+        if levels:
+            baseline_figures.insert(
+                0,
+                {
+                    "id": "ruin_probability_curve",
+                    "type": "line_series",
+                    "title": "Ruin Probability by Drawdown Threshold",
+                    "x_label": "drawdown_threshold_pct",
+                    "y_label": "probability_of_breach",
+                    "x": [float(level.replace("dd_", "")) / 100.0 for level in levels.keys()],
+                    "series": [{"name": "ruin_probability", "values": [float(v) for v in levels.values()]}],
+                },
+            )
+
         if required_missing:
             return {
                 "status": "limited",
-                "summary_metrics": {
-                    "probability_of_ruin": None,
-                    "expected_stress_drawdown": expected_stress_drawdown,
-                    "survival_probability": None,
-                    "max_tolerable_risk_per_trade": None,
-                    "minimum_survivable_capital": None,
-                },
-                "figures": [],
+                "summary_metrics": baseline_summary_metrics,
+                "streak_statistics": streak_stats,
+                "drawdown_statistics": historical_drawdown_stats,
+                "figures": baseline_figures,
                 "interpretation": {
-                    "summary": "Ruin analysis is limited: trade-only artifacts cannot produce deployable capital-survivability estimates.",
+                    "summary": "Ruin analysis is partially constrained, but trade-sequence survivability diagnostics are available.",
                     "positives": (
-                        ["Monte Carlo stress drawdown context is available."]
-                        if monte_carlo_linked and expected_stress_drawdown is not None
+                        [
+                            (
+                                f"Observed max losing streak is {int(streak_stats['max_consecutive_losses'])} trades "
+                                f"with cumulative PnL {float(streak_stats['longest_losing_streak_pnl']):.2f}."
+                            )
+                        ]
+                        + (
+                            ["Monte Carlo stress drawdown context is available."]
+                            if monte_carlo_linked and expected_stress_drawdown is not None
+                            else []
+                        )
+                        if pnl.size > 0
                         else []
                     ),
                     "cautions": [
-                        "Probability of ruin is intentionally withheld until account_size and risk_per_trade_pct are explicit."
+                        "Capital translation of streak burden requires explicit account_size and risk_per_trade_pct."
                     ],
                 },
                 "warnings": [],
                 "assumptions": assumptions,
                 "limitations": limitations,
                 "recommendations": [
-                    "Set explicit account_size and risk_per_trade_pct to activate full risk-of-ruin estimates.",
+                    "Set explicit account_size and risk_per_trade_pct to activate full capital-survivability translation.",
                     "Validate sizing with Monte Carlo-linked survivability checks before deployment.",
                 ],
                 "metadata": {
@@ -2712,7 +2888,7 @@ class StrategyRobustnessLabService:
                     "ruin_threshold_equity": ruin_threshold_equity if monte_carlo_linked else None,
                     "capability_used": bool(semantic_capabilities.get("can_build_ruin_model", False)),
                 },
-                "probability_of_ruin": None,
+                "probability_of_ruin": baseline_summary_metrics["probability_of_ruin"],
                 "expected_stress_drawdown": expected_stress_drawdown,
                 "account_size": float(explicit_account_size) if explicit_account_size is not None else None,
                 "risk_per_trade_pct": risk_per_trade_pct,
@@ -2723,14 +2899,10 @@ class StrategyRobustnessLabService:
         if risk_capital_per_trade <= 0 or pnl.size == 0 or simulations <= 0:
             return {
                 "status": "unavailable",
-                "summary_metrics": {
-                    "probability_of_ruin": None,
-                    "expected_stress_drawdown": None,
-                    "survival_probability": None,
-                    "max_tolerable_risk_per_trade": None,
-                    "minimum_survivable_capital": None,
-                },
-                "figures": [],
+                "summary_metrics": {**baseline_summary_metrics, "probability_of_ruin": None, "survival_probability": None},
+                "streak_statistics": streak_stats,
+                "drawdown_statistics": historical_drawdown_stats,
+                "figures": baseline_figures,
                 "interpretation": {
                     "summary": "Ruin analysis unavailable due to invalid sizing capital or missing simulation paths.",
                     "positives": [],
@@ -2805,6 +2977,48 @@ class StrategyRobustnessLabService:
             if row["probability_of_ruin"] <= 0.05
         ]
         max_tolerable_risk = max(tolerable) if tolerable else None
+        risk_amount_per_trade = float(risk_capital_per_trade)
+        longest_losing_streak_r = (
+            float(streak_stats["longest_losing_streak_pnl"]) / risk_amount_per_trade if risk_amount_per_trade > 0 else None
+        )
+        largest_single_loss_r = (
+            float(streak_stats["largest_single_loss"]) / risk_amount_per_trade if risk_amount_per_trade > 0 else None
+        )
+        estimated_capital_hit_worst_historical_losing_streak = abs(float(streak_stats["longest_losing_streak_pnl"]))
+        estimated_capital_hit_p95_drawdown = (
+            abs(float(p95_drawdown_pct)) * float(account_size) / 100.0 if p95_drawdown_pct is not None else None
+        )
+        estimated_capital_hit_worst_simulated_drawdown = (
+            abs(float(worst_simulated_drawdown_pct)) * float(account_size) / 100.0
+            if worst_simulated_drawdown_pct is not None
+            else None
+        )
+        remaining_capital_after_worst_historical_streak = float(account_size) - estimated_capital_hit_worst_historical_losing_streak
+        remaining_capital_after_p95_drawdown = (
+            float(account_size) - float(estimated_capital_hit_p95_drawdown)
+            if estimated_capital_hit_p95_drawdown is not None
+            else None
+        )
+        remaining_capital_after_worst_simulated_drawdown = (
+            float(account_size) - float(estimated_capital_hit_worst_simulated_drawdown)
+            if estimated_capital_hit_worst_simulated_drawdown is not None
+            else None
+        )
+        baseline_vs_stressed_scenarios = []
+        for row in risk_scenarios:
+            risk_label = "baseline"
+            if row["risk_per_trade_pct"] < float(risk_per_trade_pct):
+                risk_label = "de_risked"
+            elif row["risk_per_trade_pct"] > float(risk_per_trade_pct):
+                risk_label = "stressed"
+            baseline_vs_stressed_scenarios.append(
+                {
+                    "scenario": risk_label,
+                    "risk_per_trade_pct": float(row["risk_per_trade_pct"]),
+                    "probability_of_ruin": float(row["probability_of_ruin"]),
+                    "expected_stress_drawdown": float(row["expected_stress_drawdown"]),
+                }
+            )
 
         figures = [
             {
@@ -2825,6 +3039,17 @@ class StrategyRobustnessLabService:
                 "x": [float(row["risk_per_trade_pct"]) for row in risk_scenarios],
                 "series": [{"name": "probability_of_ruin", "values": [float(row["probability_of_ruin"]) for row in risk_scenarios]}],
             },
+            {
+                "id": "loss_streak_distribution",
+                "type": "bar_groups",
+                "title": "Loss Streak Distribution",
+                "x_label": "consecutive_losses",
+                "y_label": "occurrences",
+                "groups": [
+                    {"label": str(row["streak_length"]), "value": int(row["count"])}
+                    for row in streak_stats["loss_streak_distribution"]
+                ],
+            },
         ]
 
         recommendations = [
@@ -2841,6 +3066,23 @@ class StrategyRobustnessLabService:
             cautions.append(f"Estimated ruin probability is {probability_of_ruin:.2%} at current sizing assumptions.")
         if expected_stress_drawdown is not None:
             cautions.append(f"Expected stress drawdown is {expected_stress_drawdown:.2f}% across simulated paths.")
+        if estimated_capital_hit_worst_historical_losing_streak > 0:
+            cautions.append(
+                "Worst observed losing streak implies an estimated capital hit of "
+                f"{estimated_capital_hit_worst_historical_losing_streak:.2f} at current sizing."
+            )
+        if max_tolerable_risk is not None and float(risk_per_trade_pct) > max_tolerable_risk:
+            cautions.append(
+                f"Current risk_per_trade_pct ({float(risk_per_trade_pct):.2%}) is above the model's "
+                f"max tolerable level ({float(max_tolerable_risk):.2%}) for <=5% ruin."
+            )
+
+        sizing_demand = "moderate"
+        if longest_losing_streak_r is not None and longest_losing_streak_r <= -8.0:
+            sizing_demand = "high"
+        elif longest_losing_streak_r is not None and longest_losing_streak_r <= -4.0:
+            sizing_demand = "elevated"
+        reduction_hint = max(float(risk_per_trade_pct) * 0.5, 0.0025)
 
         return {
             "status": "available",
@@ -2849,18 +3091,63 @@ class StrategyRobustnessLabService:
                 "expected_stress_drawdown": expected_stress_drawdown,
                 "survival_probability": survival_probability,
                 "max_tolerable_risk_per_trade": max_tolerable_risk,
-                "minimum_survivable_capital": None,
+                "minimum_survivable_capital": (
+                    float(abs(streak_stats["longest_losing_streak_pnl"]) / float(risk_per_trade_pct))
+                    if float(risk_per_trade_pct) > 0
+                    else None
+                ),
+                "max_consecutive_losses": int(streak_stats["max_consecutive_losses"]),
+                "max_consecutive_wins": int(streak_stats["max_consecutive_wins"]),
+                "average_losing_streak": float(streak_stats["average_losing_streak"]),
+                "median_losing_streak": float(streak_stats["median_losing_streak"]),
+                "average_winning_streak": float(streak_stats["average_winning_streak"]),
+                "median_winning_streak": float(streak_stats["median_winning_streak"]),
+                "longest_losing_streak_pnl": float(streak_stats["longest_losing_streak_pnl"]),
+                "longest_losing_streak_r": float(longest_losing_streak_r) if longest_losing_streak_r is not None else None,
+                "risk_amount_per_trade": risk_amount_per_trade,
+                "largest_single_loss": float(streak_stats["largest_single_loss"]),
+                "largest_single_loss_r": float(largest_single_loss_r) if largest_single_loss_r is not None else None,
+                "worst_drawdown_pct": float(historical_drawdown_stats["worst_drawdown_pct"]),
+                "worst_drawdown_duration_trades": int(historical_drawdown_stats["worst_drawdown_duration_trades"]),
+                "recovery_trades_after_worst_drawdown": historical_drawdown_stats["recovery_trades_after_worst_drawdown"],
             },
             "figures": figures,
             "risk_scenarios": risk_scenarios,
+            "baseline_vs_stressed_scenarios": baseline_vs_stressed_scenarios,
+            "streak_statistics": {
+                **streak_stats,
+                "longest_losing_streak_r": float(longest_losing_streak_r) if longest_losing_streak_r is not None else None,
+                "largest_single_loss_r": float(largest_single_loss_r) if largest_single_loss_r is not None else None,
+            },
+            "drawdown_statistics": historical_drawdown_stats,
+            "capital_survivability": {
+                "risk_amount_per_trade": risk_amount_per_trade,
+                "estimated_capital_hit_worst_historical_losing_streak": estimated_capital_hit_worst_historical_losing_streak,
+                "estimated_capital_hit_p95_drawdown": estimated_capital_hit_p95_drawdown,
+                "estimated_capital_hit_worst_simulated_drawdown": estimated_capital_hit_worst_simulated_drawdown,
+                "remaining_capital_after_worst_historical_streak": remaining_capital_after_worst_historical_streak,
+                "remaining_capital_after_p95_drawdown": remaining_capital_after_p95_drawdown,
+                "remaining_capital_after_worst_simulated_drawdown": remaining_capital_after_worst_simulated_drawdown,
+            },
             "interpretation": {
-                "summary": "Ruin estimate is active with explicit capital and risk-per-trade assumptions.",
+                "summary": "Ruin estimate is active with explicit capital and risk-per-trade assumptions, including streak burden translation.",
                 "positives": (
                     [f"Survival probability is {survival_probability:.2%} under current assumptions."]
                     if survival_probability is not None
                     else []
                 ),
                 "cautions": cautions,
+                "sizing_posture": (
+                    f"Current sizing appears {sizing_demand}; longest losing streak equates to "
+                    f"{longest_losing_streak_r:.2f}R and "
+                    f"{estimated_capital_hit_worst_historical_losing_streak / float(account_size):.2%} of capital."
+                    if longest_losing_streak_r is not None and float(account_size) > 0
+                    else "Sizing posture estimate unavailable."
+                ),
+                "sizing_improvement_hint": (
+                    "Reducing risk_per_trade_pct to "
+                    f"{reduction_hint:.2%} would linearly reduce per-streak capital damage and lower ruin odds."
+                ),
             },
             "warnings": [],
             "assumptions": assumptions,
@@ -2893,6 +3180,34 @@ class StrategyRobustnessLabService:
             "probability_drawdown_50": float(active_threshold_curve.get("dd_50", 0.0)),
             "expected_stress_drawdown": expected_stress_drawdown,
             "capital_threshold": ruin_threshold_equity,
+            "risk_amount_per_trade": risk_amount_per_trade,
+            "max_consecutive_losses": int(streak_stats["max_consecutive_losses"]),
+            "max_consecutive_wins": int(streak_stats["max_consecutive_wins"]),
+            "average_losing_streak": float(streak_stats["average_losing_streak"]),
+            "median_losing_streak": float(streak_stats["median_losing_streak"]),
+            "average_winning_streak": float(streak_stats["average_winning_streak"]),
+            "median_winning_streak": float(streak_stats["median_winning_streak"]),
+            "longest_losing_streak_pnl": float(streak_stats["longest_losing_streak_pnl"]),
+            "longest_losing_streak_r": float(longest_losing_streak_r) if longest_losing_streak_r is not None else None,
+            "largest_single_loss": float(streak_stats["largest_single_loss"]),
+            "largest_single_loss_r": float(largest_single_loss_r) if largest_single_loss_r is not None else None,
+            "worst_drawdown_pct": float(historical_drawdown_stats["worst_drawdown_pct"]),
+            "worst_drawdown_duration_trades": int(historical_drawdown_stats["worst_drawdown_duration_trades"]),
+            "recovery_trades_after_worst_drawdown": historical_drawdown_stats["recovery_trades_after_worst_drawdown"],
+            "estimated_capital_hit_worst_historical_losing_streak": estimated_capital_hit_worst_historical_losing_streak,
+            "estimated_capital_hit_p95_drawdown": estimated_capital_hit_p95_drawdown,
+            "estimated_capital_hit_worst_simulated_drawdown": estimated_capital_hit_worst_simulated_drawdown,
+            "remaining_capital_after_worst_historical_streak": remaining_capital_after_worst_historical_streak,
+            "remaining_capital_after_p95_drawdown": remaining_capital_after_p95_drawdown,
+            "remaining_capital_after_worst_simulated_drawdown": remaining_capital_after_worst_simulated_drawdown,
+            "probability_by_drawdown_threshold": {
+                key: float(value) for key, value in active_threshold_curve.items()
+            },
+            "median_simulated_drawdown_pct": float(median_simulated_drawdown_pct) if median_simulated_drawdown_pct is not None else None,
+            "p95_simulated_drawdown_pct": float(p95_drawdown_pct) if p95_drawdown_pct is not None else None,
+            "worst_simulated_drawdown_pct": (
+                float(worst_simulated_drawdown_pct) if worst_simulated_drawdown_pct is not None else None
+            ),
             "account_size": float(account_size),
             "risk_per_trade_pct": float(risk_per_trade_pct),
             "projected_risk_capital_per_trade": risk_capital_per_trade,
