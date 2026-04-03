@@ -260,6 +260,7 @@ class L1H5AVolManagedTrendStrategy(Strategy):
             if trend_dir_t == 0:
                 continue
             side = Side.BUY if trend_dir_t > 0 else Side.SELL
+            entry_reason = "vol_managed_trend_long" if side == Side.BUY else "vol_managed_trend_short"
             if self._disallow_flip and current is not None and (
                 (current == Side.BUY and side == Side.SELL) or (current == Side.SELL and side == Side.BUY)
             ):
@@ -309,6 +310,7 @@ class L1H5AVolManagedTrendStrategy(Strategy):
                         "tp_update_policy": "none",
                         "no_pyramiding": True,
                         "trend_dir_t": trend_dir_t,
+                        "entry_reason": entry_reason,
                         "entry_signal_ts": str(signal_bar.ts),
                         "atr_entry": st.atr_entry,
                         "stop_distance": st.stop_distance_frozen,

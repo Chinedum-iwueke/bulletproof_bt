@@ -22,6 +22,7 @@ def test_l1_h5b_entry_logging_fields_present() -> None:
         if out:
             md = out[0].metadata
             for key in (
+                "entry_reason",
                 "sigma_t",
                 "sigma_star",
                 "s_t",

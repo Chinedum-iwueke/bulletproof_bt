@@ -298,6 +298,7 @@ class L1H5BVolManagedHarTrendStrategy(Strategy):
             if trend_dir_t == 0 or not gate_pass:
                 continue
             side = Side.BUY if trend_dir_t > 0 else Side.SELL
+            entry_reason = "vol_managed_har_trend_long" if side == Side.BUY else "vol_managed_har_trend_short"
             if self._disallow_flip and current is not None and ((current == Side.BUY and side == Side.SELL) or (current == Side.SELL and side == Side.BUY)):
                 continue
             if self._no_pyramiding and current is not None:
@@ -356,6 +357,7 @@ class L1H5BVolManagedHarTrendStrategy(Strategy):
                         "tp_update_policy": "none",
                         "gate_model": "har_rv_percentile",
                         "trend_dir_t": trend_dir_t,
+                        "entry_reason": entry_reason,
                         "gate_pass": gate_pass,
                         "rv1_t": rv_payload["rv1_t"],
                         "rv_d": rv_payload["rv_d"],

@@ -29,6 +29,7 @@ def test_entry_logging_fields_present() -> None:
     )
     md = out[0].metadata
     for key in (
+        "entry_reason",
         "sigma_t",
         "sigma_star",
         "size_factor_t",
