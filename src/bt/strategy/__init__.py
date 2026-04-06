@@ -49,6 +49,7 @@ from bt.strategy.l1_h1b_salvage import L1H1BSalvageStrategy  # noqa: E402
 from bt.strategy.l1_h2b_confirmed_fade import L1H2BConfirmedFadeStrategy  # noqa: E402
 from bt.strategy.l1_h5a_vol_managed_trend import L1H5AVolManagedTrendStrategy  # noqa: E402
 from bt.strategy.l1_h5b_vol_managed_har_trend import L1H5BVolManagedHarTrendStrategy  # noqa: E402
+from bt.strategy.l1_h6a_vov_gate_mean_reversion import L1H6AVovGateMeanReversionStrategy  # noqa: E402
 
 __all__ = [
     "STRATEGY_REGISTRY",
@@ -68,4 +69,5 @@ __all__ = [
     "L1H2BConfirmedFadeStrategy",
     "L1H5AVolManagedTrendStrategy",
     "L1H5BVolManagedHarTrendStrategy",
+    "L1H6AVovGateMeanReversionStrategy",
 ]

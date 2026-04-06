@@ -1,0 +1,142 @@
+metadata:
+  hypothesis_id: "L1-H6A"
+  title: "Volatility-of-Volatility Gate Applied to Mean Reversion"
+  description: "L1-H2 baseline with a past-only vol-of-vol quantile gate to suppress entries during unstable volatility regimes."
+  research_layer: "L1"
+  hypothesis_family: "mean_reversion"
+  version: "1.0.0"
+  author: "bulletproof_bt"
+  created_at: "2026-04-06T00:00:00Z"
+
+hypothesis_id: "L1-H6A"
+title: "Volatility-of-Volatility Gate Applied to Mean Reversion"
+description: "L1-H2 baseline with a past-only vol-of-vol quantile gate to suppress entries during unstable volatility regimes."
+research_layer: "L1"
+hypothesis_family: "mean_reversion"
+version: "1.0.0"
+author: "bulletproof_bt"
+created_at: "2026-04-06T00:00:00Z"
+
+required_indicators:
+  - atr
+  - session_vwap
+
+indicator_defaults:
+  atr_period: 14
+  vwap_mode: "session"
+  signal_timeframe_default: "5m"
+  rv_formula: "atr_14 / close"
+  vov_formula: "rolling_std(rv_t, Wvov_bars)"
+  vov_history_days: 30
+  Wvov_hours_grid: [24, 72]
+  Wvov_bars_mapping_5m:
+    "24h": 288
+    "72h": 864
+  vov_history_bars_mapping_5m_30d: 8640
+  quantile_method: "deterministic_linear_interpolation_past_only"
+
+parameter_grid:
+  Wvov_hours: [24, 72]
+  q_vov: [0.6, 0.7]
+  z0: [0.8, 1.0]
+  k_atr: [1.5, 2.0]
+  T_hold: [12, 24]
+  size_adjustment_enabled: [false]
+  vov_ref: [0.005]
+  cap_multiplier: [1.5]
+
+variant_constraints:
+  exclude:
+    - {z0: 0.8, k_atr: 2.0, T_hold: 24}
+    - {z0: 1.0, k_atr: 1.5, T_hold: 24}
+
+gates:
+  - field: "vov_gate_t"
+    op: "=="
+    value: true
+
+entry:
+  strategy: "l1_h6a_vov_gate_mean_reversion"
+  signal_timeframe: "5m"
+  timeframe: "5m"
+  base_execution_timeframe: "1m"
+  order_timing: "bar_close_submit_next_bar_execution"
+  no_pyramiding: true
+
+exit:
+  stop_kind: "atr_multiple"
+  stop_model: "fixed_atr_multiple"
+  stop_atr_param: "k_atr"
+  stop_update_policy: "frozen_at_entry"
+  atr_source_timeframe: "signal_timeframe"
+  time_stop_param: "T_hold"
+  hold_time_unit: "signal_bars"
+  profit_exit_model: "vwap_touch"
+  vwap_mode: "session"
+  exit_monitoring_timeframe: "1m"
+
+execution_semantics:
+  signal_timeframe: "5m"
+  base_execution_timeframe: "1m"
+  exit_monitoring_timeframe: "1m"
+  base_data_frequency_expected: "1m"
+  strategy_family: "mean_reversion"
+  baseline_reference: "L1-H2"
+  vwap_mode: "session"
+  vol_proxy: "atr_over_close"
+  vov_model: "rolling_std_of_rv"
+  gate_model: "vov_quantile_gate"
+  stop_model: "fixed_atr_multiple"
+  stop_update_policy: "frozen_at_entry"
+  tp_update_policy: "none"
+  hold_time_unit: "signal_bars"
+  atr_source_timeframe: "signal_timeframe"
+  profit_exit_model: "vwap_touch"
+  no_pyramiding: true
+
+sizing:
+  mode: "constant_r"
+  formula: "qty = (equity * r_per_trade) / (k_atr * atr_entry_signal)"
+  optional_overlay:
+    size_adjustment_enabled: false
+    candidate_formula: "qty *= min(cap_multiplier, vov_ref / vov_t)"
+  notes: "Dynamic vov-based size adjustment is schema-supported but disabled in L1-H6A baseline."
+
+risk_controls:
+  max_positions: 5
+  forbid_adding_to_losers: true
+  enforce_min_stop_distance: true
+
+evaluation:
+  required_tiers: ["Tier2", "Tier3"]
+
+logging:
+  schema_version: "1.0"
+  required_fields:
+    - run_id
+    - hypothesis_id
+    - tier
+    - ev_r_gross
+    - ev_r_net
+    - status
+    - rv_t
+    - vov_t
+    - Wvov_hours
+    - q_vov
+    - q_threshold_t
+    - vov_gate_t
+    - session_vwap_t
+    - z_vwap_t
+    - entry_reason
+    - atr_entry
+    - stop_distance
+    - stop_price
+    - signal_timeframe
+    - exit_monitoring_timeframe
+
+notes:
+  falsification_criteria:
+    - "If vov buckets show no monotonic degradation in net EV or realized slippage, reject the gate overlay."
+  failure_modes:
+    - "The vov gate may be partially redundant with simpler volatility gates."
+    - "The gate may miss sudden jump regimes that emerge before vov history updates."

@@ -49,3 +49,4 @@ class HypothesisSchema:
     evaluation: EvaluationSpec = field(default_factory=EvaluationSpec)
     logging: LoggingSpec = field(default_factory=LoggingSpec)
     runtime: RuntimeControls = field(default_factory=RuntimeControls)
+    variant_constraints: dict[str, Any] = field(default_factory=dict)

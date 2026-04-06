@@ -62,6 +62,7 @@ class HypothesisContract:
                 tags=tuple(runtime_raw.get("tags", [])),
                 notes=str(runtime_raw.get("notes", "")),
             ),
+            variant_constraints=dict(data.get("variant_constraints", {})),
         )
         contract = cls(schema)
         contract.validate()
@@ -116,6 +117,10 @@ class HypothesisContract:
             })
         return payload
 
+
+    def _matches_constraint(self, params: dict[str, Any], constraint: dict[str, Any]) -> bool:
+        return all(params.get(key) == value for key, value in constraint.items())
+
     def _is_valid_variant(self, params: dict[str, Any]) -> bool:
         if "z_reentry" in params and "z_ext" in params:
             try:
@@ -123,6 +128,13 @@ class HypothesisContract:
                     return False
             except (TypeError, ValueError):
                 return False
+
+        constraints = self.schema.variant_constraints if isinstance(self.schema.variant_constraints, dict) else {}
+        excluded = constraints.get("exclude")
+        if isinstance(excluded, (list, tuple)):
+            for constraint in excluded:
+                if isinstance(constraint, dict) and self._matches_constraint(params, constraint):
+                    return False
 
         mode = params.get("trail_activation_mode")
         if mode is None:
