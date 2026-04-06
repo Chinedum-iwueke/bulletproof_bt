@@ -259,6 +259,18 @@ def _flatten_params(params: dict[str, Any]) -> dict[str, Any]:
     return flat
 
 
+
+
+def _series_from_candidates(df: pd.DataFrame, *candidates: str, default: float | str | None = None) -> pd.Series:
+    for name in candidates:
+        if name in df.columns:
+            return df[name]
+    return pd.Series(default, index=df.index)
+
+
+def _numeric_series_from_candidates(df: pd.DataFrame, *candidates: str, default: float | None = None) -> pd.Series:
+    return pd.to_numeric(_series_from_candidates(df, *candidates, default=default), errors="coerce")
+
 def _parse_timestamp_utc(series: pd.Series) -> pd.Series:
     parsed = pd.to_datetime(series, errors="coerce", utc=True)
     return parsed
@@ -272,22 +284,17 @@ def _compute_run_metrics_from_trades(trades_df: pd.DataFrame, log: ExtractionLog
         return {}
 
     pnl_net = pd.to_numeric(trades_df[pnl_net_col], errors="coerce")
-    pnl_gross = pd.to_numeric(
-        trades_df.get("pnl_price", trades_df.get("pnl", trades_df.get("pnl_net"))),
-        errors="coerce",
-    )
-    pnl_r = pd.to_numeric(trades_df.get("r_multiple_net", trades_df.get("realized_r_net")), errors="coerce")
-    fees = pd.to_numeric(trades_df.get("fees_paid", trades_df.get("fees", 0.0)), errors="coerce").fillna(0.0)
-    slippage = pd.to_numeric(trades_df.get("slippage", trades_df.get("slippage_total", 0.0)), errors="coerce").fillna(0.0)
+    pnl_gross = _numeric_series_from_candidates(trades_df, "pnl_price", "pnl", "pnl_net")
+    pnl_r = _numeric_series_from_candidates(trades_df, "r_multiple_net", "realized_r_net")
+    fees = _numeric_series_from_candidates(trades_df, "fees_paid", "fees", default=0.0).fillna(0.0)
+    slippage = _numeric_series_from_candidates(trades_df, "slippage", "slippage_total", default=0.0).fillna(0.0)
 
     winners = pnl_net[pnl_net > 0]
     losers = pnl_net[pnl_net < 0]
     gross_wins = winners.sum() if not winners.empty else 0.0
     gross_losses = abs(losers.sum()) if not losers.empty else 0.0
 
-    durations = pd.to_numeric(
-        trades_df.get("holding_period_bars_signal", trades_df.get("duration_bars")), errors="coerce"
-    )
+    durations = _numeric_series_from_candidates(trades_df, "holding_period_bars_signal", "duration_bars")
 
     side = trades_df.get("side", pd.Series(index=trades_df.index, dtype=object)).astype(str).str.upper()
     exit_reason_counts = {}
@@ -310,8 +317,8 @@ def _compute_run_metrics_from_trades(trades_df: pd.DataFrame, log: ExtractionLog
         "short_trade_count": int((side == "SELL").sum()),
         "avg_duration_bars": float(durations.mean()) if durations.notna().any() else None,
         "median_duration_bars": float(durations.median()) if durations.notna().any() else None,
-        "avg_mae_r": float(pd.to_numeric(trades_df.get("mae_r"), errors="coerce").mean()) if "mae_r" in trades_df.columns else None,
-        "avg_mfe_r": float(pd.to_numeric(trades_df.get("mfe_r"), errors="coerce").mean()) if "mfe_r" in trades_df.columns else None,
+        "avg_mae_r": float(_numeric_series_from_candidates(trades_df, "mae_r").mean()) if "mae_r" in trades_df.columns else None,
+        "avg_mfe_r": float(_numeric_series_from_candidates(trades_df, "mfe_r").mean()) if "mfe_r" in trades_df.columns else None,
         "fees_total": float(fees.sum()),
         "slippage_total": float(slippage.sum()),
         "exit_reason_distribution_json": json.dumps(exit_reason_counts, sort_keys=True),
