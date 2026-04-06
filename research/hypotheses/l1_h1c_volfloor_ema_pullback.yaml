@@ -1,0 +1,135 @@
+hypothesis_id: "L1-H1C"
+title: "Volatility-Floor EMA Pullback Continuation"
+description: "Contractized volfloor_ema_pullback strategy with ADX confirmation and optional efficiency-ratio gating on 15m signal bars over 1m base execution."
+research_layer: "L1"
+hypothesis_family: "trend_continuation"
+version: "1.0.0"
+author: "bulletproof_bt"
+created_at: "2026-04-06T00:00:00Z"
+
+required_indicators:
+  - atr
+  - adx
+  - ema
+
+indicator_defaults:
+  timeframe: "15m"
+  atr_period: 14
+  vol_lookback_bars: 2880
+  ema_fast_period: 20
+  ema_slow_period: 50
+  stop_atr_mult: 2.0
+  exit_type: "ema_trend_end"
+  chandelier_lookback: 22
+  chandelier_mult: 2.5
+
+gates:
+  - field: "adx"
+    op: ">="
+    param: "adx_min"
+  - field: "vol_pct_rank"
+    op: ">="
+    param: "vol_floor_pct"
+  - field: "efficiency_ratio"
+    op: ">"
+    param: "er_min"
+
+parameter_grid:
+  timeframe: ["15m"]
+  atr_period: [14]
+  vol_lookback_bars: [2880]
+  ema_fast_period: [20]
+  ema_slow_period: [50]
+  stop_atr_mult: [2.0]
+  exit_type: ["ema_trend_end"]
+  chandelier_lookback: [22]
+  chandelier_mult: [2.5]
+  vol_floor_pct: [70, 80, 85]
+  adx_min: [22, 25]
+  er_min: [0.55, 0.45, 0.35]
+  er_lookback: [10, 16, 20]
+
+entry:
+  strategy: "volfloor_ema_pullback"
+  signal_timeframe: "15m"
+  timeframe: "15m"
+  base_execution_timeframe: "1m"
+  order_timing: "bar_close_submit_next_bar_execution"
+  disallow_flip: true
+  no_pyramiding: true
+
+exit:
+  stop_kind: "atr_multiple"
+  stop_model: "fixed_atr_multiple_at_entry"
+  stop_atr_param: "stop_atr_mult"
+  stop_update_policy: "frozen_at_entry"
+  atr_source_timeframe: "signal_timeframe"
+  exit_type: "ema_trend_end"
+  exit_monitoring_timeframe: "1m"
+
+execution_semantics:
+  signal_timeframe: "15m"
+  base_execution_timeframe: "1m"
+  base_data_frequency_expected: "1m"
+  strategy_family: "trend_continuation"
+  strategy_variant: "ema_pullback"
+  trend_model: "ema_fast_slow"
+  volatility_gate_model: "natr_percentile_rank_0_100"
+  adx_filter: true
+  efficiency_ratio_filter: "optional_threshold"
+  pullback_trigger_model: "ema_fast_touch_close_back_in_trend"
+  stop_model: "fixed_atr_multiple_at_entry"
+  stop_update_policy: "frozen_at_entry"
+  tp_update_policy: "none"
+  hold_time_unit: "event_driven"
+  exit_model: "ema_trend_end"
+  atr_source_timeframe: "signal_timeframe"
+  exit_monitoring_timeframe: "1m"
+  htf_update_policy: "process_new_completed_bars_only"
+  state_discipline: "single_position_no_pyramiding"
+
+evaluation:
+  required_tiers: ["Tier2", "Tier3"]
+
+logging:
+  schema_version: "1.0"
+  required_fields:
+    - run_id
+    - hypothesis_id
+    - tier
+    - status
+    - strategy
+    - tf
+    - signal_timeframe
+    - exit_monitoring_timeframe
+    - exit_type
+    - ema_fast
+    - ema_slow
+    - adx
+    - efficiency_ratio
+    - er_min
+    - vol_pct_rank
+    - vol_floor_pct
+    - long_bias
+    - short_bias
+    - long_pullback
+    - short_pullback
+    - entry_reference_price
+    - stop_price
+    - stop_distance
+    - stop_source
+    - stop_details
+    - chandelier
+    - spread_cost
+    - slippage_cost
+    - fee_cost
+    - exit_reason
+    - mfe
+    - mae
+
+notes:
+  falsification_criteria:
+    - "If net expectancy is non-positive across Tier2 and Tier3, reject hypothesis."
+  failure_modes:
+    - "Volatility floor can over-select late trend phases with limited continuation."
+    - "ER gate can reduce trade count to statistically weak sample sizes."

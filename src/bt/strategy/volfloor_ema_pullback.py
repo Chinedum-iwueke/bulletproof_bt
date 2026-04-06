@@ -175,6 +175,8 @@ class VolFloorEmaPullbackStrategy(Strategy):
             base_meta = {
                 "strategy": "volfloor_ema_pullback",
                 "tf": self._timeframe,
+                "signal_timeframe": self._timeframe,
+                "exit_monitoring_timeframe": "1m",
                 "exit_type": self._exit_type,
                 "ema_fast": ema_fast,
                 "ema_slow": ema_slow,
@@ -183,6 +185,8 @@ class VolFloorEmaPullbackStrategy(Strategy):
                 "er_min": self._er_min,
                 "vol_pct_rank": vol_rank,
                 "vol_floor_pct": self._vol_floor_pct,
+                "stop_update_policy": "frozen_at_entry",
+                "stop_model": "fixed_atr_multiple_at_entry",
                 "chandelier": {"lookback": self._chandelier_lookback, "mult": self._chandelier_mult},
             }
 
@@ -232,6 +236,10 @@ class VolFloorEmaPullbackStrategy(Strategy):
                                 confidence=1.0,
                                 metadata={
                                     **base_meta,
+                                    "long_bias": long_bias,
+                                    "short_bias": short_bias,
+                                    "long_pullback": long_pullback,
+                                    "short_pullback": short_pullback,
                                     "stop_price": stop_price,
                                     "stop_source": "ema_pullback_atr",
                                     "stop_details": {
@@ -258,6 +266,10 @@ class VolFloorEmaPullbackStrategy(Strategy):
                                 confidence=1.0,
                                 metadata={
                                     **base_meta,
+                                    "long_bias": long_bias,
+                                    "short_bias": short_bias,
+                                    "long_pullback": long_pullback,
+                                    "short_pullback": short_pullback,
                                     "stop_price": stop_price,
                                     "stop_source": "ema_pullback_atr",
                                     "stop_details": {

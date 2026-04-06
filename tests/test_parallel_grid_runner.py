@@ -33,6 +33,16 @@ def test_l1_h1_manifest_generation_is_deterministic() -> None:
     assert rows_a[0]["row_id"] == "row_00001"
     assert rows_a[0]["tier"] == "Tier2"
 
+def test_l1_h1c_manifest_row_count_matches_registered_grid() -> None:
+    contract = HypothesisContract.from_yaml("research/hypotheses/l1_h1c_volfloor_ema_pullback.yaml")
+    rows = build_hypothesis_manifest_rows(
+        contract=contract,
+        hypothesis_path=Path("research/hypotheses/l1_h1c_volfloor_ema_pullback.yaml"),
+        phase="tier2",
+    )
+    assert len(rows) == 54
+    assert {row["tier"] for row in rows} == {"Tier2"}
+
 
 def test_params_json_roundtrip() -> None:
     payload = {"theta_vol": 70, "tp_enabled": True, "k_atr": 2.0}
