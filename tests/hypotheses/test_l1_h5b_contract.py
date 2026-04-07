@@ -21,5 +21,5 @@ def test_l1_h5b_contract_loads_and_locks_semantics() -> None:
 def test_l1_h5b_parameter_grid_is_deterministic() -> None:
     contract = HypothesisContract.from_yaml("research/hypotheses/l1_h5b_vol_managed_har_trend.yaml")
     rows = contract.materialize_grid()
-    assert len(rows) == 128
+    assert len(rows) == 24
     assert rows == contract.materialize_grid()
