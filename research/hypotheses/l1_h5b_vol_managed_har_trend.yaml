@@ -27,6 +27,27 @@ parameter_grid:
   s_max: [1.0, 1.5]
   s_min: [0.25, 0.5]
 
+variant_constraints:
+  exclude:
+    # Block C keeps only gate=0.7, k=2.0, s_max=1.5 with vol-specific s_min pairing when T_hold=24.
+    - {T_hold: 24, gate_quantile: 0.3}
+    - {T_hold: 24, k: 1.5}
+    - {T_hold: 24, s_max: 1.0}
+    - {T_hold: 24, vol_window_hours: 24, s_min: 0.5}
+    - {T_hold: 24, vol_window_hours: 72, s_min: 0.25}
+
+    # For T_hold=48, keep neutral clip core (s_max=1.0, s_min=0.5) plus explicit frontier checks.
+    - {T_hold: 48, s_max: 1.5, s_min: 0.25}
+    - {T_hold: 48, s_max: 1.5, s_min: 0.5, fit_window_days: 180}
+    - {T_hold: 48, s_max: 1.5, s_min: 0.5, fit_window_days: 365, gate_quantile: 0.7}
+    - {T_hold: 48, s_max: 1.5, s_min: 0.5, fit_window_days: 365, gate_quantile: 0.3, vol_window_hours: 24}
+    - {T_hold: 48, s_max: 1.5, s_min: 0.5, fit_window_days: 365, gate_quantile: 0.3, vol_window_hours: 72, k: 1.5}
+
+    # Clip-sensitivity slice (Block D) keeps only the intended 3 of 16 variants at s_min=0.25.
+    - {T_hold: 48, s_max: 1.0, s_min: 0.25, k: 1.5}
+    - {T_hold: 48, s_max: 1.0, s_min: 0.25, fit_window_days: 365}
+    - {T_hold: 48, s_max: 1.0, s_min: 0.25, fit_window_days: 180, vol_window_hours: 72, gate_quantile: 0.3}
+
 gates:
   - field: "rvhat_pct_t"
     op: ">="
