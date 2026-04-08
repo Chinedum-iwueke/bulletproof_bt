@@ -31,7 +31,11 @@ class RunArtifactStatus:
 
 
 def detect_run_artifact_status(run_dir: Path) -> RunArtifactStatus:
-    if not run_dir.exists():
+    try:
+        exists = run_dir.exists()
+    except OSError as exc:
+        return RunArtifactStatus(state="INCOMPLETE", return_code=None, message=f"run directory inaccessible: {exc}")
+    if not exists:
         return RunArtifactStatus(state="MISSING", return_code=None, message="run directory missing")
     status_path = run_dir / "run_status.json"
     if not status_path.exists():

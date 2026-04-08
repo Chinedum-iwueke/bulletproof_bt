@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from datetime import datetime, timezone
@@ -32,7 +33,18 @@ def _slug_value(value: Any) -> str:
 
 def _variant_slug(grid_id: str, params: dict[str, Any]) -> str:
     suffix = "_".join(f"{key}-{_slug_value(params[key])}" for key in sorted(params.keys()))
-    return f"{grid_id}__{suffix}" if suffix else grid_id
+    if not suffix:
+        return grid_id
+
+    full_slug = f"{grid_id}__{suffix}"
+    max_slug_len = 160
+    if len(full_slug) <= max_slug_len:
+        return full_slug
+
+    digest = hashlib.sha1(full_slug.encode("utf-8")).hexdigest()[:12]
+    remaining = max_slug_len - len(grid_id) - len("____h-") - len(digest)
+    trimmed_suffix = suffix[:max(remaining, 0)].rstrip("_-")
+    return f"{grid_id}__{trimmed_suffix}__h-{digest}" if trimmed_suffix else f"{grid_id}__h-{digest}"
 
 
 def build_hypothesis_manifest_rows(*, contract: HypothesisContract, hypothesis_path: Path, phase: str) -> list[dict[str, str]]:

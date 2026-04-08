@@ -8,6 +8,7 @@ import pytest
 
 from bt.experiments.manifest import decode_params, encode_params, read_manifest_csv, write_manifest_csv
 from bt.experiments.parallel_grid import (
+    _variant_slug,
     build_hypothesis_manifest_rows,
     cli_run_parallel_hypothesis_grid,
     run_hypothesis_manifest_in_parallel,
@@ -208,3 +209,19 @@ def test_status_summary_written(tmp_path: Path) -> None:
         written = list(csv.DictReader(handle))
     assert len(written) == 1
     assert statuses[0]["status"] == "SKIPPED"
+
+
+def test_variant_slug_is_bounded_and_stable_for_large_param_sets() -> None:
+    params = {f"param_{idx:03d}": f"{'x' * 12}_{idx}" for idx in range(30)}
+    slug_a = _variant_slug("g00007", params)
+    slug_b = _variant_slug("g00007", params)
+    assert slug_a == slug_b
+    assert len(slug_a) <= 160
+    assert "__h-" in slug_a
+
+
+def test_completion_detection_handles_invalid_long_paths() -> None:
+    too_long = Path("a" * 5000)
+    status = detect_run_artifact_status(too_long)
+    assert status.state == "INCOMPLETE"
+    assert "inaccessible" in status.message
