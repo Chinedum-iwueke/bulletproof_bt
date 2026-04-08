@@ -30,6 +30,7 @@ def test_entry_metadata_contains_family_logging_fields() -> None:
     assert out
     meta = out[0].metadata
     for key in [
+        "entry_reason",
         "squeeze_on",
         "squeeze_duration",
         "expansion_trigger_state",

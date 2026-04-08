@@ -393,6 +393,7 @@ class L1H7SqueezeExpansionPullbackStrategy(Strategy):
                             "strategy": "l1_h7_squeeze_expansion_pullback",
                             "family_variant": self._family_variant,
                             "family_pattern": "squeeze_expansion_pullback",
+                            "entry_reason": "squeeze_expansion_pullback_long" if side == Side.BUY else "squeeze_expansion_pullback_short",
                             "signal_timeframe": self._timeframe,
                             "exit_monitoring_timeframe": "1m",
                             "base_data_frequency_expected": "1m",
