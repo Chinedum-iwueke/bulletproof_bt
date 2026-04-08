@@ -8,6 +8,8 @@ import pytest
 
 from bt.experiments.manifest import decode_params, encode_params, read_manifest_csv, write_manifest_csv
 from bt.experiments.parallel_grid import (
+    _normalized_output_dir,
+    _variant_slug,
     build_hypothesis_manifest_rows,
     cli_run_parallel_hypothesis_grid,
     run_hypothesis_manifest_in_parallel,
@@ -208,3 +210,66 @@ def test_status_summary_written(tmp_path: Path) -> None:
         written = list(csv.DictReader(handle))
     assert len(written) == 1
     assert statuses[0]["status"] == "SKIPPED"
+
+
+def test_variant_slug_is_bounded_and_stable_for_large_param_sets() -> None:
+    params = {f"param_{idx:03d}": f"{'x' * 12}_{idx}" for idx in range(30)}
+    slug_a = _variant_slug("g00007", params)
+    slug_b = _variant_slug("g00007", params)
+    assert slug_a == slug_b
+    assert len(slug_a) <= 160
+    assert "__h-" in slug_a
+
+
+def test_completion_detection_handles_invalid_long_paths() -> None:
+    too_long = Path("a" * 5000)
+    status = detect_run_artifact_status(too_long)
+    assert status.state == "INCOMPLETE"
+    assert "inaccessible" in status.message
+
+
+def test_legacy_manifest_output_dir_is_normalized(tmp_path: Path) -> None:
+    config = tmp_path / "engine.yaml"
+    config.write_text("{}", encoding="utf-8")
+    data_path = tmp_path / "data"
+    data_path.mkdir()
+    params_json = json.dumps({"family_variant": "L1-H7A", "signal_timeframe": "15m"})
+    long_output_dir = "runs/" + ("x" * 400)
+    rows = [
+        {
+            "row_id": "row_00001",
+            "hypothesis_id": "L1-H7A",
+            "hypothesis_path": "research/hypotheses/l1_h7a_squeeze_expansion_pullback.yaml",
+            "phase": "tier2",
+            "tier": "Tier2",
+            "variant_id": "g00000",
+            "config_hash": "abc",
+            "params_json": params_json,
+            "run_slug": "legacy_slug",
+            "output_dir": long_output_dir,
+            "expected_status": "pending",
+            "enabled": "true",
+            "notes": "",
+        }
+    ]
+
+    statuses, failures = run_hypothesis_manifest_in_parallel(
+        manifest_rows=rows,
+        experiment_root=tmp_path / "exp",
+        config_path=config,
+        local_config=None,
+        data_path=data_path,
+        max_workers=1,
+        skip_completed=False,
+        override_paths=[],
+        dry_run=True,
+    )
+
+    assert failures == []
+    expected_output = _normalized_output_dir(
+        row_id="row_00001",
+        variant_id="g00000",
+        tier="Tier2",
+        params_json=params_json,
+    )
+    assert statuses[0]["output_dir"] == expected_output

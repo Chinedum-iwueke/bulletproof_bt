@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from datetime import datetime, timezone
@@ -32,7 +33,24 @@ def _slug_value(value: Any) -> str:
 
 def _variant_slug(grid_id: str, params: dict[str, Any]) -> str:
     suffix = "_".join(f"{key}-{_slug_value(params[key])}" for key in sorted(params.keys()))
-    return f"{grid_id}__{suffix}" if suffix else grid_id
+    if not suffix:
+        return grid_id
+
+    full_slug = f"{grid_id}__{suffix}"
+    max_slug_len = 160
+    if len(full_slug) <= max_slug_len:
+        return full_slug
+
+    digest = hashlib.sha1(full_slug.encode("utf-8")).hexdigest()[:12]
+    remaining = max_slug_len - len(grid_id) - len("____h-") - len(digest)
+    trimmed_suffix = suffix[:max(remaining, 0)].rstrip("_-")
+    return f"{grid_id}__{trimmed_suffix}__h-{digest}" if trimmed_suffix else f"{grid_id}__h-{digest}"
+
+
+def _normalized_output_dir(*, row_id: str, variant_id: str, tier: str, params_json: str) -> str:
+    params = decode_params(params_json)
+    run_slug = _variant_slug(variant_id, params)
+    return f"runs/{row_id}__{run_slug}__{tier.lower()}"
 
 
 def build_hypothesis_manifest_rows(*, contract: HypothesisContract, hypothesis_path: Path, phase: str) -> list[dict[str, str]]:
@@ -273,7 +291,19 @@ def run_hypothesis_manifest_in_parallel(
         if not override.exists():
             raise ValueError(f"--override file does not exist: {override}")
 
+    normalized_rows: list[dict[str, str]] = []
     for row in manifest_rows:
+        normalized = dict(row)
+        normalized["output_dir"] = _normalized_output_dir(
+            row_id=normalized["row_id"],
+            variant_id=normalized["variant_id"],
+            tier=normalized["tier"],
+            params_json=normalized["params_json"],
+        )
+        normalized["run_slug"] = Path(normalized["output_dir"]).name
+        normalized_rows.append(normalized)
+
+    for row in normalized_rows:
         row_out_dir = experiment_root / row["output_dir"]
         completed_state = detect_run_artifact_status(row_out_dir)
         if row["enabled"] == "false":
@@ -388,8 +418,8 @@ def run_hypothesis_manifest_in_parallel(
     failures = [row for row in status_rows if row["status"] == "FAILED"]
     write_status_csv(experiment_root / "summaries" / "manifest_status.csv", status_rows)
     write_status_csv(experiment_root / "summaries" / "failures.csv", failures)
-    _materialize_phase_rollup(experiment_root, manifest_rows, status_rows)
-    _materialize_phase_segment_rollups(experiment_root, manifest_rows, status_rows)
+    _materialize_phase_rollup(experiment_root, normalized_rows, status_rows)
+    _materialize_phase_segment_rollups(experiment_root, normalized_rows, status_rows)
     return status_rows, failures
 
 
