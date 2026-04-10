@@ -118,7 +118,8 @@ class SymbolDataSource:
             frame = pd.read_parquet(self._path)
             batches = [frame]
         else:
-            parquet_file = pa.parquet.ParquetFile(self._path)
+            source = pa.memory_map(str(self._path), "r")
+            parquet_file = pa.parquet.ParquetFile(source)
             batches = (
                 batch.to_pandas()
                 for batch in parquet_file.iter_batches(batch_size=self._chunksize)

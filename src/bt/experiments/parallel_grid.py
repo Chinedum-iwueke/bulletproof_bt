@@ -3,19 +3,29 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gc
 import hashlib
 import json
-from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+import multiprocessing
+import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from time import monotonic
 from typing import Any
 
-import yaml
-
 from bt.experiments.hypothesis_runner import execute_hypothesis_variant, resolve_phase_tiers
 from bt.experiments.manifest import decode_params, encode_params, read_manifest_csv, write_manifest_csv
+from bt.experiments.precompute_cache import PrecomputeRegistry, build_registry, stable_cache_key
+from bt.experiments.shared_data import SharedDatasetPlan, build_shared_dataset_plan, write_shared_cache_manifest
 from bt.experiments.status import detect_run_artifact_status, write_status_csv
+from bt.experiments.wave_scheduler import iter_waves, resolve_wave_size
+from bt.experiments.worker_bootstrap import (
+    WorkerLogger,
+    apply_thread_caps,
+    enable_worker_faulthandler,
+    write_worker_exception,
+)
 from bt.hypotheses.contract import HypothesisContract
 
 
@@ -239,16 +249,60 @@ def _execute_manifest_row(
     data_path: str,
     experiment_root: str,
     override_paths: list[str],
+    shared_dataset_plan: dict[str, Any],
+    precompute_registry: dict[str, dict[str, Any]],
 ) -> tuple[int, str]:
+    run_dir = Path(experiment_root) / row["output_dir"]
+    run_dir.mkdir(parents=True, exist_ok=True)
+    logger = WorkerLogger(run_dir)
+    faulthandler_path = enable_worker_faulthandler(run_dir)
+    bootstrap = apply_thread_caps(default_threads="1")
+    logger.event(
+        "bootstrap",
+        effective_thread_caps=bootstrap.effective_thread_caps,
+        changed_thread_caps=bootstrap.changed_thread_caps,
+        faulthandler_log=str(faulthandler_path),
+    )
+
+    params = decode_params(row["params_json"])
+    signal_timeframe = str(params.get("timeframe", "15m"))
+    signature_key = stable_cache_key(
+        dataset_id=str(shared_dataset_plan.get("dataset_id", "")),
+        timeframe=signal_timeframe,
+        family=str(row["hypothesis_id"]),
+        params={k: params.get(k) for k in sorted(params.keys())},
+        engine_version="parallel_grid_v2",
+    )
+    precompute = precompute_registry.get(signature_key)
+
+    run_context = {
+        "row_id": row["row_id"],
+        "hypothesis_id": row["hypothesis_id"],
+        "variant_id": row["variant_id"],
+        "tier": row["tier"],
+        "run_dir": str(run_dir),
+        "dataset": shared_dataset_plan,
+        "precompute": precompute,
+        "effective_thread_caps": bootstrap.effective_thread_caps,
+        "pid": os.getpid(),
+    }
+    (run_dir / "run_context.json").write_text(json.dumps(run_context, indent=2, sort_keys=True), encoding="utf-8")
+
+    logger.start_phase("dataset_attach", dataset_source=shared_dataset_plan.get("source"))
+    logger.finish_phase("dataset_attach", dataset_id=shared_dataset_plan.get("dataset_id"))
+    logger.start_phase("precompute_attach", cache_key=signature_key)
+    logger.finish_phase("precompute_attach", precompute_status=(precompute or {}).get("status", "cold_built"))
+
     contract = HypothesisContract.from_yaml(row["hypothesis_path"])
     spec = {
         "hypothesis_id": row["hypothesis_id"],
         "grid_id": row["variant_id"],
         "config_hash": row["config_hash"],
-        "params": decode_params(row["params_json"]),
+        "params": params,
     }
     run_slug = Path(row["output_dir"]).name
     try:
+        logger.start_phase("execution")
         execute_hypothesis_variant(
             contract=contract,
             spec=spec,
@@ -260,9 +314,30 @@ def _execute_manifest_row(
             override_paths=override_paths,
             run_slug=run_slug,
         )
+        logger.finish_phase("execution", status="completed")
+        logger.event("completion", status="completed")
+        logger.close()
         return 0, ""
     except Exception as exc:
+        write_worker_exception(run_dir, exc)
+        logger.finish_phase("execution", status="failed", error=str(exc))
+        logger.event("completion", status="failed", error=str(exc))
+        logger.close()
         return 1, str(exc)
+
+
+def _build_preprocessing_signatures(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
+    unique: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        params = decode_params(row["params_json"])
+        signature = {
+            "strategy": row["hypothesis_id"],
+            "signal_timeframe": str(params.get("timeframe", "15m")),
+            "invariants": {key: params[key] for key in sorted(params.keys())},
+        }
+        key = json.dumps(signature, sort_keys=True)
+        unique[key] = signature
+    return list(unique.values())
 
 
 def run_hypothesis_manifest_in_parallel(
@@ -303,6 +378,15 @@ def run_hypothesis_manifest_in_parallel(
         normalized["run_slug"] = Path(normalized["output_dir"]).name
         normalized_rows.append(normalized)
 
+    shared_dataset: SharedDatasetPlan = build_shared_dataset_plan(dataset_path=data_path)
+    write_shared_cache_manifest(experiment_root, shared_dataset)
+    precompute: PrecomputeRegistry = build_registry(
+        experiment_root=experiment_root,
+        dataset_id=shared_dataset.dataset_id,
+        preprocessing_signatures=_build_preprocessing_signatures(normalized_rows),
+        engine_version="parallel_grid_v2",
+    )
+
     for row in normalized_rows:
         row_out_dir = experiment_root / row["output_dir"]
         completed_state = detect_run_artifact_status(row_out_dir)
@@ -338,81 +422,127 @@ def run_hypothesis_manifest_in_parallel(
 
     write_status_csv(experiment_root / "summaries" / "manifest_status.csv", sorted(status_rows, key=lambda x: x["row_id"]))
 
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        in_flight: dict[Any, tuple[dict[str, str], str, float]] = {}
+    if dry_run:
         for row in launch_rows:
-            started_at = _utc_now()
-            started_clock = monotonic()
-            if dry_run:
-                status_rows.append(
-                    {
-                        "row_id": row["row_id"],
-                        "variant_id": row["variant_id"],
-                        "tier": row["tier"],
-                        "status": "PENDING",
-                        "return_code": "",
-                        "started_at": started_at,
-                        "ended_at": "",
-                        "duration_sec": "",
-                        "output_dir": row["output_dir"],
-                        "error_message": "",
-                    }
-                )
-                continue
-            future = executor.submit(
-                _execute_manifest_row,
-                row=row,
-                config_path=str(config_path),
-                local_config=str(local_config) if local_config else None,
-                data_path=str(data_path),
-                experiment_root=str(experiment_root),
-                override_paths=[str(item) for item in override_paths],
-            )
-            in_flight[future] = (row, started_at, started_clock)
             status_rows.append(
                 {
                     "row_id": row["row_id"],
                     "variant_id": row["variant_id"],
                     "tier": row["tier"],
-                    "status": "RUNNING",
+                    "status": "PENDING",
                     "return_code": "",
-                    "started_at": started_at,
+                    "started_at": _utc_now(),
                     "ended_at": "",
                     "duration_sec": "",
                     "output_dir": row["output_dir"],
                     "error_message": "",
                 }
             )
-
-        while in_flight:
-            done, _ = wait(in_flight.keys(), return_when=FIRST_COMPLETED)
-            for future in done:
-                row, started_at, started_clock = in_flight.pop(future)
-                return_code, error_message = future.result()
-                ended_at = _utc_now()
-                duration = monotonic() - started_clock
-                artifact_state = detect_run_artifact_status(experiment_root / row["output_dir"])
-                status = "COMPLETED" if return_code == 0 and artifact_state.state == "SUCCESS" else "FAILED"
-                status_rows = [
-                    existing
-                    for existing in status_rows
-                    if not (existing["row_id"] == row["row_id"] and existing["status"] == "RUNNING")
-                ]
-                status_rows.append(
-                    {
+    else:
+        ctx = multiprocessing.get_context("spawn")
+        wave_size = resolve_wave_size(max_workers=max_workers)
+        failure_records: list[dict[str, Any]] = []
+        with ProcessPoolExecutor(max_workers=max_workers, mp_context=ctx) as executor:
+            for wave_idx, wave_rows in enumerate(iter_waves(launch_rows, wave_size=wave_size), start=1):
+                future_context: dict[Any, dict[str, Any]] = {}
+                for row in wave_rows:
+                    started_at = _utc_now()
+                    started_clock = monotonic()
+                    context = {
+                        "manifest_row_index": int(str(row["row_id"]).replace("row_", "") or 0),
                         "row_id": row["row_id"],
+                        "run_id": row["run_slug"],
+                        "hypothesis_id": row["hypothesis_id"],
                         "variant_id": row["variant_id"],
                         "tier": row["tier"],
-                        "status": status,
-                        "return_code": str(return_code),
+                        "params_snapshot": decode_params(row["params_json"]),
+                        "run_dir": str(experiment_root / row["output_dir"]),
                         "started_at": started_at,
-                        "ended_at": ended_at,
-                        "duration_sec": f"{duration:.3f}",
-                        "output_dir": row["output_dir"],
-                        "error_message": error_message or artifact_state.message,
+                        "started_clock": started_clock,
+                        "wave": wave_idx,
                     }
-                )
-                write_status_csv(experiment_root / "summaries" / "manifest_status.csv", sorted(status_rows, key=lambda x: x["row_id"]))
+                    future = executor.submit(
+                        _execute_manifest_row,
+                        row=row,
+                        config_path=str(config_path),
+                        local_config=str(local_config) if local_config else None,
+                        data_path=str(data_path),
+                        experiment_root=str(experiment_root),
+                        override_paths=[str(item) for item in override_paths],
+                        shared_dataset_plan={
+                            "dataset_path": shared_dataset.dataset_path,
+                            "dataset_id": shared_dataset.dataset_id,
+                            "dataset_mode": shared_dataset.dataset_mode,
+                            "source": shared_dataset.source,
+                            "metadata": shared_dataset.metadata,
+                        },
+                        precompute_registry={key: artifact.metadata | {"status": artifact.status} for key, artifact in precompute.artifacts.items()},
+                    )
+                    future_context[future] = context
+                    status_rows.append(
+                        {
+                            "row_id": row["row_id"],
+                            "variant_id": row["variant_id"],
+                            "tier": row["tier"],
+                            "status": "RUNNING",
+                            "return_code": "",
+                            "started_at": started_at,
+                            "ended_at": "",
+                            "duration_sec": "",
+                            "output_dir": row["output_dir"],
+                            "error_message": "",
+                        }
+                    )
+
+                for future in as_completed(list(future_context.keys())):
+                    context = future_context[future]
+                    started_clock = float(context["started_clock"])
+                    try:
+                        return_code, error_message = future.result()
+                    except Exception as exc:
+                        return_code = 1
+                        error_message = f"{type(exc).__name__}: {exc}"
+                    ended_at = _utc_now()
+                    duration = monotonic() - started_clock
+                    row_id = str(context["row_id"])
+                    row = next(item for item in wave_rows if item["row_id"] == row_id)
+                    artifact_state = detect_run_artifact_status(experiment_root / row["output_dir"])
+                    status = "COMPLETED" if return_code == 0 and artifact_state.state == "SUCCESS" else "FAILED"
+                    status_rows = [
+                        existing
+                        for existing in status_rows
+                        if not (existing["row_id"] == row_id and existing["status"] == "RUNNING")
+                    ]
+                    status_rows.append(
+                        {
+                            "row_id": row_id,
+                            "variant_id": row["variant_id"],
+                            "tier": row["tier"],
+                            "status": status,
+                            "return_code": str(return_code),
+                            "started_at": str(context["started_at"]),
+                            "ended_at": ended_at,
+                            "duration_sec": f"{duration:.3f}",
+                            "output_dir": row["output_dir"],
+                            "error_message": error_message or artifact_state.message,
+                        }
+                    )
+                    if status == "FAILED":
+                        failure_records.append(
+                            {
+                                **{k: v for k, v in context.items() if k != "started_clock"},
+                                "failed_at": ended_at,
+                                "error_message": error_message or artifact_state.message,
+                            }
+                        )
+                    write_status_csv(experiment_root / "summaries" / "manifest_status.csv", sorted(status_rows, key=lambda x: x["row_id"]))
+
+                future_context.clear()
+                gc.collect()
+        (experiment_root / "summaries" / "parallel_failures.json").write_text(
+            json.dumps(failure_records, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
 
     status_rows = sorted(status_rows, key=lambda x: x["row_id"])
     failures = [row for row in status_rows if row["status"] == "FAILED"]
