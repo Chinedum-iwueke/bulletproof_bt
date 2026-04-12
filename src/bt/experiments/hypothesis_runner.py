@@ -102,7 +102,13 @@ def _tier_to_execution_profile(tier: str) -> str:
 
 def build_runtime_override(contract: HypothesisContract, spec: dict[str, Any], tier: str) -> dict[str, Any]:
     entry = contract.schema.entry
-    signal_timeframe = str(entry.get("signal_timeframe", entry.get("timeframe", spec["params"].get("timeframe", "15m")))).lower()
+    spec_params = spec.get("params", {})
+    signal_timeframe = str(
+        spec_params.get(
+            "signal_timeframe",
+            spec_params.get("timeframe", entry.get("signal_timeframe", entry.get("timeframe", "15m"))),
+        )
+    ).lower()
     sem = contract.schema.execution_semantics
     htf_timeframes = [signal_timeframe]
     if isinstance(sem, dict) and str(sem.get("strategy_family", "")).lower() == "regime_switch":

@@ -20,3 +20,10 @@ def test_parallel_manifest_build_for_h7b(tmp_path: Path) -> None:
     )
     assert manifest.is_file()
     assert manifest.name == "l1_h7b_squeeze_expansion_pullback_timeframe_tier2_grid.csv"
+
+
+def test_runtime_override_uses_grid_signal_timeframe_for_h7b() -> None:
+    contract = HypothesisContract.from_yaml("research/hypotheses/l1_h7b_squeeze_expansion_pullback_timeframe.yaml")
+    spec = next(row for row in contract.to_run_specs() if row["params"]["signal_timeframe"] == "1h")
+    override = build_runtime_override(contract, spec, "Tier2")
+    assert override["strategy"]["timeframe"] == "1h"
