@@ -26,6 +26,23 @@ def test_l1_h8_variants_have_exactly_24_runs() -> None:
         assert contract.schema.execution_semantics["risk_accounting"] == "engine_canonical_R"
 
 
+def test_l1_h8_variant_management_contracts_match_family_cards() -> None:
+    h8a = HypothesisContract.from_yaml("research/hypotheses/l1_h8a.yaml")
+    h8b = HypothesisContract.from_yaml("research/hypotheses/l1_h8b.yaml")
+    h8c = HypothesisContract.from_yaml("research/hypotheses/l1_h8c.yaml")
+    h8d = HypothesisContract.from_yaml("research/hypotheses/l1_h8d.yaml")
+    h8e = HypothesisContract.from_yaml("research/hypotheses/l1_h8e.yaml")
+
+    assert "fail_fast_bars" not in h8a.schema.parameter_grid
+    assert "fail_fast_bars" not in h8b.schema.parameter_grid
+    assert "fail_fast_bars" not in h8d.schema.parameter_grid
+    assert h8a.schema.exit["runner_trail_model"] == "none"
+    assert h8b.schema.exit["runner_trail_model"] == "none"
+    assert h8c.schema.exit["runner_trail_model"] == "none"
+    assert h8d.schema.exit["runner_trail_model"] == "none"
+    assert h8e.schema.exit["runner_trail_model"] == "atr_multiple_after_tp1"
+
+
 def test_l1_h8_runtime_override_and_parallel_manifest() -> None:
     contract = HypothesisContract.from_yaml("research/hypotheses/l1_h8d.yaml")
     spec = next(row for row in contract.to_run_specs() if row["params"]["signal_timeframe"] == "1h")
@@ -82,6 +99,9 @@ def test_l1_h8_entry_logging_contains_required_fields() -> None:
     meta = out[0].metadata
     for key in [
         "trend_dir",
+        "ema_fast_entry",
+        "ema_slow_entry",
+        "adx_entry",
         "ema_fast",
         "ema_slow",
         "adx",
@@ -89,9 +109,13 @@ def test_l1_h8_entry_logging_contains_required_fields() -> None:
         "pullback_depth",
         "reference_hit",
         "continuation_trigger",
+        "continuation_trigger_state",
         "stop_distance",
+        "tp1_at_r",
+        "runner_mode",
         "signal_timeframe",
         "risk_accounting",
     ]:
         assert key in meta
     assert meta["risk_accounting"] == "engine_canonical_R"
+    assert meta["runner_mode"] == "tp1_then_breakeven_stop"

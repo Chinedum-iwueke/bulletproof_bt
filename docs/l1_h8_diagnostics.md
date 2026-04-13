@@ -52,7 +52,16 @@ Deterministic labels used for operational triage:
 All EV/expectancy-style metrics are built from engine-written trade fields (`r_multiple_gross`, `r_multiple_net`, `mfe_r`, `mae_r`).
 No strategy-local alternative R model is introduced.
 
+## Diagnostic input contract (required entry metadata)
+H8 entries should emit at minimum:
+- `trend_dir`, `ema_fast_entry`, `ema_slow_entry`, `adx_entry`
+- `signal_timeframe`, `exit_monitoring_timeframe`
+- `pullback_bars_used`, `pullback_reference_mode`, `pullback_reference_hit`
+- `pullback_depth_atr`, `pullback_depth_pct_of_prior_leg` (if derivable)
+- `reclaim_strength`, `continuation_trigger_state`
+- `stop_distance`, `stop_price`, `entry_reference_price`
+- `tp1_at_r` (if TP1 used), `fail_fast_bars` (if enabled), `trail_atr_mult` (if trailing enabled), `runner_mode`
+
 ## Known limitations
-- `time_to_tp1_bars` is approximated from available path diagnostics when explicit TP1 timestamps are absent.
-- `continuation_leg_vs_pullback_ratio` depends on pullback-depth metadata being present on entry fills.
-- Runner decomposition is based on trade-level endpoints and path diagnostics, not full intra-trade fill decomposition.
+- `time_to_tp1_bars` uses explicit path timing if available, otherwise falls back to a deterministic proxy.
+- `continuation_extension_atr` uses canonical trade-level `mfe_r` as ATR-normalized extension proxy.

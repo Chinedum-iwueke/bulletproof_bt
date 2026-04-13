@@ -98,12 +98,19 @@ def _make_h8_run(run_dir: Path, *, family_variant: str = "L1-H8A") -> None:
                 "pullback_depth_pct_of_prior_leg": 0.25,
                 "pullback_reference_mode": "ema_or_vwap",
                 "reference_hit": "ema",
+                "pullback_reference_hit": "ema",
                 "adx": 28,
+                "adx_entry": 28,
                 "ema_fast": 100.0,
+                "ema_fast_entry": 100.0,
                 "ema_slow": 99.0,
+                "ema_slow_entry": 99.0,
                 "session_vwap": 99.5,
                 "reclaim_strength": 0.7,
                 "partial_at_r": 1.5,
+                "tp1_at_r": 1.5,
+                "continuation_trigger_state": "triggered_reclaim_resume",
+                "runner_mode": "tp1_then_breakeven_stop",
             },
         },
         {
@@ -118,12 +125,19 @@ def _make_h8_run(run_dir: Path, *, family_variant: str = "L1-H8A") -> None:
                 "pullback_depth_pct_of_prior_leg": 0.8,
                 "pullback_reference_mode": "vwap_only",
                 "reference_hit": "vwap",
+                "pullback_reference_hit": "vwap",
                 "adx": 18,
+                "adx_entry": 18,
                 "ema_fast": 200.0,
+                "ema_fast_entry": 200.0,
                 "ema_slow": 201.0,
+                "ema_slow_entry": 201.0,
                 "session_vwap": 200.5,
                 "reclaim_strength": -0.1,
                 "partial_at_r": 2.0,
+                "tp1_at_r": 2.0,
+                "continuation_trigger_state": "triggered_reclaim_resume",
+                "runner_mode": "tp1_then_trail",
             },
         },
     ]
@@ -137,7 +151,7 @@ def test_h8_diagnostic_row_extraction_and_fields(tmp_path: Path) -> None:
     _make_h8_run(exp / "runs" / "row_1")
     rows = build_h8_trade_diagnostic_rows(exp)
     assert len(rows) == 2
-    assert {"pullback_depth_atr", "pullback_reference_mode", "failure_mode_label", "capture_ratio"}.issubset(rows.columns)
+    assert {"pullback_depth_atr", "pullback_reference_mode", "failure_mode_label", "capture_ratio", "continuation_trigger_state", "runner_mode", "tp1_at_r"}.issubset(rows.columns)
 
 
 def test_pullback_depth_bucket_scheme() -> None:

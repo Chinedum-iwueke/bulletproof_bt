@@ -74,6 +74,10 @@ class L1H8TrendContinuationPullbackStrategy(Strategy):
         self._trail_atr_mult = float(trail_atr_mult)
         self._fail_fast_bars = int(fail_fast_bars) if fail_fast_bars is not None else None
         self._family_variant = str(family_variant)
+        if self._pullback_reference_mode not in {"ema_only", "vwap_only", "ema_or_vwap"}:
+            raise ValueError(f"Unsupported pullback_reference_mode={self._pullback_reference_mode!r}")
+        self._fail_fast_enabled = self._family_variant in {"L1-H8C", "L1-H8E"} and self._fail_fast_bars is not None and self._fail_fast_bars > 0
+        self._runner_trailing_enabled = self._family_variant == "L1-H8E"
         self._state: dict[str, _State] = {}
 
     def _state_for(self, symbol: str) -> _State:
@@ -161,7 +165,7 @@ class L1H8TrendContinuationPullbackStrategy(Strategy):
 
         if has_new_signal_bar:
             st.signal_bars_held += 1
-        if self._fail_fast_bars is not None and has_new_signal_bar and not st.partial_taken and st.signal_bars_held >= self._fail_fast_bars:
+        if self._fail_fast_enabled and has_new_signal_bar and not st.partial_taken and st.signal_bars_held >= int(self._fail_fast_bars):
             signals.append(
                 Signal(
                     ts=ts,
@@ -220,7 +224,7 @@ class L1H8TrendContinuationPullbackStrategy(Strategy):
             else:
                 effective_stop = min(float(effective_stop), float(st.entry_price))
 
-        if st.protection_active and st.atr_entry is not None and st.atr_entry > 0:
+        if self._runner_trailing_enabled and st.protection_active and st.atr_entry is not None and st.atr_entry > 0:
             if side == Side.BUY and st.high_since_entry is not None:
                 candidate = float(st.high_since_entry) - (self._trail_atr_mult * float(st.atr_entry))
                 st.trail_stop_price = candidate if st.trail_stop_price is None else max(float(st.trail_stop_price), candidate)
@@ -251,6 +255,7 @@ class L1H8TrendContinuationPullbackStrategy(Strategy):
                         "atr_entry": st.atr_entry,
                         "protection_activated": st.protection_active,
                         "trail_stop_price": st.trail_stop_price,
+                        "runner_mode": "tp1_then_trail" if self._runner_trailing_enabled else "tp1_then_breakeven_stop",
                         "tp1_hit": st.partial_taken,
                         "exit_monitoring_timeframe": "1m",
                     },
@@ -274,6 +279,7 @@ class L1H8TrendContinuationPullbackStrategy(Strategy):
                         "atr_entry": st.atr_entry,
                         "protection_activated": st.protection_active,
                         "trail_stop_price": st.trail_stop_price,
+                        "runner_mode": "tp1_then_trail" if self._runner_trailing_enabled else "tp1_then_breakeven_stop",
                         "tp1_hit": st.partial_taken,
                         "exit_monitoring_timeframe": "1m",
                     },
@@ -438,6 +444,9 @@ class L1H8TrendContinuationPullbackStrategy(Strategy):
                         "base_data_frequency_expected": "1m",
                         "risk_accounting": "engine_canonical_R",
                         "trend_dir": "long" if trend_dir == Side.BUY else "short",
+                        "ema_fast_entry": ema_fast,
+                        "ema_slow_entry": ema_slow,
+                        "adx_entry": adx_value,
                         "ema_fast": ema_fast,
                         "ema_slow": ema_slow,
                         "adx": adx_value,
@@ -456,12 +465,15 @@ class L1H8TrendContinuationPullbackStrategy(Strategy):
                         "reference_hit": "ema" if st.pullback_hit_ema and not st.pullback_hit_vwap else "vwap" if st.pullback_hit_vwap and not st.pullback_hit_ema else "ema_or_vwap",
                         "pullback_reference_hit": "ema" if st.pullback_hit_ema and not st.pullback_hit_vwap else "vwap" if st.pullback_hit_vwap and not st.pullback_hit_ema else "ema_or_vwap",
                         "continuation_trigger": "reclaim_ema_fast" if not self._require_break_pullback_extreme else "reclaim_ema_fast_and_break_pullback_extreme",
+                        "continuation_trigger_state": "triggered_reclaim_resume",
                         "reclaim_strength": reclaim_strength,
                         "require_break_pullback_extreme": self._require_break_pullback_extreme,
                         "partial_at_r": self._partial_at_r,
                         "partial_fraction": self._partial_fraction,
-                        "trail_atr_mult": self._trail_atr_mult,
-                        "fail_fast_bars": self._fail_fast_bars,
+                        "trail_atr_mult": self._trail_atr_mult if self._runner_trailing_enabled else None,
+                        "fail_fast_bars": self._fail_fast_bars if self._fail_fast_enabled else None,
+                        "tp1_at_r": self._partial_at_r,
+                        "runner_mode": "tp1_then_trail" if self._runner_trailing_enabled else "tp1_then_breakeven_stop",
                         "entry_signal_ts": str(signal_bar.ts),
                         "entry_reference_price": entry_ref,
                         "stop_model": "fixed_atr_multiple",
@@ -473,6 +485,7 @@ class L1H8TrendContinuationPullbackStrategy(Strategy):
                             "atr_entry": float(atr_value),
                             "stop_atr_mult": self._stop_atr_mult,
                             "stop_mode": "atr",
+                            "atr_source_timeframe": self._timeframe,
                         },
                     },
                 )
