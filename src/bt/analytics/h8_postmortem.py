@@ -133,16 +133,24 @@ def build_h8_trade_diagnostic_rows(experiment_root: str | Path, *, run_dirs: lis
         trades["hypothesis_id"] = _first_present(trades, "hypothesis_id").replace("", pd.NA).fillna(str(strategy.get("family_variant", "L1-H8")))
         trades["variant_id"] = _first_present(trades, "entry_meta__family_variant").replace("", pd.NA).fillna(str(strategy.get("family_variant", "L1-H8")))
         trades["signal_timeframe"] = _first_present(trades, "entry_meta__signal_timeframe", "entry_meta__timeframe").fillna(str(strategy.get("timeframe", "")))
-        trades["pullback_bars_used"] = _as_num(trades, "entry_meta__pullback_bars")
+        trades["pullback_bars_used"] = _as_num(trades, "entry_meta__pullback_bars_used").fillna(_as_num(trades, "entry_meta__pullback_bars"))
         trades["pullback_depth_atr"] = _as_num(trades, "entry_meta__pullback_depth_atr")
         trades["pullback_depth_pct_of_prior_leg"] = _as_num(trades, "entry_meta__pullback_depth_pct_of_prior_leg")
         trades["pullback_reference_mode"] = _first_present(trades, "entry_meta__pullback_reference_mode")
-        trades["pullback_reference_hit"] = _first_present(trades, "entry_meta__reference_hit")
-        trades["adx_entry"] = _as_num(trades, "entry_meta__adx")
-        trades["ema_fast_entry"] = _as_num(trades, "entry_meta__ema_fast")
-        trades["ema_slow_entry"] = _as_num(trades, "entry_meta__ema_slow")
+        trades["pullback_reference_hit"] = _first_present(trades, "entry_meta__pullback_reference_hit", "entry_meta__reference_hit")
+        trades["adx_entry"] = _as_num(trades, "entry_meta__adx_entry").fillna(_as_num(trades, "entry_meta__adx"))
+        trades["ema_fast_entry"] = _as_num(trades, "entry_meta__ema_fast_entry").fillna(_as_num(trades, "entry_meta__ema_fast"))
+        trades["ema_slow_entry"] = _as_num(trades, "entry_meta__ema_slow_entry").fillna(_as_num(trades, "entry_meta__ema_slow"))
         trades["session_vwap_entry"] = _as_num(trades, "entry_meta__session_vwap")
         trades["reclaim_strength"] = _as_num(trades, "entry_meta__reclaim_strength")
+        trades["continuation_trigger_state"] = _first_present(trades, "entry_meta__continuation_trigger_state", "entry_meta__continuation_trigger")
+        trades["runner_mode"] = _first_present(trades, "entry_meta__runner_mode")
+        trades["fail_fast_bars"] = _as_num(trades, "entry_meta__fail_fast_bars")
+        trades["trail_atr_mult"] = _as_num(trades, "entry_meta__trail_atr_mult")
+        trades["stop_distance"] = _as_num(trades, "entry_meta__stop_distance")
+        trades["stop_price"] = _as_num(trades, "entry_meta__stop_price")
+        trades["entry_reference_price"] = _as_num(trades, "entry_meta__entry_reference_price")
+        trades["tp1_at_r"] = _as_num(trades, "entry_meta__tp1_at_r").fillna(_as_num(trades, "entry_meta__partial_at_r"))
 
         trades["tp1_hit"] = False
         if "max_unrealized_profit_r" in trades.columns:
@@ -152,7 +160,8 @@ def build_h8_trade_diagnostic_rows(experiment_root: str | Path, *, run_dirs: lis
         elif "touched_1r_before_exit" in trades.columns:
             trades["tp1_hit"] = trades["touched_1r_before_exit"].astype(bool)
 
-        trades["time_to_tp1_bars"] = _as_num(trades, "time_to_mfe_bars_signal").where(trades["tp1_hit"], pd.NA)
+        trades["time_to_tp1_bars"] = _as_num(trades, "time_to_tp1_bars_signal")
+        trades["time_to_tp1_bars"] = trades["time_to_tp1_bars"].fillna(_as_num(trades, "time_to_mfe_bars_signal").where(trades["tp1_hit"], pd.NA))
         trades["time_to_mfe_peak_bars"] = _as_num(trades, "time_to_mfe_bars_signal")
         trades["hold_bars"] = _as_num(trades, "hold_bars").fillna(_as_num(trades, "holding_period_bars_signal"))
         trades["mfe_r"] = _as_num(trades, "mfe_r")
@@ -167,7 +176,8 @@ def build_h8_trade_diagnostic_rows(experiment_root: str | Path, *, run_dirs: lis
         trades["cost_drag_r"] = trades["realized_r_gross"] - trades["realized_r_net"]
         trades["continuation_extension_atr"] = trades["mfe_r"]
         trades["continuation_leg_vs_pullback_ratio"] = _safe_div(trades["mfe_r"], trades["pullback_depth_atr"])
-        trades["failed_immediate_continuation_flag"] = (trades["mfe_r"] < 0.5).fillna(True)
+        trades["failed_immediate_continuation_flag"] = _first_present(trades, "failed_immediate_continuation_flag").astype("boolean")
+        trades["failed_immediate_continuation_flag"] = trades["failed_immediate_continuation_flag"].fillna((trades["mfe_r"] < 0.5).fillna(True))
         trades["failure_mode_label"] = trades.apply(classify_failure_mode, axis=1)
         rows.append(trades)
 
@@ -194,6 +204,14 @@ def build_h8_trade_diagnostic_rows(experiment_root: str | Path, *, run_dirs: lis
         "ema_slow_entry",
         "session_vwap_entry",
         "reclaim_strength",
+        "continuation_trigger_state",
+        "runner_mode",
+        "fail_fast_bars",
+        "trail_atr_mult",
+        "stop_distance",
+        "stop_price",
+        "entry_reference_price",
+        "tp1_at_r",
         "tp1_hit",
         "time_to_tp1_bars",
         "time_to_mfe_peak_bars",
