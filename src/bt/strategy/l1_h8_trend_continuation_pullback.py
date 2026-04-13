@@ -392,6 +392,22 @@ class L1H8TrendContinuationPullbackStrategy(Strategy):
             stop_price = entry_ref - stop_distance if trend_dir == Side.BUY else entry_ref + stop_distance
             tp1_target = entry_ref + (self._partial_at_r * stop_distance) if trend_dir == Side.BUY else entry_ref - (self._partial_at_r * stop_distance)
             pullback_depth = (float(ema_fast) - float(st.pullback_extreme_low)) if trend_dir == Side.BUY else (float(st.pullback_extreme_high) - float(ema_fast))
+            pullback_depth_atr = float(pullback_depth) / float(atr_value) if float(atr_value) > 0 else None
+            pullback_prior_leg = (
+                abs(float(st.pullback_extreme_high) - float(st.pullback_extreme_low))
+                if st.pullback_extreme_low is not None and st.pullback_extreme_high is not None
+                else None
+            )
+            pullback_depth_pct_of_prior_leg = (
+                float(pullback_depth) / float(pullback_prior_leg)
+                if pullback_prior_leg is not None and pullback_prior_leg > 0
+                else None
+            )
+            reclaim_strength = (
+                (close - float(ema_fast)) / float(atr_value)
+                if trend_dir == Side.BUY and float(atr_value) > 0
+                else ((float(ema_fast) - close) / float(atr_value) if float(atr_value) > 0 else None)
+            )
 
             st.entry_price = entry_ref
             st.atr_entry = float(atr_value)
@@ -429,13 +445,18 @@ class L1H8TrendContinuationPullbackStrategy(Strategy):
                         "session_vwap": vwap_value,
                         "pullback_state": "active_then_triggered",
                         "pullback_bars": st.pullback_bars,
+                        "pullback_bars_used": st.pullback_bars,
                         "pullback_max_bars": self._pullback_max_bars,
                         "pullback_depth": float(pullback_depth),
+                        "pullback_depth_atr": pullback_depth_atr,
+                        "pullback_depth_pct_of_prior_leg": pullback_depth_pct_of_prior_leg,
                         "pullback_hit_ema": st.pullback_hit_ema,
                         "pullback_hit_vwap": st.pullback_hit_vwap,
                         "pullback_reference_mode": self._pullback_reference_mode,
                         "reference_hit": "ema" if st.pullback_hit_ema and not st.pullback_hit_vwap else "vwap" if st.pullback_hit_vwap and not st.pullback_hit_ema else "ema_or_vwap",
+                        "pullback_reference_hit": "ema" if st.pullback_hit_ema and not st.pullback_hit_vwap else "vwap" if st.pullback_hit_vwap and not st.pullback_hit_ema else "ema_or_vwap",
                         "continuation_trigger": "reclaim_ema_fast" if not self._require_break_pullback_extreme else "reclaim_ema_fast_and_break_pullback_extreme",
+                        "reclaim_strength": reclaim_strength,
                         "require_break_pullback_extreme": self._require_break_pullback_extreme,
                         "partial_at_r": self._partial_at_r,
                         "partial_fraction": self._partial_fraction,

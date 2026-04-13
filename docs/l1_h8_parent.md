@@ -16,3 +16,6 @@ L1-H8 studies continuation entries in established EMA(9/21) trends after shallow
 - `L1-H8C`: high selectivity.
 - `L1-H8D`: pullback reference mode test.
 - `L1-H8E`: management optimization.
+
+## Post-run diagnostics
+See `docs/l1_h8_diagnostics.md` for the reusable Family-B diagnostics suite integrated into `scripts/post_run_analysis.py`.
