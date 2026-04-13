@@ -1,0 +1,38 @@
+metadata:
+  hypothesis_id: "L1-H8B"
+  title: "Trend Continuation After Shallow Pullback — Timeframe Robustness"
+  description: "Timeframe robustness sweep for ADX selectivity with shallow pullback continuation."
+  research_layer: "L1"
+  hypothesis_family: "trend_continuation"
+  parent_family: "L1-H8"
+  version: "1.0.0"
+  author: "bulletproof_bt"
+  created_at: "2026-04-13T00:00:00Z"
+
+hypothesis_id: "L1-H8B"
+title: "Trend Continuation After Shallow Pullback — Timeframe Robustness"
+description: "Timeframe robustness sweep for ADX selectivity with shallow pullback continuation."
+research_layer: "L1"
+hypothesis_family: "trend_continuation"
+parent_family: "L1-H8"
+version: "1.0.0"
+author: "bulletproof_bt"
+created_at: "2026-04-13T00:00:00Z"
+required_indicators: [ema, adx, atr, session_vwap]
+parameter_grid:
+  signal_timeframe: ["15m", "1h"]
+  adx_min: [20, 25, 30]
+  pullback_max_bars: [2, 3]
+  partial_at_r: [1.5, 2.0]
+  pullback_reference_mode: ["ema_or_vwap"]
+  fail_fast_bars: [8]
+  trail_atr_mult: [2.5]
+  stop_atr_mult: [2.0]
+  partial_fraction: [0.5]
+  require_break_pullback_extreme: [false]
+  family_variant: ["L1-H8B"]
+entry: {strategy: "l1_h8_trend_continuation_pullback", signal_timeframe: "15m", timeframe: "15m", base_execution_timeframe: "1m", order_timing: "bar_close_submit_next_bar_execution", no_pyramiding: true}
+exit: {stop_kind: "atr_multiple", stop_model: "fixed_atr_multiple", stop_atr_mult: 2.0, stop_update_policy: "frozen_at_entry", atr_source_timeframe: "signal_timeframe", partial_model: "partial_take_profit_then_protect_runner", partial_fraction: 0.5, partial_at_r_param: "partial_at_r", runner_trail_model: "atr_multiple_after_tp1", trail_atr_mult: 2.5, fail_fast_bars_param: "fail_fast_bars", exit_monitoring_timeframe: "1m"}
+execution_semantics: {signal_timeframe: "15m", base_execution_timeframe: "1m", exit_monitoring_timeframe: "1m", base_data_frequency_expected: "1m", strategy_family: "trend_continuation", family_pattern: "shallow_pullback_reclaim", parent_family: "L1-H8", stop_model: "fixed_atr_multiple", stop_update_policy: "frozen_at_entry", tp_update_policy: "tp1_then_protected_runner", hold_time_unit: "base_bars", atr_source_timeframe: "signal_timeframe", risk_accounting: "engine_canonical_R", no_pyramiding: true}
+evaluation: {required_tiers: ["Tier2", "Tier3"]}
+runtime_controls: {enabled: true}

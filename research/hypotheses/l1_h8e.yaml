@@ -1,0 +1,28 @@
+metadata: {hypothesis_id: "L1-H8E", title: "Trend Continuation After Shallow Pullback — Management Variant", description: "Management optimization sweep on partial target, fail-fast horizon, and trail ATR multiple.", research_layer: "L1", hypothesis_family: "trend_continuation", parent_family: "L1-H8", version: "1.0.0", author: "bulletproof_bt", created_at: "2026-04-13T00:00:00Z"}
+hypothesis_id: "L1-H8E"
+title: "Trend Continuation After Shallow Pullback — Management Variant"
+description: "Management optimization sweep on partial target, fail-fast horizon, and trail ATR multiple."
+research_layer: "L1"
+hypothesis_family: "trend_continuation"
+parent_family: "L1-H8"
+version: "1.0.0"
+author: "bulletproof_bt"
+created_at: "2026-04-13T00:00:00Z"
+required_indicators: [ema, adx, atr, session_vwap]
+parameter_grid:
+  signal_timeframe: ["15m", "1h"]
+  partial_at_r: [1.5, 2.0, 2.5]
+  fail_fast_bars: [4, 8]
+  trail_atr_mult: [2.5, 3.0]
+  adx_min: [20]
+  pullback_max_bars: [3]
+  pullback_reference_mode: ["ema_or_vwap"]
+  stop_atr_mult: [2.0]
+  partial_fraction: [0.5]
+  require_break_pullback_extreme: [false]
+  family_variant: ["L1-H8E"]
+entry: {strategy: "l1_h8_trend_continuation_pullback", signal_timeframe: "15m", timeframe: "15m", base_execution_timeframe: "1m", no_pyramiding: true}
+exit: {stop_model: "fixed_atr_multiple", stop_update_policy: "frozen_at_entry", atr_source_timeframe: "signal_timeframe", partial_model: "partial_take_profit_then_protect_runner", partial_at_r_param: "partial_at_r", runner_trail_model: "atr_multiple_after_tp1", trail_atr_mult_param: "trail_atr_mult", fail_fast_bars_param: "fail_fast_bars", exit_monitoring_timeframe: "1m"}
+execution_semantics: {signal_timeframe: "15m", base_execution_timeframe: "1m", exit_monitoring_timeframe: "1m", base_data_frequency_expected: "1m", strategy_family: "trend_continuation", family_pattern: "shallow_pullback_reclaim", parent_family: "L1-H8", stop_model: "fixed_atr_multiple", stop_update_policy: "frozen_at_entry", tp_update_policy: "tp1_then_protected_runner", hold_time_unit: "base_bars", atr_source_timeframe: "signal_timeframe", risk_accounting: "engine_canonical_R", no_pyramiding: true}
+evaluation: {required_tiers: ["Tier2", "Tier3"]}
+runtime_controls: {enabled: true}
