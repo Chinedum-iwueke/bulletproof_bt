@@ -10,6 +10,7 @@ import pandas as pd
 from bt.analytics.h8_postmortem import run_h8_postmortem
 from bt.analytics.h9_postmortem import run_h9_postmortem
 from bt.analytics.h10_postmortem import run_h10_postmortem
+from bt.analytics.h11_postmortem import run_h11_postmortem
 from bt.analytics.segment_rollups import load_trades_with_entry_metadata
 
 VOL_METADATA_KEYS = ["vol_pct_t", "rvhat_pct_t", "vol_percentile", "rv_hat_pct"]
@@ -80,6 +81,7 @@ def _infer_hypothesis_id(run_dir: Path) -> str:
         "l1_h9_momentum_breakout": "L1-H9",
         "l1_h10a_mean_reversion_small_tp": "L1-H10",
         "l1_h10b_breakout_scalping": "L1-H10",
+        "l1_h11_quality_filtered_continuation": "L1-H11",
     }
     return mapping.get(str(strategy_name), str(strategy_name) if strategy_name else "")
 
@@ -185,6 +187,9 @@ def run_postmortem_for_experiment(
 
     h10_outputs = run_h10_postmortem(root, run_dirs=run_paths, output_root=diagnostics_root / "l1_h10")
     outputs.update({f"L1-H10:{k}": v for k, v in h10_outputs.items()})
+
+    h11_outputs = run_h11_postmortem(root, run_dirs=run_paths, output_root=diagnostics_root / "l1_h11")
+    outputs.update({f"L1-H11:{k}": v for k, v in h11_outputs.items()})
 
     # lightweight hypothesis-specific diagnostics registry
     for hypothesis_id, segment_keys in HYPOTHESIS_GROUPINGS.items():

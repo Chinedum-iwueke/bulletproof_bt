@@ -55,6 +55,7 @@ from bt.strategy.l1_h8_trend_continuation_pullback import L1H8TrendContinuationP
 from bt.strategy.l1_h9_momentum_breakout import L1H9MomentumBreakoutStrategy  # noqa: E402
 from bt.strategy.l1_h10a_mean_reversion_small_tp import L1H10AMeanReversionSmallTPStrategy  # noqa: E402
 from bt.strategy.l1_h10b_breakout_scalping import L1H10BBreakoutScalpingStrategy  # noqa: E402
+from bt.strategy.l1_h11_quality_filtered_continuation import L1H11QualityFilteredContinuationStrategy  # noqa: E402
 
 __all__ = [
     "STRATEGY_REGISTRY",
@@ -80,4 +81,5 @@ __all__ = [
     "L1H9MomentumBreakoutStrategy",
     "L1H10AMeanReversionSmallTPStrategy",
     "L1H10BBreakoutScalpingStrategy",
+    "L1H11QualityFilteredContinuationStrategy",
 ]
