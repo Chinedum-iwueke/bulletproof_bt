@@ -1,0 +1,69 @@
+metadata:
+  hypothesis_id: "L1-H11B"
+  title: "Pullback Geometry / Impulse Study"
+  description: "Quality-filtered continuation study varying directional impulse threshold and pullback geometry zone."
+  research_layer: "L1"
+  hypothesis_family: "trend_continuation"
+  parent_family: "L1-H11"
+  version: "1.0.0"
+  author: "bulletproof_bt"
+  created_at: "2026-04-14T00:00:00Z"
+
+hypothesis_id: "L1-H11B"
+title: "Pullback Geometry / Impulse Study"
+description: "Continuation quality study with variable impulse threshold and pullback-depth bounds."
+research_layer: "L1"
+hypothesis_family: "trend_continuation"
+parent_family: "L1-H11"
+version: "1.0.0"
+author: "bulletproof_bt"
+created_at: "2026-04-14T00:00:00Z"
+
+required_indicators: [ema, adx, atr]
+
+parameter_grid:
+  signal_timeframe: ["15m", "1h"]
+  swing_distance_atr: [1.0, 1.5, 2.0]
+  pull_entry_atr_low: [0.35, 0.50]
+  pull_entry_atr_high: [0.80, 1.00]
+  adx_min_fixed: [20]
+  stop_atr_mult: [2.0]
+  family_variant: ["L1-H11B"]
+
+entry:
+  strategy: "l1_h11_quality_filtered_continuation"
+  signal_timeframe: "15m"
+  timeframe: "15m"
+  base_execution_timeframe: "1m"
+  order_timing: "bar_close_submit_next_bar_execution"
+  no_pyramiding: true
+
+exit:
+  stop_kind: "atr_multiple"
+  stop_model: "fixed_atr_multiple"
+  stop_update_policy: "frozen_at_entry"
+  atr_source_timeframe: "signal_timeframe"
+  trend_failure_exit: true
+  exit_monitoring_timeframe: "1m"
+
+execution_semantics:
+  signal_timeframe: "15m"
+  base_execution_timeframe: "1m"
+  exit_monitoring_timeframe: "1m"
+  base_data_frequency_expected: "1m"
+  strategy_family: "trend_continuation"
+  family_pattern: "quality_filtered_continuation"
+  parent_family: "L1-H11"
+  stop_model: "fixed_atr_multiple"
+  stop_update_policy: "frozen_at_entry"
+  tp_update_policy: "none"
+  hold_time_unit: "base_bars"
+  atr_source_timeframe: "signal_timeframe"
+  risk_accounting: "engine_canonical_R"
+  no_pyramiding: true
+
+evaluation:
+  required_tiers: ["Tier2", "Tier3"]
+
+runtime_controls:
+  enabled: true

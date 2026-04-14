@@ -1,0 +1,74 @@
+metadata:
+  hypothesis_id: "L1-H11C"
+  title: "Protection Discipline Study"
+  description: "Quality-filtered continuation with explicit stop padding, lock discipline, and VWAP giveback control."
+  research_layer: "L1"
+  hypothesis_family: "trend_continuation"
+  parent_family: "L1-H11"
+  version: "1.0.0"
+  author: "bulletproof_bt"
+  created_at: "2026-04-14T00:00:00Z"
+
+hypothesis_id: "L1-H11C"
+title: "Protection Discipline Study"
+description: "Continuation protection-discipline study with structure-plus-padding stop, R-lock, and optional VWAP giveback exits."
+research_layer: "L1"
+hypothesis_family: "trend_continuation"
+parent_family: "L1-H11"
+version: "1.0.0"
+author: "bulletproof_bt"
+created_at: "2026-04-14T00:00:00Z"
+
+required_indicators: [ema, adx, atr, session_vwap]
+
+parameter_grid:
+  signal_timeframe: ["15m", "1h"]
+  stop_padding_atr: [0.25, 0.50, 0.75]
+  lock_r: [1.0, 1.5]
+  vwap_giveback: ["off", "on"]
+  adx_min_fixed: [20]
+  pull_entry_atr_low: [0.50]
+  pull_entry_atr_high: [1.00]
+  impulse_min_atr_fixed: [1.0]
+  stop_atr_mult: [2.0]
+  family_variant: ["L1-H11C"]
+
+entry:
+  strategy: "l1_h11_quality_filtered_continuation"
+  signal_timeframe: "15m"
+  timeframe: "15m"
+  base_execution_timeframe: "1m"
+  order_timing: "bar_close_submit_next_bar_execution"
+  no_pyramiding: true
+
+exit:
+  stop_kind: "structure_plus_atr_padding"
+  stop_model: "structure_plus_atr_padding"
+  stop_padding_atr_param: "stop_padding_atr"
+  stop_update_policy: "frozen_at_entry_then_rule_based_protection"
+  atr_source_timeframe: "signal_timeframe"
+  lock_rule: "breakeven_after_lock_r"
+  vwap_giveback_rule: "optional_exit_after_lock"
+  exit_monitoring_timeframe: "1m"
+
+execution_semantics:
+  signal_timeframe: "15m"
+  base_execution_timeframe: "1m"
+  exit_monitoring_timeframe: "1m"
+  base_data_frequency_expected: "1m"
+  strategy_family: "trend_continuation"
+  family_pattern: "quality_filtered_continuation"
+  parent_family: "L1-H11"
+  stop_model: "structure_plus_atr_padding"
+  stop_update_policy: "frozen_at_entry_then_rule_based_protection"
+  tp_update_policy: "none"
+  hold_time_unit: "base_bars"
+  atr_source_timeframe: "signal_timeframe"
+  risk_accounting: "engine_canonical_R"
+  no_pyramiding: true
+
+evaluation:
+  required_tiers: ["Tier2", "Tier3"]
+
+runtime_controls:
+  enabled: true
