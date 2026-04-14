@@ -1,0 +1,69 @@
+metadata:
+  hypothesis_id: "L1-H10A"
+  title: "Mean Reversion Small TP"
+  description: "Short-horizon SessionVWAP mean-reversion with tight TP and frozen ATR stop to test high-win-rate viability under realistic costs."
+  research_layer: "L1"
+  hypothesis_family: "mean_reversion"
+  parent_family: "L1-H10"
+  version: "1.0.0"
+  author: "bulletproof_bt"
+  created_at: "2026-04-14T00:00:00Z"
+
+hypothesis_id: "L1-H10A"
+title: "Mean Reversion Small TP"
+description: "Short-horizon SessionVWAP mean-reversion with tight TP and frozen ATR stop to test high-win-rate viability under realistic costs."
+research_layer: "L1"
+hypothesis_family: "mean_reversion"
+parent_family: "L1-H10"
+version: "1.0.0"
+author: "bulletproof_bt"
+created_at: "2026-04-14T00:00:00Z"
+
+required_indicators: [atr, session_vwap]
+
+parameter_grid:
+  signal_timeframe: ["5m", "15m"]
+  z0: [0.8, 1.0, 1.2]
+  tp_r: [0.5, 1.0]
+  k_atr_stop: [2.5, 3.5]
+  family_variant: ["L1-H10A"]
+
+entry:
+  strategy: "l1_h10a_mean_reversion_small_tp"
+  signal_timeframe: "5m"
+  timeframe: "5m"
+  base_execution_timeframe: "1m"
+  order_timing: "bar_close_submit_next_bar_execution"
+  no_pyramiding: true
+
+exit:
+  stop_kind: "atr_multiple"
+  stop_model: "fixed_atr_multiple"
+  stop_atr_mult_param: "k_atr_stop"
+  stop_update_policy: "frozen_at_entry"
+  atr_source_timeframe: "signal_timeframe"
+  profit_exit_model: "full_take_profit"
+  tp_r_param: "tp_r"
+  exit_monitoring_timeframe: "1m"
+
+execution_semantics:
+  signal_timeframe: "5m"
+  base_execution_timeframe: "1m"
+  exit_monitoring_timeframe: "1m"
+  base_data_frequency_expected: "1m"
+  strategy_family: "mean_reversion"
+  family_pattern: "session_vwap_deviation_fade"
+  parent_family: "L1-H10"
+  stop_model: "fixed_atr_multiple"
+  stop_update_policy: "frozen_at_entry"
+  tp_update_policy: "fixed_take_profit"
+  hold_time_unit: "base_bars"
+  atr_source_timeframe: "signal_timeframe"
+  risk_accounting: "engine_canonical_R"
+  no_pyramiding: true
+
+evaluation:
+  required_tiers: ["Tier2", "Tier3"]
+
+runtime_controls:
+  enabled: true
