@@ -112,6 +112,11 @@ class L1H10BBreakoutScalpingStrategy(Strategy):
                 st.position = current
                 if has_new_signal_bar:
                     st.signal_bars_held += 1
+                    if signal_bar is not None:
+                        # Keep reference bar fresh across long holds so the next
+                        # flat-state breakout check uses the most recent prior
+                        # signal bar rather than a stale pre-entry bar.
+                        st.prev_signal_bar = signal_bar
                 if st.stop_price_frozen is None or st.tp_price_frozen is None:
                     continue
 

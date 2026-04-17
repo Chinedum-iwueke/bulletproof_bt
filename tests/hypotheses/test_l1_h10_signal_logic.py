@@ -80,3 +80,63 @@ def test_h10b_entry_and_stop_exit_semantics() -> None:
     exits = strategy.on_bars(stop_hit.ts, {"BTCUSDT": stop_hit}, {"BTCUSDT"}, _ctx(None, "5m", Side.BUY))
     assert exits and exits[0].metadata["exit_reason"] == "atr_stop"
     assert exits[0].metadata["tp_hit_flag"] is False
+
+
+def test_h10a_can_reenter_multiple_times_after_exits() -> None:
+    strategy = L1H10AMeanReversionSmallTPStrategy(timeframe="5m", z0=0.2, tp_r=0.2, k_atr_stop=0.5)
+
+    position_side: Side | None = None
+    entries = 0
+    exits = 0
+
+    for i in range(80):
+        close = 102.0 if i % 2 == 0 else 98.0
+        signal = _bar(i, close)
+        base = _bar(i, close, high=close + 1.0, low=close - 1.0)
+        out = strategy.on_bars(
+            base.ts,
+            {"BTCUSDT": base},
+            {"BTCUSDT"},
+            _ctx(signal, "5m", position_side),
+        )
+        for sig in out:
+            if sig.signal_type.endswith("_entry"):
+                entries += 1
+                position_side = sig.side
+            elif sig.signal_type.endswith("_exit"):
+                exits += 1
+                position_side = None
+
+    assert entries >= 3
+    assert exits >= 3
+    assert entries - exits in (0, 1)
+
+
+def test_h10b_can_reenter_multiple_times_after_exits() -> None:
+    strategy = L1H10BBreakoutScalpingStrategy(timeframe="5m", breakout_atr=0.1, tp_r=0.2, k_atr_stop=0.5, adx_min_fixed=1.0)
+
+    position_side: Side | None = None
+    entries = 0
+    exits = 0
+
+    for i in range(120):
+        close = 100.0 + (0.3 * i if i % 2 == 0 else -0.3 * i)
+        signal = _bar(i, close)
+        base = _bar(i, close, high=close + 1.0, low=close - 1.0)
+        out = strategy.on_bars(
+            base.ts,
+            {"BTCUSDT": base},
+            {"BTCUSDT"},
+            _ctx(signal, "5m", position_side),
+        )
+        for sig in out:
+            if sig.signal_type.endswith("_entry"):
+                entries += 1
+                position_side = sig.side
+            elif sig.signal_type.endswith("_exit"):
+                exits += 1
+                position_side = None
+
+    assert entries >= 3
+    assert exits >= 3
+    assert entries - exits in (0, 1)
