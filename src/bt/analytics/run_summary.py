@@ -137,6 +137,54 @@ def _strategy_to_hypothesis_map() -> dict[str, dict[str, str]]:
     return mapping
 
 
+def _load_manifest_hypothesis_map(experiment_root: Path) -> dict[str, dict[str, str]]:
+    mapping: dict[str, dict[str, str]] = {}
+    manifests_dir = experiment_root / "manifests"
+    if not manifests_dir.exists():
+        return mapping
+    for manifest_path in sorted(manifests_dir.glob("*.csv")):
+        try:
+            with manifest_path.open("r", encoding="utf-8", newline="") as handle:
+                reader = csv.DictReader(handle)
+                for row in reader:
+                    run_slug = str(row.get("run_slug", "")).strip()
+                    if not run_slug:
+                        continue
+                    hypothesis_id = str(row.get("hypothesis_id", "")).strip()
+                    hypothesis_path = str(row.get("hypothesis_path", "")).strip()
+                    hypothesis_title = ""
+                    if hypothesis_path:
+                        candidate_path = Path(hypothesis_path)
+                        if candidate_path.exists():
+                            payload = yaml.safe_load(candidate_path.read_text(encoding="utf-8"))
+                            if isinstance(payload, dict):
+                                hypothesis_title = str(payload.get("title", ""))
+                    mapping[run_slug] = {
+                        "hypothesis_id": hypothesis_id,
+                        "hypothesis_title": hypothesis_title,
+                    }
+        except OSError:
+            continue
+    return mapping
+
+
+def _load_default_hypothesis(experiment_root: Path) -> dict[str, str] | None:
+    snapshot_dir = experiment_root / "contract_snapshot"
+    if not snapshot_dir.exists():
+        return None
+    candidates = sorted(snapshot_dir.glob("*.yaml")) + sorted(snapshot_dir.glob("*.yml"))
+    if len(candidates) != 1:
+        return None
+    payload = yaml.safe_load(candidates[0].read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        return None
+    hypothesis_id = str(payload.get("hypothesis_id", "")).strip()
+    hypothesis_title = str(payload.get("title", "")).strip()
+    if not hypothesis_id and not hypothesis_title:
+        return None
+    return {"hypothesis_id": hypothesis_id, "hypothesis_title": hypothesis_title}
+
+
 def _infer_variant_id(run_dir: Path) -> str:
     m = re.search(r"(g\d{4,})", run_dir.name)
     if m:
@@ -253,7 +301,14 @@ def _compute_trade_diagnostics(trades_df: pd.DataFrame, *, status: str, run_dir:
     }
 
 
-def build_run_summary_row(run_dir: Path, *, completed_only: bool = True, hypothesis_catalog: dict[str, dict[str, str]] | None = None) -> tuple[dict[str, Any], list[str]]:
+def build_run_summary_row(
+    run_dir: Path,
+    *,
+    completed_only: bool = True,
+    hypothesis_catalog: dict[str, dict[str, str]] | None = None,
+    run_hypothesis_catalog: dict[str, dict[str, str]] | None = None,
+    default_hypothesis: dict[str, str] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
     warnings: list[str] = []
     status = detect_run_artifact_status(run_dir)
     if completed_only and status.state != "SUCCESS":
@@ -270,7 +325,13 @@ def build_run_summary_row(run_dir: Path, *, completed_only: bool = True, hypothe
 
     hypo_id = strategy_name
     hypo_title = ""
-    if hypothesis_catalog and strategy_name in hypothesis_catalog:
+    if run_hypothesis_catalog and run_dir.name in run_hypothesis_catalog:
+        hypo_id = run_hypothesis_catalog[run_dir.name].get("hypothesis_id", hypo_id)
+        hypo_title = run_hypothesis_catalog[run_dir.name].get("hypothesis_title", hypo_title)
+    elif default_hypothesis:
+        hypo_id = default_hypothesis.get("hypothesis_id", hypo_id)
+        hypo_title = default_hypothesis.get("hypothesis_title", hypo_title)
+    elif hypothesis_catalog and strategy_name in hypothesis_catalog:
         hypo_id = hypothesis_catalog[strategy_name]["hypothesis_id"]
         hypo_title = hypothesis_catalog[strategy_name]["hypothesis_title"]
 
@@ -351,6 +412,8 @@ def summarize_experiment_runs(
     root = Path(experiment_root)
     run_dirs = _discover_run_dirs(root, runs_glob=runs_glob)
     catalog = _strategy_to_hypothesis_map()
+    run_hypothesis_catalog = _load_manifest_hypothesis_map(root)
+    default_hypothesis = _load_default_hypothesis(root)
 
     rows: list[dict[str, Any]] = []
     warning_rows: list[dict[str, Any]] = []
@@ -362,6 +425,8 @@ def summarize_experiment_runs(
             run_dir,
             completed_only=completed_only,
             hypothesis_catalog=catalog,
+            run_hypothesis_catalog=run_hypothesis_catalog,
+            default_hypothesis=default_hypothesis,
         )
         if row:
             rows.append(row)
