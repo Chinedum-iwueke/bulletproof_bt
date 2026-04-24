@@ -211,3 +211,31 @@ def test_cli_smoke(tmp_path: Path) -> None:
     assert (exp_root / "summaries" / "symbol_summary.csv").exists()
     assert (exp_root / "summaries" / "exit_reason_summary.csv").exists()
     assert (exp_root / "summaries" / "diagnostics" / "manifest.json").exists()
+
+
+def test_run_summary_prefers_manifest_mapping_for_shared_strategy_family(tmp_path: Path) -> None:
+    exp_root = tmp_path / "exp"
+    run_name = "row_00001__g00000__family_variant-L1-H11B__tier2"
+    _make_run(exp_root / "runs" / run_name, strategy="l1_h11_quality_filtered_continuation")
+
+    manifests_dir = exp_root / "manifests"
+    manifests_dir.mkdir(parents=True, exist_ok=True)
+    (manifests_dir / "l1_h11b_tier2_grid.csv").write_text(
+        "\n".join(
+            [
+                "row_id,hypothesis_id,hypothesis_path,phase,tier,variant_id,config_hash,params_json,run_slug,output_dir,expected_status,enabled,notes",
+                (
+                    f"row_00001,L1-H11B,{Path('research/hypotheses/l1_h11b.yaml').as_posix()},"
+                    "tier2,Tier2,g00000,abc123,{},"
+                    f"{run_name},outputs/demo/runs/{run_name},pending,true,"
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    summary, _ = summarize_experiment_runs(exp_root, completed_only=True)
+    assert len(summary) == 1
+    row = summary.iloc[0].to_dict()
+    assert row["hypothesis_id"] == "L1-H11B"
+    assert row["hypothesis_title"] == "Pullback Geometry / Impulse Study"
