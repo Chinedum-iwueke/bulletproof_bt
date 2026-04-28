@@ -1,0 +1,5 @@
+min_trades: 30
+min_bucket_trades: 10
+top_n: 25
+include_negative_findings: false
+write_db: false

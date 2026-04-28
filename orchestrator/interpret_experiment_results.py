@@ -204,6 +204,12 @@ def main() -> int:
         "volatile_trades_dataset": str(context.volatile.trades_dataset_path) if context.volatile.trades_dataset_path else None,
         "stable_strategy_summaries": [str(p) for p in context.stable.strategy_summary_paths],
         "volatile_strategy_summaries": [str(p) for p in context.volatile.strategy_summary_paths],
+        "stable_state_discovery_report": str(Path("research/state_findings") / f"{args.name}_state_findings.md")
+        if (Path("research/state_findings") / f"{args.name}_state_findings.md").exists()
+        else None,
+        "global_state_discovery_report": str(Path("research/state_findings") / "state_findings.md")
+        if (Path("research/state_findings") / "state_findings.md").exists()
+        else None,
     }
 
     packet = build_llm_packet(
