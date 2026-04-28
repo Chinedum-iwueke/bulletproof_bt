@@ -239,6 +239,23 @@ def build_interpret_command(db_path: Path, merged_payload: dict[str, Any], confi
         output_dir,
     ]
 
+def build_state_discovery_command(db_path: Path, merged_payload: dict[str, Any], config: dict[str, Any]) -> list[str]:
+    name = str(merged_payload["name"])
+    outputs_root = str(merged_payload["outputs_root"])
+    out_dir = str(config.get("state_discovery_output_dir", "research/state_findings"))
+    return [
+        sys.executable,
+        str(PROJECT_ROOT / "orchestrator" / "state_discovery.py"),
+        "--db",
+        str(db_path),
+        "--experiment-root",
+        str(Path(outputs_root) / f"{name}_parallel_stable"),
+        "--name",
+        name,
+        "--output-dir",
+        out_dir,
+    ]
+
 
 def main() -> int:
     args = parse_args()
@@ -338,6 +355,14 @@ def main() -> int:
                             logger.error("Interpreter failed for name=%s with return code=%s", current_job_name, interp_code)
                     except Exception as interp_exc:
                         logger.exception("Interpreter exception for name=%s: %s", current_job_name, interp_exc)
+                if bool(config.get("run_state_discovery_after_interpretation", False)):
+                    try:
+                        sd_cmd = build_state_discovery_command(Path(args.db), merged_payload, config)
+                        sd_code = run_logged_command(sd_cmd, logger, "STATE_DISCOVERY")
+                        if sd_code != 0:
+                            logger.error("State discovery failed for name=%s with return code=%s", current_job_name, sd_code)
+                    except Exception as sd_exc:
+                        logger.exception("State discovery exception for name=%s: %s", current_job_name, sd_exc)
             else:
                 error = f"pipeline failed with return code {return_code}"
                 db.mark_queue_failed(current_queue_id, error)

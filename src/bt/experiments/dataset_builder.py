@@ -11,6 +11,7 @@ from typing import Any
 
 import pandas as pd
 import yaml
+from bt.logging.trade_schema import schema_coverage
 
 SCRIPT_VERSION = "1.0.0"
 DATASET_SCHEMA_VERSION = "v1"
@@ -925,6 +926,13 @@ def extract_experiment_dataset(
 
     runs_df.to_parquet(output_paths["runs_dataset"], index=False)
     trades_df.to_parquet(output_paths["trades_dataset"], index=False)
+    summaries_dir = experiment_root / "summaries"
+    summaries_dir.mkdir(parents=True, exist_ok=True)
+    coverage_payload = schema_coverage(list(trades_df.columns))
+    (summaries_dir / "trade_schema_coverage.json").write_text(
+        json.dumps(_clean_for_json(coverage_payload), indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
 
     pd.DataFrame(dropped_rows, columns=["run_id", "reason", "missing_artifact", "notes"]).to_csv(
         output_paths["dropped_runs"],

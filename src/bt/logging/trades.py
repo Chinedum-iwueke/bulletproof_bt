@@ -12,6 +12,8 @@ import yaml
 
 from bt.data.config_utils import parse_date_range
 from bt.logging.formatting import FLOAT_DECIMALS_CSV, write_json_deterministic
+from bt.logging.decision_trace import flatten_decision_trace
+from bt.logging.trade_enrichment import enrich_trade_row
 from bt.data.dataset import load_dataset_manifest
 from bt.core.types import Trade
 from bt.risk.r_multiple import compute_r_multiple
@@ -155,6 +157,19 @@ def write_data_scope(run_dir: Path, *, config: dict, dataset_dir: str | None = N
 
 class TradesCsvWriter:
     _columns = [
+        "identity_run_id",
+        "identity_trade_id",
+        "identity_hypothesis_id",
+        "identity_strategy_id",
+        "identity_parameter_set_id",
+        "identity_symbol",
+        "identity_dataset_id",
+        "identity_tier",
+        "identity_ts_signal",
+        "identity_ts_entry_fill",
+        "identity_ts_exit_fill",
+        "identity_signal_timeframe",
+        "identity_execution_timeframe",
         "run_id",
         "hypothesis_id",
         "entry_ts",
@@ -204,6 +219,56 @@ class TradesCsvWriter:
         "touched_1r_before_exit",
         "touched_2r_before_exit",
         "touched_3r_before_exit",
+        "entry_decision_reason_code",
+        "entry_decision_setup_class",
+        "entry_decision_hypothesis_branch",
+        "entry_decision_parameter_combination",
+        "entry_decision_conditions_json",
+        "entry_decision_blockers_json",
+        "entry_decision_permission_json",
+        "entry_decision_score",
+        "entry_decision_rank",
+        "entry_decision_most_binding_gate",
+        "entry_decision_gate_margins_json",
+        "entry_gate_thresholds_json",
+        "entry_gate_values_json",
+        "execution_intended_entry_price",
+        "execution_actual_entry_price",
+        "execution_actual_exit_price",
+        "execution_entry_order_type",
+        "execution_exit_order_type",
+        "execution_stop_price_initial",
+        "execution_take_profit_price_initial",
+        "execution_trailing_stop_initial",
+        "execution_delay_bars",
+        "execution_spread_paid",
+        "execution_slippage_paid",
+        "execution_fees_paid",
+        "execution_partial_fill_flag",
+        "execution_intrabar_assumption",
+        "risk_amount",
+        "risk_stop_distance",
+        "risk_qty",
+        "risk_initial_stop_r",
+        "r_gross",
+        "r_net",
+        "path_mfe_r",
+        "path_mae_r",
+        "path_bars_held",
+        "path_holding_time_minutes",
+        "path_touched_2r",
+        "path_touched_3r",
+        "path_touched_5r",
+        "path_touched_10r",
+        "counterfactual_exit_efficiency_realized_over_mfe",
+        "label_reached_3r",
+        "label_reached_5r",
+        "label_profitable_after_costs",
+        "label_entry_quality_bucket",
+        "label_exit_efficiency_bucket",
+        "label_structure_class",
+        "label_market_regime_class",
+        "cost_drag_r",
     ]
 
     def __init__(self, path: Path, *, run_id: str | None = None, hypothesis_id: str | None = None):
@@ -277,6 +342,19 @@ class TradesCsvWriter:
                 time_to_mfe_minutes = (parsed_mfe_ts - entry_ts).total_seconds() / 60.0
 
         computed_values: dict[str, Any] = {
+            "identity_run_id": self._run_id,
+            "identity_trade_id": metadata.get("trade_id"),
+            "identity_hypothesis_id": self._hypothesis_id,
+            "identity_strategy_id": metadata.get("strategy_id"),
+            "identity_parameter_set_id": metadata.get("parameter_set_id"),
+            "identity_symbol": trade.symbol,
+            "identity_dataset_id": metadata.get("dataset_id"),
+            "identity_tier": metadata.get("tier"),
+            "identity_ts_signal": metadata.get("signal_ts", trade.entry_ts),
+            "identity_ts_entry_fill": trade.entry_ts,
+            "identity_ts_exit_fill": trade.exit_ts,
+            "identity_signal_timeframe": metadata.get("signal_timeframe"),
+            "identity_execution_timeframe": metadata.get("execution_timeframe", metadata.get("exit_monitoring_timeframe")),
             "run_id": self._run_id,
             "hypothesis_id": self._hypothesis_id,
             "pnl_price": pnl_price,
@@ -294,11 +372,17 @@ class TradesCsvWriter:
             "r_multiple_net": realized_r_net,
             "realized_r_gross": realized_r_gross,
             "realized_r_net": realized_r_net,
+            "r_gross": realized_r_gross,
+            "r_net": realized_r_net,
             "mfe_r": mfe_r,
             "mae_r": mae_r,
+            "path_mfe_r": mfe_r,
+            "path_mae_r": mae_r,
             "time_to_mfe_minutes": time_to_mfe_minutes,
             "holding_period_minutes": holding_period_minutes,
             "holding_period_bars_signal": metadata.get("holding_period_bars_signal"),
+            "path_bars_held": metadata.get("holding_period_bars_signal"),
+            "path_holding_time_minutes": holding_period_minutes,
             "time_to_mfe_bars_signal": metadata.get("time_to_mfe_bars_signal"),
             "exit_reason": metadata.get("exit_reason"),
             "whether_trail_activated": metadata.get("trail_activated"),
@@ -314,7 +398,31 @@ class TradesCsvWriter:
             "touched_1r_before_exit": bool(mfe_r is not None and mfe_r >= 1.0),
             "touched_2r_before_exit": bool(mfe_r is not None and mfe_r >= 2.0),
             "touched_3r_before_exit": bool(mfe_r is not None and mfe_r >= 3.0),
+            "execution_intended_entry_price": metadata.get("intended_entry_price", trade.entry_price),
+            "execution_actual_entry_price": trade.entry_price,
+            "execution_actual_exit_price": trade.exit_price,
+            "execution_entry_order_type": metadata.get("entry_order_type"),
+            "execution_exit_order_type": metadata.get("exit_order_type"),
+            "execution_stop_price_initial": metadata.get("entry_stop_price"),
+            "execution_take_profit_price_initial": metadata.get("take_profit_price"),
+            "execution_trailing_stop_initial": metadata.get("trailing_stop_initial"),
+            "execution_delay_bars": metadata.get("delay_bars", metadata.get("delay_remaining")),
+            "execution_spread_paid": metadata.get("spread_paid"),
+            "execution_slippage_paid": trade.slippage,
+            "execution_fees_paid": trade.fees,
+            "execution_partial_fill_flag": metadata.get("partial_fill_flag"),
+            "execution_intrabar_assumption": metadata.get("intrabar_assumption"),
+            "risk_stop_distance": entry_stop_distance,
+            "risk_qty": entry_qty,
+            "risk_initial_stop_r": 1.0 if entry_stop_distance else None,
         }
+        computed_values.update(flatten_decision_trace(metadata.get("decision_trace")))
+        for key, value in metadata.items():
+            if key.startswith(("entry_state_", "entry_gate_", "entry_decision_", "execution_", "risk_", "path_", "counterfactual_", "label_", "identity_")):
+                computed_values[key] = value
+                if key not in self._columns:
+                    self._columns.append(key)
+        computed_values = enrich_trade_row(computed_values)
 
         row: list[str] = []
         for column in self._columns:

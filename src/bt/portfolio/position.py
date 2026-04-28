@@ -374,9 +374,25 @@ class PositionBook:
             "signal_timeframe",
             "exit_monitoring_timeframe",
             "vwap_mode",
+            "decision_trace",
         ):
             if key in metadata:
                 extracted[key] = metadata.get(key)
+        for key, value in metadata.items():
+            if key.startswith(
+                (
+                    "entry_state_",
+                    "entry_gate_",
+                    "entry_decision_",
+                    "execution_",
+                    "risk_",
+                    "path_",
+                    "counterfactual_",
+                    "label_",
+                    "identity_",
+                )
+            ):
+                extracted[key] = value
 
         normalized_entry_qty = abs(float(entry_qty))
         extracted["entry_qty"] = normalized_entry_qty

@@ -15,6 +15,7 @@ from bt.indicators.base import Indicator
 from bt.indicators.atr import ATR
 from bt.indicators.ema import EMA
 from bt.indicators.vwap import VWAP
+from bt.features.online_state import OnlineStateFeatureLayer
 from bt.logging.jsonl import JsonlWriter
 from bt.orders.side import resolve_order_side, validate_order_side_consistency
 from bt.logging.sanity import SanityCounters
@@ -68,6 +69,7 @@ class BacktestEngine:
         self._indicators: dict[str, dict[str, Indicator]] = {}
         self._sanity_counters = sanity_counters
         self._audit = audit_manager
+        self._state_layer = OnlineStateFeatureLayer()
 
     def _positions_context(self) -> dict[str, dict[str, Any]]:
         positions_ctx: dict[str, dict[str, Any]] = {}
@@ -374,6 +376,15 @@ class BacktestEngine:
                     indicators = self._ensure_symbol_indicators(bar.symbol)
                     for indicator in indicators.values():
                         indicator.update(bar)
+                    self._state_layer.update(
+                        symbol=bar.symbol,
+                        ts=bar.ts,
+                        open_px=bar.open,
+                        high=bar.high,
+                        low=bar.low,
+                        close=bar.close,
+                        volume=bar.volume,
+                    )
 
                 tradeable = self._universe.tradeable_at(ts)
                 indicators_snapshot: dict[str, dict[str, tuple[float | None, bool]]] = {}
@@ -386,6 +397,7 @@ class BacktestEngine:
                 ctx: Mapping[str, Any] = {
                     "indicators": indicators_snapshot,
                     "tradeable": tradeable,
+                    "state": {symbol: self._state_layer.snapshot(symbol=symbol) for symbol in bars_by_symbol},
                 }
                 signals = self._strategy.on_bars(ts, bars_by_symbol, tradeable, self._ctx_with_positions(ctx))
                 if self._audit is not None and self._audit.enabled:
@@ -403,6 +415,7 @@ class BacktestEngine:
                 reserved_free_margin = self._portfolio.free_margin
 
                 for signal in signals:
+                    signal = self._enrich_signal_metadata(signal=signal, ts=ts)
                     bar = bars_by_symbol.get(signal.symbol)
                     if bar is None:
                         decision_reason = "risk_rejected:no_bar"
@@ -575,5 +588,29 @@ class BacktestEngine:
         self._decisions_writer.close()
         self._fills_writer.close()
         self._trades_writer.close()
+
+    def _enrich_signal_metadata(self, *, signal: Any, ts: Any) -> Any:
+        metadata = dict(signal.metadata) if isinstance(signal.metadata, dict) else {}
+        state_snapshot = self._state_layer.snapshot(symbol=signal.symbol)
+        for key, value in state_snapshot.items():
+            if key.startswith("entry_state_") and key not in metadata:
+                metadata[key] = value
+        metadata.setdefault("signal_ts", ts)
+        if "decision_trace" not in metadata:
+            metadata["decision_trace"] = {
+                "reason_code": metadata.get("entry_reason", signal.signal_type if hasattr(signal, "signal_type") else None),
+                "setup_class": metadata.get("setup_class"),
+                "conditions_bool_map": {},
+                "blockers_bool_map": {},
+                "permission_layer_state": {},
+                "score": None,
+                "rank": None,
+                "parameter_combination": metadata.get("parameter_set_id"),
+                "gate_thresholds": {},
+                "gate_values": {},
+                "gate_margins": {},
+                "most_binding_gate": None,
+            }
+        return replace(signal, metadata=metadata)
         if self._audit is not None:
             self._audit.write_summary()
