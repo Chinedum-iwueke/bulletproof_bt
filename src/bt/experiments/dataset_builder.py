@@ -43,6 +43,18 @@ TRADE_OPTIONAL_CONTEXT_COLUMNS = [
     "vol_bucket",
     "liq_bucket",
 ]
+PHASE9_PREFIXES = (
+    "identity_",
+    "entry_state_",
+    "entry_gate_",
+    "entry_decision_",
+    "execution_",
+    "risk_",
+    "path_",
+    "exit_",
+    "counterfactual_",
+    "label_",
+)
 
 RUN_DATASET_COLUMNS_V1 = [
     "experiment_id",
@@ -485,6 +497,11 @@ def _build_trade_rows(
     for column in TRADE_OPTIONAL_CONTEXT_COLUMNS:
         if column in trades_df.columns:
             out[column] = trades_df[column]
+    for column in trades_df.columns:
+        if any(column.startswith(prefix) for prefix in PHASE9_PREFIXES):
+            out[column] = trades_df[column]
+    if "exit_reason" in trades_df.columns and "exit_reason" not in out.columns:
+        out["exit_reason"] = trades_df["exit_reason"]
 
     for key, value in run_provenance.items():
         out[key] = value
