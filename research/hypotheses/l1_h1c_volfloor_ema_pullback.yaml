@@ -35,7 +35,7 @@ gates:
     param: "er_min"
 
 parameter_grid:
-  timeframe: ["15m"]
+  signal_timeframe: ["15m", "1h"]
   atr_period: [14]
   vol_lookback_bars: [2880]
   ema_fast_period: [20]
