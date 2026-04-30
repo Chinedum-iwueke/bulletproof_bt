@@ -20,6 +20,7 @@ indicator_defaults:
   z_vwap_formula: "(close - session_vwap) / atr_14"
 
 parameter_grid:
+  signal_timeframe: ["5m", "15m"]
   q_comp: [0.20, 0.30]
   z0: [0.8, 1.0]
   k_atr: [1.5, 2.0]
