@@ -28,7 +28,7 @@ gates:
 
 parameter_grid:
   signal_timeframe: ["15m", "1h"]
-  theta_vol: [0.50, 0.60, 0.70, 0.80, 0.85]
+  theta_vol: [0.60, 0.70, 0.80, 0.85]
   k_atr: [2.0, 2.5]
   T_hold: [24, 48]
   tp_enabled: [false, true]
