@@ -27,6 +27,7 @@ indicator_defaults:
     q70: "broader_negative_control_threshold"
 
 parameter_grid:
+  signal_timeframe: ["5m", "15m"]
   fit_window_days: [180, 365]
   gate_quantile_low: [0.3, 0.7]
   z0: [0.8, 1.0]
