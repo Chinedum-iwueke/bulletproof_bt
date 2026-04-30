@@ -14,6 +14,7 @@ from bt.indicators.atr import ATR
 from bt.indicators.ema import EMA
 from bt.strategy import register_strategy
 from bt.strategy.base import Strategy
+from bt.logging.decision_trace import make_decision_trace
 
 
 @dataclass
@@ -202,6 +203,19 @@ class L1H1BSalvageStrategy(Strategy):
                             signal_type="l1_h1b_exit",
                             confidence=1.0,
                             metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="salvage_trend_entry",
+                            setup_class="salvage_trend",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h1b_salvage"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                                 "close_only": True,
                                 "exit_reason": "time_stop",
                                 "signal_bars_held": st.signal_bars_held,
@@ -235,6 +249,19 @@ class L1H1BSalvageStrategy(Strategy):
                                 signal_type="l1_h1b_exit",
                                 confidence=1.0,
                                 metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="salvage_trend_entry",
+                            setup_class="salvage_trend",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h1b_salvage"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                                     "close_only": True,
                                     "exit_reason": reason,
                                     "stop_price": float(effective_stop),
@@ -262,6 +289,19 @@ class L1H1BSalvageStrategy(Strategy):
                                 signal_type="l1_h1b_exit",
                                 confidence=1.0,
                                 metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="salvage_trend_entry",
+                            setup_class="salvage_trend",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h1b_salvage"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                                     "close_only": True,
                                     "exit_reason": reason,
                                     "stop_price": float(effective_stop),
@@ -313,6 +353,19 @@ class L1H1BSalvageStrategy(Strategy):
                     signal_type="l1_h1b_salvage",
                     confidence=1.0,
                     metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="salvage_trend_entry",
+                            setup_class="salvage_trend",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h1b_salvage"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "strategy": "l1_h1b_salvage",
                         "hypothesis_id": "L1-H1B",
                         "timeframe": self._timeframe,

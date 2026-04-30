@@ -14,6 +14,7 @@ from bt.indicators.ema import EMA
 from bt.indicators.vwap import SessionVWAP
 from bt.strategy import register_strategy
 from bt.strategy.base import Strategy
+from bt.logging.decision_trace import make_decision_trace
 
 
 @dataclass
@@ -174,6 +175,19 @@ class L1H8TrendContinuationPullbackStrategy(Strategy):
                     signal_type="l1_h8_exit",
                     confidence=1.0,
                     metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="trend_continuation_pullback_entry",
+                            setup_class="trend_continuation_pullback",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h8_trend_continuation_pullback"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "close_only": True,
                         "exit_reason": "fail_fast",
                         "signal_bars_held": st.signal_bars_held,
@@ -203,6 +217,19 @@ class L1H8TrendContinuationPullbackStrategy(Strategy):
                         signal_type="l1_h8_partial",
                         confidence=1.0,
                         metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="trend_continuation_pullback_entry",
+                            setup_class="trend_continuation_pullback",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h8_trend_continuation_pullback"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                             "close_only": True,
                             "close_fraction": self._partial_fraction,
                             "partial_fraction": self._partial_fraction,
@@ -247,6 +274,19 @@ class L1H8TrendContinuationPullbackStrategy(Strategy):
                     signal_type="l1_h8_exit",
                     confidence=1.0,
                     metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="trend_continuation_pullback_entry",
+                            setup_class="trend_continuation_pullback",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h8_trend_continuation_pullback"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "close_only": True,
                         "exit_reason": "stop_or_trail",
                         "stop_price": float(effective_stop),
@@ -271,6 +311,19 @@ class L1H8TrendContinuationPullbackStrategy(Strategy):
                     signal_type="l1_h8_exit",
                     confidence=1.0,
                     metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="trend_continuation_pullback_entry",
+                            setup_class="trend_continuation_pullback",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h8_trend_continuation_pullback"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "close_only": True,
                         "exit_reason": "stop_or_trail",
                         "stop_price": float(effective_stop),
@@ -435,6 +488,19 @@ class L1H8TrendContinuationPullbackStrategy(Strategy):
                     signal_type="l1_h8_entry",
                     confidence=1.0,
                     metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="trend_continuation_pullback_entry",
+                            setup_class="trend_continuation_pullback",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h8_trend_continuation_pullback"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "strategy": "l1_h8_trend_continuation_pullback",
                         "family_variant": self._family_variant,
                         "family_pattern": "trend_continuation_pullback",

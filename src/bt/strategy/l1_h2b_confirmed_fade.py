@@ -13,6 +13,7 @@ from bt.indicators.atr import ATR
 from bt.indicators.vwap import SessionVWAP
 from bt.strategy import register_strategy
 from bt.strategy.base import Strategy
+from bt.logging.decision_trace import make_decision_trace
 
 
 @dataclass
@@ -208,6 +209,19 @@ class L1H2BConfirmedFadeStrategy(Strategy):
                                 signal_type="l1_h2b_exit",
                                 confidence=1.0,
                                 metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="confirmed_fade_entry",
+                            setup_class="confirmed_compression_fade",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h2b_confirmed_fade"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                                     "close_only": True,
                                     "exit_reason": "time_stop",
                                     "signal_bars_held": st.signal_bars_held,
@@ -223,22 +237,74 @@ class L1H2BConfirmedFadeStrategy(Strategy):
 
                 if st.stop_price_frozen is not None:
                     if current == Side.BUY and bar.low <= st.stop_price_frozen:
-                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l1_h2b_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "stop_initial", "stop_price": st.stop_price_frozen, "entry_stop_price": st.stop_price_frozen, "entry_stop_distance": st.stop_distance_frozen, "atr_entry": st.atr_entry, "exit_monitoring_timeframe": "1m", "touched_vwap_before_exit": st.touched_vwap_while_open, "holding_period_bars_signal": st.signal_bars_held}))
+                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l1_h2b_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="confirmed_fade_entry",
+                            setup_class="confirmed_compression_fade",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h2b_confirmed_fade"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),"close_only": True, "exit_reason": "stop_initial", "stop_price": st.stop_price_frozen, "entry_stop_price": st.stop_price_frozen, "entry_stop_distance": st.stop_distance_frozen, "atr_entry": st.atr_entry, "exit_monitoring_timeframe": "1m", "touched_vwap_before_exit": st.touched_vwap_while_open, "holding_period_bars_signal": st.signal_bars_held}))
                         self._clear_position_state(st)
                         continue
                     if current == Side.SELL and bar.high >= st.stop_price_frozen:
-                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l1_h2b_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "stop_initial", "stop_price": st.stop_price_frozen, "entry_stop_price": st.stop_price_frozen, "entry_stop_distance": st.stop_distance_frozen, "atr_entry": st.atr_entry, "exit_monitoring_timeframe": "1m", "touched_vwap_before_exit": st.touched_vwap_while_open, "holding_period_bars_signal": st.signal_bars_held}))
+                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l1_h2b_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="confirmed_fade_entry",
+                            setup_class="confirmed_compression_fade",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h2b_confirmed_fade"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),"close_only": True, "exit_reason": "stop_initial", "stop_price": st.stop_price_frozen, "entry_stop_price": st.stop_price_frozen, "entry_stop_distance": st.stop_distance_frozen, "atr_entry": st.atr_entry, "exit_monitoring_timeframe": "1m", "touched_vwap_before_exit": st.touched_vwap_while_open, "holding_period_bars_signal": st.signal_bars_held}))
                         self._clear_position_state(st)
                         continue
 
                 active_base_vwap = st.base_vwap.value
                 if active_base_vwap is not None:
                     if current == Side.BUY and bar.close >= active_base_vwap:
-                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l1_h2b_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "vwap_touch", "vwap_t": active_base_vwap, "vwap_mode": "session", "exit_monitoring_timeframe": "1m", "touched_vwap_before_exit": True, "holding_period_bars_signal": st.signal_bars_held}))
+                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l1_h2b_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="confirmed_fade_entry",
+                            setup_class="confirmed_compression_fade",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h2b_confirmed_fade"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),"close_only": True, "exit_reason": "vwap_touch", "vwap_t": active_base_vwap, "vwap_mode": "session", "exit_monitoring_timeframe": "1m", "touched_vwap_before_exit": True, "holding_period_bars_signal": st.signal_bars_held}))
                         self._clear_position_state(st)
                         continue
                     if current == Side.SELL and bar.close <= active_base_vwap:
-                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l1_h2b_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "vwap_touch", "vwap_t": active_base_vwap, "vwap_mode": "session", "exit_monitoring_timeframe": "1m", "touched_vwap_before_exit": True, "holding_period_bars_signal": st.signal_bars_held}))
+                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l1_h2b_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="confirmed_fade_entry",
+                            setup_class="confirmed_compression_fade",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h2b_confirmed_fade"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),"close_only": True, "exit_reason": "vwap_touch", "vwap_t": active_base_vwap, "vwap_mode": "session", "exit_monitoring_timeframe": "1m", "touched_vwap_before_exit": True, "holding_period_bars_signal": st.signal_bars_held}))
                         self._clear_position_state(st)
                         continue
                 continue
@@ -306,6 +372,19 @@ class L1H2BConfirmedFadeStrategy(Strategy):
                     signal_type="l1_h2b_confirmed_fade",
                     confidence=1.0,
                     metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="confirmed_fade_entry",
+                            setup_class="confirmed_compression_fade",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h2b_confirmed_fade"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "strategy": "l1_h2b_confirmed_fade",
                         "hypothesis_id": "L1-H2B",
                         "signal_timeframe": self._timeframe,

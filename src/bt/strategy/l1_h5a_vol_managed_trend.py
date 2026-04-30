@@ -20,6 +20,7 @@ from bt.indicators.atr import ATR
 from bt.indicators.ema import EMA
 from bt.strategy import register_strategy
 from bt.strategy.base import Strategy
+from bt.logging.decision_trace import make_decision_trace
 
 
 @dataclass
@@ -196,6 +197,19 @@ class L1H5AVolManagedTrendStrategy(Strategy):
                             signal_type="l1_h5a_exit",
                             confidence=1.0,
                             metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="vol_managed_trend_entry",
+                            setup_class="vol_managed_trend",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h5a_vol_managed_trend"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                                 "close_only": True,
                                 "exit_reason": "time_stop",
                                 "signal_bars_held": st.signal_bars_held,
@@ -216,6 +230,19 @@ class L1H5AVolManagedTrendStrategy(Strategy):
                                 signal_type="l1_h5a_exit",
                                 confidence=1.0,
                                 metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="vol_managed_trend_entry",
+                            setup_class="vol_managed_trend",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h5a_vol_managed_trend"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                                     "close_only": True,
                                     "exit_reason": "atr_stop",
                                     "stop_price": st.stop_price_frozen,
@@ -236,6 +263,19 @@ class L1H5AVolManagedTrendStrategy(Strategy):
                                 signal_type="l1_h5a_exit",
                                 confidence=1.0,
                                 metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="vol_managed_trend_entry",
+                            setup_class="vol_managed_trend",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h5a_vol_managed_trend"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                                     "close_only": True,
                                     "exit_reason": "atr_stop",
                                     "stop_price": st.stop_price_frozen,
@@ -299,6 +339,19 @@ class L1H5AVolManagedTrendStrategy(Strategy):
                     signal_type="l1_h5a_vol_managed_trend",
                     confidence=1.0,
                     metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="vol_managed_trend_entry",
+                            setup_class="vol_managed_trend",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h5a_vol_managed_trend"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "strategy": "l1_h5a_vol_managed_trend",
                         "signal_timeframe": self._timeframe,
                         "exit_monitoring_timeframe": "1m",

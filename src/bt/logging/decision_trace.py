@@ -48,3 +48,42 @@ def flatten_decision_trace(payload: dict[str, Any] | StrategyDecisionTrace | Non
         "entry_gate_thresholds_json": json.dumps(data.get("gate_thresholds", {}), sort_keys=True),
         "entry_gate_values_json": json.dumps(data.get("gate_values", {}), sort_keys=True),
     }
+
+
+def make_decision_trace(
+    reason_code: str,
+    setup_class: str,
+    hypothesis_branch: str | None = None,
+    conditions_bool_map: dict | None = None,
+    blockers_bool_map: dict | None = None,
+    permission_layer_state: dict | None = None,
+    score: float | None = None,
+    rank: float | None = None,
+    parameter_combination: dict | None = None,
+    gate_values: dict | None = None,
+    gate_thresholds: dict | None = None,
+    gate_margins: dict | None = None,
+    most_binding_gate: str | None = None,
+) -> dict[str, Any]:
+    def _safe(v: Any) -> Any:
+        try:
+            json.dumps(v)
+            return v
+        except TypeError:
+            return str(v)
+
+    return {
+        "reason_code": _safe(reason_code),
+        "setup_class": _safe(setup_class),
+        "hypothesis_branch": _safe(hypothesis_branch),
+        "conditions_bool_map": {str(k): bool(v) for k, v in (conditions_bool_map or {}).items()},
+        "blockers_bool_map": {str(k): bool(v) for k, v in (blockers_bool_map or {}).items()},
+        "permission_layer_state": {str(k): _safe(v) for k, v in (permission_layer_state or {}).items()},
+        "score": score,
+        "rank": rank,
+        "parameter_combination": json.dumps(parameter_combination or {}, sort_keys=True),
+        "gate_values": {str(k): _safe(v) for k, v in (gate_values or {}).items()},
+        "gate_thresholds": {str(k): _safe(v) for k, v in (gate_thresholds or {}).items()},
+        "gate_margins": {str(k): _safe(v) for k, v in (gate_margins or {}).items()},
+        "most_binding_gate": _safe(most_binding_gate),
+    }
