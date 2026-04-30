@@ -2,7 +2,7 @@ poll_interval_seconds: 60
 queue_name: approved_backtests
 locked_by_prefix: research-daemon
 default_phase: tier2
-default_max_workers: 6
+default_max_workers: 8
 default_config: configs/engine.yaml
 default_local_config: configs/local/engine.lab.yaml
 stable_data: /home/omenka/research_data/bt/curated/stable_data_1m_canonical
