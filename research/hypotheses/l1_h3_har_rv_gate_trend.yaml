@@ -22,6 +22,7 @@ indicator_defaults:
   bars_per_day_15m: 96
 
 parameter_grid:
+  signal_timeframe: ["15m", "1h"]
   fit_window_days: [180, 365]
   gate_quantile: [0.3, 0.7]
   k: [1.5, 2.0]
