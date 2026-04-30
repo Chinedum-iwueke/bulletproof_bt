@@ -14,6 +14,7 @@ from bt.indicators.ema import EMA
 from bt.indicators.har_rv import HarFitRecord, HarRVForecaster
 from bt.strategy import register_strategy
 from bt.strategy.base import Strategy
+from bt.logging.decision_trace import make_decision_trace
 
 
 @dataclass
@@ -196,17 +197,56 @@ class L1H3HarRVGateTrendStrategy(Strategy):
                 if has_new_signal_bar:
                     st.signal_bars_held += 1
                 if st.signal_bars_held >= self._t_hold and has_new_signal_bar:
-                    signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL if current == Side.BUY else Side.BUY, signal_type="l1_h3_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "time_stop", "signal_bars_held": st.signal_bars_held, "hold_time_unit": "signal_bars"}))
+                    signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL if current == Side.BUY else Side.BUY, signal_type="l1_h3_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="har_rv_gate_trend_entry",
+                            setup_class="har_gated_trend",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h3_har_rv_gate_trend"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),"close_only": True, "exit_reason": "time_stop", "signal_bars_held": st.signal_bars_held, "hold_time_unit": "signal_bars"}))
                     self._clear_position_state(st)
                     continue
 
                 if st.stop_price_frozen is not None:
                     if current == Side.BUY and bar.low <= st.stop_price_frozen:
-                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l1_h3_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "rvhat_stop", "stop_price": st.stop_price_frozen, "stop_distance": st.stop_distance_frozen, "rv_hat_entry": st.rv_hat_entry, "exit_monitoring_timeframe": "1m"}))
+                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l1_h3_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="har_rv_gate_trend_entry",
+                            setup_class="har_gated_trend",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h3_har_rv_gate_trend"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),"close_only": True, "exit_reason": "rvhat_stop", "stop_price": st.stop_price_frozen, "stop_distance": st.stop_distance_frozen, "rv_hat_entry": st.rv_hat_entry, "exit_monitoring_timeframe": "1m"}))
                         self._clear_position_state(st)
                         continue
                     if current == Side.SELL and bar.high >= st.stop_price_frozen:
-                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l1_h3_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "rvhat_stop", "stop_price": st.stop_price_frozen, "stop_distance": st.stop_distance_frozen, "rv_hat_entry": st.rv_hat_entry, "exit_monitoring_timeframe": "1m"}))
+                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l1_h3_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="har_rv_gate_trend_entry",
+                            setup_class="har_gated_trend",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h3_har_rv_gate_trend"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),"close_only": True, "exit_reason": "rvhat_stop", "stop_price": st.stop_price_frozen, "stop_distance": st.stop_distance_frozen, "rv_hat_entry": st.rv_hat_entry, "exit_monitoring_timeframe": "1m"}))
                         self._clear_position_state(st)
                         continue
                 continue
@@ -248,6 +288,19 @@ class L1H3HarRVGateTrendStrategy(Strategy):
                     signal_type="l1_h3_har_rv_gate_trend",
                     confidence=1.0,
                     metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="har_rv_gate_trend_entry",
+                            setup_class="har_gated_trend",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h3_har_rv_gate_trend"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "strategy": "l1_h3_har_rv_gate_trend",
                         "timeframe": self._timeframe,
                         "signal_timeframe": self._timeframe,

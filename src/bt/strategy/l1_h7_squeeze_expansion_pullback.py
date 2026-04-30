@@ -18,6 +18,7 @@ from bt.indicators.squeeze import BBKCSqueeze
 from bt.indicators.vwap import SessionVWAP
 from bt.strategy import register_strategy
 from bt.strategy.base import Strategy
+from bt.logging.decision_trace import make_decision_trace
 
 
 @dataclass
@@ -214,6 +215,19 @@ class L1H7SqueezeExpansionPullbackStrategy(Strategy):
                         signal_type="l1_h7_partial",
                         confidence=1.0,
                         metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="squeeze_expansion_pullback_entry",
+                            setup_class="squeeze_expansion_pullback",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h7_squeeze_expansion_pullback"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                             "close_only": True,
                             "close_fraction": self._partial_fraction,
                             "partial_fraction": self._partial_fraction,
@@ -241,6 +255,19 @@ class L1H7SqueezeExpansionPullbackStrategy(Strategy):
                         signal_type="l1_h7_exit",
                         confidence=1.0,
                         metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="squeeze_expansion_pullback_entry",
+                            setup_class="squeeze_expansion_pullback",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h7_squeeze_expansion_pullback"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                             "close_only": True,
                             "exit_reason": "fail_fast",
                             "fail_fast_bars": self._fail_fast_bars,
@@ -283,6 +310,19 @@ class L1H7SqueezeExpansionPullbackStrategy(Strategy):
                         signal_type="l1_h7_exit",
                         confidence=1.0,
                         metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="squeeze_expansion_pullback_entry",
+                            setup_class="squeeze_expansion_pullback",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h7_squeeze_expansion_pullback"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                             "close_only": True,
                             "exit_reason": "stop_or_trail",
                             "stop_price": float(effective_stop),
@@ -306,6 +346,19 @@ class L1H7SqueezeExpansionPullbackStrategy(Strategy):
                         signal_type="l1_h7_exit",
                         confidence=1.0,
                         metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="squeeze_expansion_pullback_entry",
+                            setup_class="squeeze_expansion_pullback",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h7_squeeze_expansion_pullback"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                             "close_only": True,
                             "exit_reason": "stop_or_trail",
                             "stop_price": float(effective_stop),
@@ -486,6 +539,19 @@ class L1H7SqueezeExpansionPullbackStrategy(Strategy):
                         signal_type="l1_h7_entry",
                         confidence=1.0,
                         metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="squeeze_expansion_pullback_entry",
+                            setup_class="squeeze_expansion_pullback",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h7_squeeze_expansion_pullback"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                             "strategy": "l1_h7_squeeze_expansion_pullback",
                             "family_variant": self._family_variant,
                             "family_pattern": "squeeze_expansion_pullback",

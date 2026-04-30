@@ -16,6 +16,7 @@ from bt.indicators.har_rv import HarFitRecord, HarRVForecaster
 from bt.indicators.vwap import SessionVWAP
 from bt.strategy import register_strategy
 from bt.strategy.base import Strategy
+from bt.logging.decision_trace import make_decision_trace
 
 
 @dataclass
@@ -262,23 +263,75 @@ class L1H3CHarRegimeSwitchStrategy(Strategy):
                 if st.active_branch == "L1-H1" and has_new_15m:
                     st.signal_bars_held += 1
                     if st.signal_bars_held >= self._t_hold_trend:
-                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL if current == Side.BUY else Side.BUY, signal_type="l1_h3c_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "time_stop", "signal_bars_held": st.signal_bars_held, "hold_time_unit": "signal_bars", "signal_timeframe": self._trend_timeframe, "branch_selected": "L1-H1"}))
+                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL if current == Side.BUY else Side.BUY, signal_type="l1_h3c_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="har_regime_switch_entry",
+                            setup_class="har_regime_switch",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h3c_har_regime_switch"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),"close_only": True, "exit_reason": "time_stop", "signal_bars_held": st.signal_bars_held, "hold_time_unit": "signal_bars", "signal_timeframe": self._trend_timeframe, "branch_selected": "L1-H1"}))
                         self._clear_position_state(st)
                         continue
                 elif st.active_branch == "L1-H2" and has_new_5m:
                     st.signal_bars_held += 1
                     if st.signal_bars_held >= self._t_hold_reversion:
-                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL if current == Side.BUY else Side.BUY, signal_type="l1_h3c_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "time_stop", "signal_bars_held": st.signal_bars_held, "hold_time_unit": "signal_bars", "signal_timeframe": self._reversion_timeframe, "branch_selected": "L1-H2"}))
+                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL if current == Side.BUY else Side.BUY, signal_type="l1_h3c_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="har_regime_switch_entry",
+                            setup_class="har_regime_switch",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h3c_har_regime_switch"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),"close_only": True, "exit_reason": "time_stop", "signal_bars_held": st.signal_bars_held, "hold_time_unit": "signal_bars", "signal_timeframe": self._reversion_timeframe, "branch_selected": "L1-H2"}))
                         self._clear_position_state(st)
                         continue
 
                 if st.stop_price_frozen is not None:
                     if current == Side.BUY and bar.low <= st.stop_price_frozen:
-                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l1_h3c_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "rvhat_stop", "stop_price": st.stop_price_frozen, "stop_distance": st.stop_distance_frozen, "rv_hat_entry": st.rv_hat_entry, "exit_monitoring_timeframe": "1m", "branch_selected": st.active_branch}))
+                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l1_h3c_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="har_regime_switch_entry",
+                            setup_class="har_regime_switch",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h3c_har_regime_switch"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),"close_only": True, "exit_reason": "rvhat_stop", "stop_price": st.stop_price_frozen, "stop_distance": st.stop_distance_frozen, "rv_hat_entry": st.rv_hat_entry, "exit_monitoring_timeframe": "1m", "branch_selected": st.active_branch}))
                         self._clear_position_state(st)
                         continue
                     if current == Side.SELL and bar.high >= st.stop_price_frozen:
-                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l1_h3c_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "rvhat_stop", "stop_price": st.stop_price_frozen, "stop_distance": st.stop_distance_frozen, "rv_hat_entry": st.rv_hat_entry, "exit_monitoring_timeframe": "1m", "branch_selected": st.active_branch}))
+                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l1_h3c_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="har_regime_switch_entry",
+                            setup_class="har_regime_switch",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h3c_har_regime_switch"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),"close_only": True, "exit_reason": "rvhat_stop", "stop_price": st.stop_price_frozen, "stop_distance": st.stop_distance_frozen, "rv_hat_entry": st.rv_hat_entry, "exit_monitoring_timeframe": "1m", "branch_selected": st.active_branch}))
                         self._clear_position_state(st)
                         continue
 
@@ -286,11 +339,37 @@ class L1H3CHarRegimeSwitchStrategy(Strategy):
                     active_base_vwap = st.base_vwap.value
                     if active_base_vwap is not None:
                         if current == Side.BUY and bar.close >= active_base_vwap:
-                            signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l1_h3c_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "vwap_touch", "vwap_t": active_base_vwap, "vwap_mode": "session", "exit_monitoring_timeframe": "1m", "branch_selected": "L1-H2"}))
+                            signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l1_h3c_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="har_regime_switch_entry",
+                            setup_class="har_regime_switch",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h3c_har_regime_switch"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),"close_only": True, "exit_reason": "vwap_touch", "vwap_t": active_base_vwap, "vwap_mode": "session", "exit_monitoring_timeframe": "1m", "branch_selected": "L1-H2"}))
                             self._clear_position_state(st)
                             continue
                         if current == Side.SELL and bar.close <= active_base_vwap:
-                            signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l1_h3c_exit", confidence=1.0, metadata={"close_only": True, "exit_reason": "vwap_touch", "vwap_t": active_base_vwap, "vwap_mode": "session", "exit_monitoring_timeframe": "1m", "branch_selected": "L1-H2"}))
+                            signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l1_h3c_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="har_regime_switch_entry",
+                            setup_class="har_regime_switch",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h3c_har_regime_switch"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),"close_only": True, "exit_reason": "vwap_touch", "vwap_t": active_base_vwap, "vwap_mode": "session", "exit_monitoring_timeframe": "1m", "branch_selected": "L1-H2"}))
                             self._clear_position_state(st)
                             continue
                 continue
@@ -328,6 +407,19 @@ class L1H3CHarRegimeSwitchStrategy(Strategy):
 
                 fit_snapshot: HarFitRecord | None = st.rv_forecaster.fit_history[-1] if st.rv_forecaster.fit_history else None
                 signals.append(Signal(ts=ts, symbol=symbol, side=side, signal_type="l1_h3c_har_regime_switch", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="har_regime_switch_entry",
+                            setup_class="har_regime_switch",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h3c_har_regime_switch"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                     "strategy": "l1_h3c_har_regime_switch",
                     "base_data_frequency_expected": "1m",
                     "exit_monitoring_timeframe": "1m",
@@ -395,6 +487,19 @@ class L1H3CHarRegimeSwitchStrategy(Strategy):
 
                 fit_snapshot = st.rv_forecaster.fit_history[-1] if st.rv_forecaster.fit_history else None
                 signals.append(Signal(ts=ts, symbol=symbol, side=side, signal_type="l1_h3c_har_regime_switch", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="har_regime_switch_entry",
+                            setup_class="har_regime_switch",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h3c_har_regime_switch"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                     "strategy": "l1_h3c_har_regime_switch",
                     "base_data_frequency_expected": "1m",
                     "exit_monitoring_timeframe": "1m",

@@ -14,6 +14,7 @@ from bt.indicators.dmi_adx import DMIADX
 from bt.indicators.ema import EMA
 from bt.strategy import register_strategy
 from bt.strategy.base import Strategy
+from bt.logging.decision_trace import make_decision_trace
 
 
 @dataclass
@@ -208,7 +209,20 @@ class VolFloorEmaPullbackStrategy(Strategy):
                             side=exit_side,
                             signal_type="h1_volfloor_ema_pullback_exit",
                             confidence=1.0,
-                            metadata={**base_meta, "is_exit": True, "close_only": True},
+                            metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="volfloor_ema_pullback_entry",
+                            setup_class="volfloor_ema_pullback",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "volfloor_ema_pullback"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),**base_meta, "is_exit": True, "close_only": True},
                         )
                     )
                     state.position = None
@@ -235,6 +249,19 @@ class VolFloorEmaPullbackStrategy(Strategy):
                                 signal_type="h1_volfloor_ema_pullback_entry",
                                 confidence=1.0,
                                 metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="volfloor_ema_pullback_entry",
+                            setup_class="volfloor_ema_pullback",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "volfloor_ema_pullback"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                                     **base_meta,
                                     "long_bias": long_bias,
                                     "short_bias": short_bias,
@@ -265,6 +292,19 @@ class VolFloorEmaPullbackStrategy(Strategy):
                                 signal_type="h1_volfloor_ema_pullback_entry",
                                 confidence=1.0,
                                 metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="volfloor_ema_pullback_entry",
+                            setup_class="volfloor_ema_pullback",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "volfloor_ema_pullback"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                                     **base_meta,
                                     "long_bias": long_bias,
                                     "short_bias": short_bias,

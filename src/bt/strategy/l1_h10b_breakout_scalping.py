@@ -13,6 +13,7 @@ from bt.indicators.atr import ATR
 from bt.indicators.dmi_adx import DMIADX
 from bt.strategy import register_strategy
 from bt.strategy.base import Strategy
+from bt.logging.decision_trace import make_decision_trace
 
 
 @dataclass
@@ -122,6 +123,19 @@ class L1H10BBreakoutScalpingStrategy(Strategy):
 
                 if current == Side.BUY and bar.low <= st.stop_price_frozen:
                     signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l1_h10b_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="breakout_scalping_entry",
+                            setup_class="breakout_scalping",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h10b_breakout_scalping"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "close_only": True,
                         "exit_reason": "atr_stop",
                         "setup_type": self._setup_type,
@@ -139,6 +153,19 @@ class L1H10BBreakoutScalpingStrategy(Strategy):
                     continue
                 if current == Side.SELL and bar.high >= st.stop_price_frozen:
                     signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l1_h10b_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="breakout_scalping_entry",
+                            setup_class="breakout_scalping",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h10b_breakout_scalping"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "close_only": True,
                         "exit_reason": "atr_stop",
                         "setup_type": self._setup_type,
@@ -157,6 +184,19 @@ class L1H10BBreakoutScalpingStrategy(Strategy):
 
                 if current == Side.BUY and bar.high >= st.tp_price_frozen:
                     signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l1_h10b_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="breakout_scalping_entry",
+                            setup_class="breakout_scalping",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h10b_breakout_scalping"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "close_only": True,
                         "exit_reason": "take_profit",
                         "setup_type": self._setup_type,
@@ -175,6 +215,19 @@ class L1H10BBreakoutScalpingStrategy(Strategy):
                     continue
                 if current == Side.SELL and bar.low <= st.tp_price_frozen:
                     signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l1_h10b_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="breakout_scalping_entry",
+                            setup_class="breakout_scalping",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h10b_breakout_scalping"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "close_only": True,
                         "exit_reason": "take_profit",
                         "setup_type": self._setup_type,
@@ -241,6 +294,19 @@ class L1H10BBreakoutScalpingStrategy(Strategy):
                     signal_type="l1_h10b_entry",
                     confidence=1.0,
                     metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="breakout_scalping_entry",
+                            setup_class="breakout_scalping",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h10b_breakout_scalping"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "strategy": "l1_h10b_breakout_scalping",
                         "family_variant": self._family_variant,
                         "parent_family": "L1-H10",

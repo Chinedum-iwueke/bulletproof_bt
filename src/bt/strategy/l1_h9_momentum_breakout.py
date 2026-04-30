@@ -14,6 +14,7 @@ from bt.indicators.dmi_adx import DMIADX
 from bt.indicators.ema import EMA
 from bt.strategy import register_strategy
 from bt.strategy.base import Strategy
+from bt.logging.decision_trace import make_decision_trace
 
 
 @dataclass
@@ -128,6 +129,19 @@ class L1H9MomentumBreakoutStrategy(Strategy):
                         signal_type="l1_h9_partial",
                         confidence=1.0,
                         metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="momentum_breakout_entry",
+                            setup_class="momentum_breakout",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h9_momentum_breakout"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                             "close_only": True,
                             "close_fraction": self._partial_fraction,
                             "partial_fraction": self._partial_fraction,
@@ -172,6 +186,19 @@ class L1H9MomentumBreakoutStrategy(Strategy):
                     signal_type="l1_h9_exit",
                     confidence=1.0,
                     metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="momentum_breakout_entry",
+                            setup_class="momentum_breakout",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h9_momentum_breakout"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "close_only": True,
                         "exit_reason": "stop_or_trail",
                         "stop_price": float(effective_stop),
@@ -196,6 +223,19 @@ class L1H9MomentumBreakoutStrategy(Strategy):
                     signal_type="l1_h9_exit",
                     confidence=1.0,
                     metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="momentum_breakout_entry",
+                            setup_class="momentum_breakout",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h9_momentum_breakout"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "close_only": True,
                         "exit_reason": "stop_or_trail",
                         "stop_price": float(effective_stop),
@@ -319,6 +359,19 @@ class L1H9MomentumBreakoutStrategy(Strategy):
                     signal_type="l1_h9_entry",
                     confidence=1.0,
                     metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="momentum_breakout_entry",
+                            setup_class="momentum_breakout",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h9_momentum_breakout"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "strategy": "l1_h9_momentum_breakout",
                         "family_variant": self._family_variant,
                         "family_pattern": "momentum_breakout_continuation",

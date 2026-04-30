@@ -13,6 +13,7 @@ from bt.indicators.atr import ATR
 from bt.indicators.vwap import SessionVWAP
 from bt.strategy import register_strategy
 from bt.strategy.base import Strategy
+from bt.logging.decision_trace import make_decision_trace
 
 
 @dataclass
@@ -119,6 +120,19 @@ class L1H10AMeanReversionSmallTPStrategy(Strategy):
 
                 if current == Side.BUY and bar.low <= st.stop_price_frozen:
                     signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l1_h10a_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="small_tp_mean_reversion_entry",
+                            setup_class="small_tp_mean_reversion",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h10a_mean_reversion_small_tp"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "close_only": True,
                         "exit_reason": "atr_stop",
                         "setup_type": self._setup_type,
@@ -136,6 +150,19 @@ class L1H10AMeanReversionSmallTPStrategy(Strategy):
                     continue
                 if current == Side.SELL and bar.high >= st.stop_price_frozen:
                     signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l1_h10a_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="small_tp_mean_reversion_entry",
+                            setup_class="small_tp_mean_reversion",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h10a_mean_reversion_small_tp"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "close_only": True,
                         "exit_reason": "atr_stop",
                         "setup_type": self._setup_type,
@@ -154,6 +181,19 @@ class L1H10AMeanReversionSmallTPStrategy(Strategy):
 
                 if current == Side.BUY and bar.high >= st.tp_price_frozen:
                     signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l1_h10a_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="small_tp_mean_reversion_entry",
+                            setup_class="small_tp_mean_reversion",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h10a_mean_reversion_small_tp"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "close_only": True,
                         "exit_reason": "take_profit",
                         "setup_type": self._setup_type,
@@ -172,6 +212,19 @@ class L1H10AMeanReversionSmallTPStrategy(Strategy):
                     continue
                 if current == Side.SELL and bar.low <= st.tp_price_frozen:
                     signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l1_h10a_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="small_tp_mean_reversion_entry",
+                            setup_class="small_tp_mean_reversion",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h10a_mean_reversion_small_tp"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "close_only": True,
                         "exit_reason": "take_profit",
                         "setup_type": self._setup_type,
@@ -232,6 +285,19 @@ class L1H10AMeanReversionSmallTPStrategy(Strategy):
                     signal_type="l1_h10a_entry",
                     confidence=1.0,
                     metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="small_tp_mean_reversion_entry",
+                            setup_class="small_tp_mean_reversion",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h10a_mean_reversion_small_tp"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                         "strategy": "l1_h10a_mean_reversion_small_tp",
                         "family_variant": self._family_variant,
                         "parent_family": "L1-H10",

@@ -15,6 +15,7 @@ from bt.indicators.ema import EMA
 from bt.indicators.vwap import SessionVWAP
 from bt.strategy import register_strategy
 from bt.strategy.base import Strategy
+from bt.logging.decision_trace import make_decision_trace
 
 
 @dataclass
@@ -156,6 +157,19 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
                 if st.stop_price_frozen is not None:
                     if current == Side.BUY and bar.low <= st.stop_price_frozen:
                         signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l1_h11_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="quality_filtered_continuation_entry",
+                            setup_class="quality_filtered_continuation",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h11_quality_filtered_continuation"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                             "close_only": True,
                             "exit_reason": "stop_loss",
                             "stop_price": st.stop_price_frozen,
@@ -168,6 +182,19 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
                         continue
                     if current == Side.SELL and bar.high >= st.stop_price_frozen:
                         signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l1_h11_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="quality_filtered_continuation_entry",
+                            setup_class="quality_filtered_continuation",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h11_quality_filtered_continuation"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                             "close_only": True,
                             "exit_reason": "stop_loss",
                             "stop_price": st.stop_price_frozen,
@@ -195,6 +222,19 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
                         vwap_v = float(st.exec_vwap.value)
                         if current == Side.BUY and float(bar.close) < vwap_v:
                             signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l1_h11_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="quality_filtered_continuation_entry",
+                            setup_class="quality_filtered_continuation",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h11_quality_filtered_continuation"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                                 "close_only": True,
                                 "exit_reason": "vwap_giveback",
                                 "vwap_giveback_mode": "on",
@@ -207,6 +247,19 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
                             continue
                         if current == Side.SELL and float(bar.close) > vwap_v:
                             signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l1_h11_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="quality_filtered_continuation_entry",
+                            setup_class="quality_filtered_continuation",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h11_quality_filtered_continuation"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                                 "close_only": True,
                                 "exit_reason": "vwap_giveback",
                                 "vwap_giveback_mode": "on",
@@ -225,6 +278,19 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
                         trend = Side.BUY if st.ema_fast.value > st.ema_slow.value else Side.SELL if st.ema_fast.value < st.ema_slow.value else None
                         if trend is not None and trend != current:
                             signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL if current == Side.BUY else Side.BUY, signal_type="l1_h11_exit", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="quality_filtered_continuation_entry",
+                            setup_class="quality_filtered_continuation",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h11_quality_filtered_continuation"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                                 "close_only": True,
                                 "exit_reason": "trend_failure",
                                 "signal_timeframe": self._timeframe,
@@ -347,6 +413,19 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
             st.signal_bars_held = 0
 
             signals.append(Signal(ts=ts, symbol=symbol, side=trend_dir, signal_type="l1_h11_entry", confidence=1.0, metadata={
+                        "decision_trace": make_decision_trace(
+                            reason_code="quality_filtered_continuation_entry",
+                            setup_class="quality_filtered_continuation",
+                            hypothesis_branch="entry",
+                            conditions_bool_map={},
+                            blockers_bool_map={},
+                            permission_layer_state={},
+                            parameter_combination={"strategy": "l1_h11_quality_filtered_continuation"},
+                            gate_values={},
+                            gate_thresholds={},
+                            gate_margins={},
+                            most_binding_gate=None,
+                        ),
                 "strategy": "l1_h11_quality_filtered_continuation",
                 "family_variant": self._family_variant,
                 "parent_family": "L1-H11",
