@@ -61,6 +61,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.1)
     parser.add_argument("--max-output-tokens", type=int, default=4000)
     parser.add_argument("--api-key-env", default="OPENAI_API_KEY")
+    parser.add_argument("--state-discovery-json", default=None)
+    parser.add_argument("--state-discovery-md", default=None)
+    parser.add_argument("--state-discovery-dir", default=None)
     return parser.parse_args()
 
 
@@ -93,6 +96,69 @@ def _default_from_preliminary(preliminary: dict[str, Any], diagnostics: dict[str
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _state_discovery_summary(args: argparse.Namespace) -> dict[str, Any] | None:
+    json_paths: list[Path] = []
+    md_paths: list[Path] = []
+    if args.state_discovery_json:
+        json_paths.append(Path(args.state_discovery_json))
+    if args.state_discovery_md:
+        md_paths.append(Path(args.state_discovery_md))
+    if args.state_discovery_dir:
+        sd_dir = Path(args.state_discovery_dir)
+        json_paths.extend(
+            [
+                sd_dir / f"{args.name}_stable_state_findings.json",
+                sd_dir / f"{args.name}_vol_state_findings.json",
+                sd_dir / f"{args.name}_combined_state_findings.json",
+            ]
+        )
+        md_paths.extend(
+            [
+                sd_dir / f"{args.name}_stable_state_findings.md",
+                sd_dir / f"{args.name}_vol_state_findings.md",
+                sd_dir / f"{args.name}_combined_state_findings.md",
+            ]
+        )
+    existing_json = [p for p in json_paths if p.exists()]
+    existing_md = [p for p in md_paths if p.exists()]
+    if not existing_json and not existing_md:
+        return None
+
+    findings: list[dict[str, Any]] = []
+    missing_fields: list[dict[str, Any]] = []
+    for path in existing_json:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            fs = payload.get("findings", [])
+            if isinstance(fs, list):
+                findings.extend([f for f in fs if isinstance(f, dict)])
+    for path in existing_md:
+        if "missing_fields" in path.name:
+            try:
+                missing_fields.append(json.loads(path.read_text(encoding="utf-8")))
+            except Exception:
+                pass
+
+    def top(find_type: str) -> list[dict[str, Any]]:
+        subset = [f for f in findings if f.get("finding_type") == find_type]
+        subset.sort(key=lambda x: (x.get("finding_score") or 0, x.get("n_trades") or 0), reverse=True)
+        return subset[:5]
+
+    return {
+        "source_json_paths": [str(p) for p in existing_json],
+        "source_md_paths": [str(p) for p in existing_md],
+        "strongest_positive_states": top("POSITIVE_EDGE_STATE"),
+        "strongest_negative_states": top("NEGATIVE_EDGE_STATE"),
+        "tail_generation_states": top("TAIL_GENERATION_STATE"),
+        "cost_killed_states": top("COST_KILLED_STATE"),
+        "exit_failure_states": top("EXIT_FAILURE_STATE"),
+        "missing_state_fields_warnings": missing_fields,
+    }
 
 
 def _register_db(
@@ -208,13 +274,16 @@ def main() -> int:
         "volatile_trades_dataset": str(context.volatile.trades_dataset_path) if context.volatile.trades_dataset_path else None,
         "stable_strategy_summaries": [str(p) for p in context.stable.strategy_summary_paths],
         "volatile_strategy_summaries": [str(p) for p in context.volatile.strategy_summary_paths],
-        "stable_state_discovery_report": str(Path("research/state_findings") / f"{args.name}_state_findings.md")
-        if (Path("research/state_findings") / f"{args.name}_state_findings.md").exists()
-        else None,
-        "global_state_discovery_report": str(Path("research/state_findings") / "state_findings.md")
-        if (Path("research/state_findings") / "state_findings.md").exists()
-        else None,
+        "state_discovery_json": args.state_discovery_json,
+        "state_discovery_md": args.state_discovery_md,
+        "state_discovery_dir": args.state_discovery_dir,
     }
+    state_discovery_summary = _state_discovery_summary(args)
+    if state_discovery_summary:
+        input_files["state_discovery_sources"] = {
+            "json_paths": state_discovery_summary["source_json_paths"],
+            "md_paths": state_discovery_summary["source_md_paths"],
+        }
 
     packet = build_llm_packet(
         name=args.name,
@@ -227,6 +296,8 @@ def main() -> int:
         max_top_runs=args.max_top_runs,
         max_bottom_runs=args.max_bottom_runs,
     )
+    if state_discovery_summary:
+        packet["state_discovery_summary"] = state_discovery_summary
     prompt = (
         build_llm_prompt(packet)
         + "\n\nReturn only valid JSON. Do not include markdown. Do not include commentary."

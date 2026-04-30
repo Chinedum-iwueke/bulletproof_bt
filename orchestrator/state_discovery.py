@@ -28,6 +28,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--db", required=True)
     parser.add_argument("--experiments-root", default=None)
     parser.add_argument("--experiment-root", default=None)
+    parser.add_argument("--stable-root", default=None)
+    parser.add_argument("--vol-root", default=None)
     parser.add_argument("--output-dir", default="research/state_findings")
     parser.add_argument("--min-trades", type=int, default=30)
     parser.add_argument("--min-bucket-trades", type=int, default=10)
@@ -90,22 +92,66 @@ def _write_db(db_path: Path, findings: pd.DataFrame, artifact_paths: dict[str, P
             notes=row.get("finding_type"),
             evidence={"finding_score": row.get("finding_score"), "weak_sample": row.get("weak_sample")},
         )
+    alias_map = {
+        "state_findings_json": "state_findings_json",
+        "state_findings_md": "state_findings_md",
+        "state_findings_csv": "state_findings_csv",
+    }
+    output_name = artifact_paths.get("state_findings_json", Path("")).name
+    if "_stable_state_findings.json" in output_name:
+        alias_map.update(
+            {
+                "state_findings_json": "state_findings_stable_json",
+                "state_findings_md": "state_findings_stable_md",
+                "state_findings_csv": "state_findings_stable_csv",
+            }
+        )
+    elif "_vol_state_findings.json" in output_name:
+        alias_map.update(
+            {
+                "state_findings_json": "state_findings_vol_json",
+                "state_findings_md": "state_findings_vol_md",
+                "state_findings_csv": "state_findings_vol_csv",
+            }
+        )
+    elif "_combined_state_findings.json" in output_name:
+        alias_map.update(
+            {
+                "state_findings_json": "state_findings_combined_json",
+                "state_findings_md": "state_findings_combined_md",
+                "state_findings_csv": "state_findings_combined_csv",
+            }
+        )
+
     for artifact_type, path in artifact_paths.items():
         db.register_artifact(artifact_type=artifact_type, path=path, description="state discovery output")
+        if artifact_type in alias_map and alias_map[artifact_type] != artifact_type:
+            db.register_artifact(artifact_type=alias_map[artifact_type], path=path, description="state discovery output")
     db.close()
 
 
 def main() -> int:
     args = parse_args()
     db_path = Path(args.db)
-    datasets = load_discovery_datasets(
-        db_path=db_path,
-        experiments_root=Path(args.experiments_root) if args.experiments_root else None,
-        experiment_root=Path(args.experiment_root) if args.experiment_root else None,
-        dataset_type=args.dataset_type,
-        hypothesis_id=args.hypothesis_id,
-        name=args.name,
-    )
+    if args.stable_root or args.vol_root:
+        datasets = []
+        if args.stable_root:
+            datasets.extend(
+                load_discovery_datasets(db_path=db_path, experiment_root=Path(args.stable_root), dataset_type="stable")
+            )
+        if args.vol_root:
+            datasets.extend(
+                load_discovery_datasets(db_path=db_path, experiment_root=Path(args.vol_root), dataset_type="volatile")
+            )
+    else:
+        datasets = load_discovery_datasets(
+            db_path=db_path,
+            experiments_root=Path(args.experiments_root) if args.experiments_root else None,
+            experiment_root=Path(args.experiment_root) if args.experiment_root else None,
+            dataset_type=args.dataset_type,
+            hypothesis_id=args.hypothesis_id,
+            name=args.name,
+        )
 
     all_findings: list[pd.DataFrame] = []
     manifests: list[dict[str, Any]] = []

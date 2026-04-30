@@ -18,7 +18,13 @@ heartbeat_path: logs/research_daemon_heartbeat.json
 max_job_attempts: 2
 stale_lock_minutes: 720
 run_interpretation_after_pipeline: true
-run_state_discovery_after_interpretation: false
+run_state_discovery_after_pipeline: true
+interpretation_after_state_discovery: true
+state_discovery_min_trades: 30
+state_discovery_min_bucket_trades: 10
+state_discovery_top_n: 25
+state_discovery_write_db: true
+include_state_discovery_in_verdict: true
 default_llm_provider: ollama
 default_interpreter_model: qwen2.5:14b
 default_ollama_url: http://127.0.0.1:11434/api/generate

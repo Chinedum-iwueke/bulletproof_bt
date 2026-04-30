@@ -154,7 +154,6 @@ def build_pipeline_command(db_path: Path, merged_payload: dict[str, Any]) -> lis
         "--research-db",
         str(db_path),
     ]
-
     if not bool(merged_payload["cleanup_delete_logs"]):
         cmd.append("--no-cleanup-delete-logs")
     if not bool(merged_payload["cleanup_delete_nonretained_runs"]):
@@ -225,7 +224,7 @@ def build_interpret_command(db_path: Path, merged_payload: dict[str, Any], confi
     num_ctx = int(config.get("default_num_ctx", 8192))
     temperature = float(config.get("default_temperature", 0.1))
     output_dir = str(config.get("verdict_output_dir", "research/verdicts"))
-    return [
+    cmd = [
         sys.executable,
         str(PROJECT_ROOT / "orchestrator" / "interpret_experiment_results.py"),
         "--db",
@@ -253,23 +252,56 @@ def build_interpret_command(db_path: Path, merged_payload: dict[str, Any], confi
         "--output-dir",
         output_dir,
     ]
+    if bool(config.get("include_state_discovery_in_verdict", True)):
+        cmd.extend(["--state-discovery-dir", str(config.get("state_discovery_output_dir", "research/state_findings"))])
+    return cmd
 
-def build_state_discovery_command(db_path: Path, merged_payload: dict[str, Any], config: dict[str, Any]) -> list[str]:
+def build_state_discovery_command(
+    db_path: Path,
+    merged_payload: dict[str, Any],
+    config: dict[str, Any],
+    *,
+    mode: str,
+) -> list[str]:
     name = str(merged_payload["name"])
-    outputs_root = str(merged_payload["outputs_root"])
+    outputs_root = Path(str(merged_payload["outputs_root"]))
     out_dir = str(config.get("state_discovery_output_dir", "research/state_findings"))
-    return [
+    min_trades = int(config.get("state_discovery_min_trades", 30))
+    min_bucket = int(config.get("state_discovery_min_bucket_trades", 10))
+    top_n = int(config.get("state_discovery_top_n", 25))
+    write_db = bool(config.get("state_discovery_write_db", True))
+
+    cmd = [
         sys.executable,
         str(PROJECT_ROOT / "orchestrator" / "state_discovery.py"),
         "--db",
         str(db_path),
-        "--experiment-root",
-        str(Path(outputs_root) / f"{name}_parallel_stable"),
-        "--name",
-        name,
         "--output-dir",
         out_dir,
+        "--min-trades",
+        str(min_trades),
+        "--min-bucket-trades",
+        str(min_bucket),
+        "--top-n",
+        str(top_n),
     ]
+
+    if mode == "stable":
+        cmd.extend(["--experiment-root", str(outputs_root / f"{name}_parallel_stable"), "--name", f"{name}_stable"])
+    elif mode == "vol":
+        cmd.extend(["--experiment-root", str(outputs_root / f"{name}_parallel_vol"), "--name", f"{name}_vol"])
+    elif mode == "combined":
+        cmd.extend([
+            "--stable-root", str(outputs_root / f"{name}_parallel_stable"),
+            "--vol-root", str(outputs_root / f"{name}_parallel_vol"),
+            "--name", f"{name}_combined",
+        ])
+    else:
+        raise ValueError(f"Unsupported state discovery mode: {mode}")
+
+    if write_db:
+        cmd.append("--write-db")
+    return cmd
 
 
 def main() -> int:
@@ -362,7 +394,20 @@ def main() -> int:
             if return_code == 0:
                 db.mark_queue_done(current_queue_id)
                 logger.info("Queue item DONE id=%s name=%s", current_queue_id, current_job_name)
-                if bool(config.get("run_interpretation_after_pipeline", True)):
+                run_state_discovery = bool(config.get("run_state_discovery_after_pipeline", True))
+                if run_state_discovery:
+                    for mode in ("stable", "vol", "combined"):
+                        try:
+                            sd_cmd = build_state_discovery_command(Path(args.db), merged_payload, config, mode=mode)
+                            sd_code = run_logged_command(sd_cmd, logger, f"STATE_DISCOVERY_{mode.upper()}")
+                            if sd_code != 0:
+                                logger.error("State discovery (%s) failed for name=%s with return code=%s", mode, current_job_name, sd_code)
+                        except Exception as sd_exc:
+                            logger.exception("State discovery (%s) exception for name=%s: %s", mode, current_job_name, sd_exc)
+
+                run_interp = bool(config.get("run_interpretation_after_pipeline", True))
+                interp_after_sd = bool(config.get("interpretation_after_state_discovery", True))
+                if run_interp and (interp_after_sd or not run_state_discovery):
                     try:
                         interp_cmd = build_interpret_command(Path(args.db), merged_payload, config)
                         interp_code = run_logged_command(interp_cmd, logger, "INTERPRETER")
@@ -370,14 +415,6 @@ def main() -> int:
                             logger.error("Interpreter failed for name=%s with return code=%s", current_job_name, interp_code)
                     except Exception as interp_exc:
                         logger.exception("Interpreter exception for name=%s: %s", current_job_name, interp_exc)
-                if bool(config.get("run_state_discovery_after_interpretation", False)):
-                    try:
-                        sd_cmd = build_state_discovery_command(Path(args.db), merged_payload, config)
-                        sd_code = run_logged_command(sd_cmd, logger, "STATE_DISCOVERY")
-                        if sd_code != 0:
-                            logger.error("State discovery failed for name=%s with return code=%s", current_job_name, sd_code)
-                    except Exception as sd_exc:
-                        logger.exception("State discovery exception for name=%s: %s", current_job_name, sd_exc)
             else:
                 error = f"pipeline failed with return code {return_code}"
                 db.mark_queue_failed(current_queue_id, error)
