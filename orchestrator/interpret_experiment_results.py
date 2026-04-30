@@ -8,7 +8,8 @@ Example:
       --hypothesis research/hypotheses/l1_h7c_high_selectivity_regime.yaml \
       --stable-root outputs/l1_h7c_high_selectivity_regime_parallel_stable \
       --vol-root outputs/l1_h7c_high_selectivity_regime_parallel_vol \
-      --model gpt-5.4-mini
+      --llm-provider ollama \
+      --model qwen2.5:14b
 """
 from __future__ import annotations
 
@@ -52,8 +53,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-trades", type=int, default=30)
     parser.add_argument("--promotion-min-ev", type=float, default=0.05)
     parser.add_argument("--promotion-min-trades", type=int, default=50)
-    parser.add_argument("--llm-provider", default="openai")
-    parser.add_argument("--model", default="gpt-5.4-mini")
+    parser.add_argument("--llm-provider", default="ollama")
+    parser.add_argument("--ollama-url", default="http://127.0.0.1:11434/api/generate")
+    parser.add_argument("--model", default="qwen2.5:14b")
+    parser.add_argument("--llm-timeout-seconds", type=int, default=600)
+    parser.add_argument("--num-ctx", type=int, default=8192)
     parser.add_argument("--temperature", type=float, default=0.1)
     parser.add_argument("--max-output-tokens", type=int, default=4000)
     parser.add_argument("--api-key-env", default="OPENAI_API_KEY")
@@ -223,7 +227,10 @@ def main() -> int:
         max_top_runs=args.max_top_runs,
         max_bottom_runs=args.max_bottom_runs,
     )
-    prompt = build_llm_prompt(packet)
+    prompt = (
+        build_llm_prompt(packet)
+        + "\n\nReturn only valid JSON. Do not include markdown. Do not include commentary."
+    )
     packet_path, prompt_path = write_packet_files(output_dir, args.name, packet, prompt)
 
     preliminary_verdict = _default_from_preliminary(preliminary, diagnostics)
@@ -234,7 +241,7 @@ def main() -> int:
     final_verdict["llm_parse_error"] = False
 
     raw_llm_output: str | None = None
-    if not args.no_llm and not args.packet_only:
+    if not args.no_llm and not args.packet_only and args.llm_provider != "none":
         llm_result = call_llm_json(
             provider=args.llm_provider,
             model=args.model,
@@ -242,6 +249,9 @@ def main() -> int:
             temperature=args.temperature,
             max_output_tokens=args.max_output_tokens,
             api_key_env=args.api_key_env,
+            ollama_url=args.ollama_url,
+            timeout_seconds=args.llm_timeout_seconds,
+            num_ctx=args.num_ctx,
         )
         raw_llm_output = llm_result.get("raw")
         parsed = llm_result.get("parsed", {})
@@ -250,6 +260,11 @@ def main() -> int:
             final_verdict["llm_used"] = True
         else:
             final_verdict["llm_parse_error"] = True
+            if raw_llm_output:
+                raw_output_path = output_dir / f"{args.name}_llm_raw_response.txt"
+                raw_output_path.write_text(raw_llm_output, encoding="utf-8")
+    elif args.llm_provider == "none":
+        final_verdict["llm_provider"] = "none"
 
     verdict_json_path = output_dir / f"{args.name}_verdict.json"
     verdict_md_path = output_dir / f"{args.name}_verdict.md"

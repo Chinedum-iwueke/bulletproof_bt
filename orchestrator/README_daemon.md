@@ -63,15 +63,52 @@ WantedBy=multi-user.target
 - Heartbeat is written to `logs/research_daemon_heartbeat.json`.
 - Use `--dry-run` to preview the next command without executing a job.
 
-## Interpretation (Phase 4)
+## Interpretation (Phase 4): local Ollama default
 
-Set API key:
+### 1) Install Ollama (Ubuntu)
 
 ```bash
-export OPENAI_API_KEY="..."
+curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-Run interpretation manually:
+### 2) Start Ollama
+
+```bash
+ollama serve
+```
+
+Or if installed as system service:
+
+```bash
+sudo systemctl enable ollama
+sudo systemctl start ollama
+sudo systemctl status ollama
+```
+
+### 3) Pull model
+
+```bash
+ollama pull qwen2.5:14b
+```
+
+### 4) Test model
+
+```bash
+ollama run qwen2.5:14b "Return JSON only: {\"ok\": true}"
+```
+
+### 5) Test API
+
+```bash
+curl http://127.0.0.1:11434/api/generate \
+  -d '{
+    "model": "qwen2.5:14b",
+    "prompt": "Return JSON only: {\"ok\": true}",
+    "stream": false
+  }'
+```
+
+### 6) Run interpretation manually
 
 ```bash
 python orchestrator/interpret_experiment_results.py \
@@ -80,10 +117,11 @@ python orchestrator/interpret_experiment_results.py \
   --hypothesis research/hypotheses/<hypothesis>.yaml \
   --stable-root outputs/<name>_parallel_stable \
   --vol-root outputs/<name>_parallel_vol \
-  --model gpt-5.4-mini
+  --llm-provider ollama \
+  --model qwen2.5:14b
 ```
 
-Run interpretation without LLM:
+### 7) Run without LLM
 
 ```bash
 python orchestrator/interpret_experiment_results.py \
@@ -92,7 +130,7 @@ python orchestrator/interpret_experiment_results.py \
   --hypothesis research/hypotheses/<hypothesis>.yaml \
   --stable-root outputs/<name>_parallel_stable \
   --vol-root outputs/<name>_parallel_vol \
-  --no-llm
+  --llm-provider none
 ```
 
 Expected outputs:

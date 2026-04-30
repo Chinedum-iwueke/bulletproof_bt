@@ -19,6 +19,11 @@ max_job_attempts: 2
 stale_lock_minutes: 720
 run_interpretation_after_pipeline: true
 run_state_discovery_after_interpretation: false
-default_interpreter_model: gpt-5.4-mini
+default_llm_provider: ollama
+default_interpreter_model: qwen2.5:14b
+default_ollama_url: http://127.0.0.1:11434/api/generate
+default_llm_timeout_seconds: 600
+default_num_ctx: 8192
+default_temperature: 0.1
 verdict_output_dir: research/verdicts
 state_discovery_output_dir: research/state_findings

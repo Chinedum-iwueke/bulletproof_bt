@@ -218,7 +218,12 @@ def write_heartbeat(
 def build_interpret_command(db_path: Path, merged_payload: dict[str, Any], config: dict[str, Any]) -> list[str]:
     name = str(merged_payload["name"])
     outputs_root = str(merged_payload["outputs_root"])
-    model = str(config.get("default_interpreter_model", "gpt-5.4-mini"))
+    model = str(config.get("default_interpreter_model", "qwen2.5:14b"))
+    llm_provider = str(config.get("default_llm_provider", "ollama"))
+    ollama_url = str(config.get("default_ollama_url", "http://127.0.0.1:11434/api/generate"))
+    llm_timeout = int(config.get("default_llm_timeout_seconds", 600))
+    num_ctx = int(config.get("default_num_ctx", 8192))
+    temperature = float(config.get("default_temperature", 0.1))
     output_dir = str(config.get("verdict_output_dir", "research/verdicts"))
     return [
         sys.executable,
@@ -233,8 +238,18 @@ def build_interpret_command(db_path: Path, merged_payload: dict[str, Any], confi
         str(Path(outputs_root) / f"{name}_parallel_stable"),
         "--vol-root",
         str(Path(outputs_root) / f"{name}_parallel_vol"),
+        "--llm-provider",
+        llm_provider,
         "--model",
         model,
+        "--ollama-url",
+        ollama_url,
+        "--llm-timeout-seconds",
+        str(llm_timeout),
+        "--num-ctx",
+        str(num_ctx),
+        "--temperature",
+        str(temperature),
         "--output-dir",
         output_dir,
     ]
