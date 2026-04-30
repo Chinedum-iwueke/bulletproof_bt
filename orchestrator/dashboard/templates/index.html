@@ -1,0 +1,1 @@
+{% extends "base.html" %}{% block content %}<h1>Dashboard</h1>{% for k,v in summary.items() %}<div class="card"><b>{{k}}</b>: {{v}}</div>{% endfor %}<pre>{{daemon}}</pre>{% endblock %}
