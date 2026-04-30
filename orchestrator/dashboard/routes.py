@@ -21,48 +21,55 @@ def build_router(config: DashboardConfig) -> APIRouter:
 
     def conn(): return db.connect()
 
+    def render_template(request: Request, template_name: str, **context):
+        return templates.TemplateResponse(
+            request=request,
+            name=template_name,
+            context=context,
+        )
+
     @router.get("/")
     def index(request: Request):
         hb = repo_root / "logs/research_daemon_heartbeat.json"
         daemon = json.loads(hb.read_text(encoding="utf-8")) if hb.exists() else {}
-        return templates.TemplateResponse("index.html", {"request": request, "summary": get_summary(conn()), "daemon": daemon})
+        return render_template(request, "index.html", summary=get_summary(conn()), daemon=daemon)
 
     @router.get("/queue")
     def queue(request: Request, queue_name: str | None = None, status: str | None = None):
-        return templates.TemplateResponse("queue.html", {"request": request, "items": get_queue(conn(), queue_name, status)})
+        return render_template(request, "queue.html", items=get_queue(conn(), queue_name, status))
 
     @router.get("/hypotheses")
-    def hypotheses(request: Request): return templates.TemplateResponse("hypotheses.html", {"request": request, "items": get_hypotheses(conn())})
+    def hypotheses(request: Request): return render_template(request, "hypotheses.html", items=get_hypotheses(conn()))
 
     @router.get("/hypotheses/{hypothesis_id}")
     def hypothesis_detail(request: Request, hypothesis_id: str):
         d = get_hypothesis_detail(conn(), hypothesis_id)
         if not d: raise HTTPException(404)
-        return templates.TemplateResponse("hypothesis_detail.html", {"request": request, **d})
+        return render_template(request, "hypothesis_detail.html", **d)
 
     @router.get("/pipeline-runs")
-    def pipeline_runs(request: Request): return templates.TemplateResponse("pipeline_runs.html", {"request": request, "items": get_pipeline_runs(conn())})
+    def pipeline_runs(request: Request): return render_template(request, "pipeline_runs.html", items=get_pipeline_runs(conn()))
 
     @router.get("/verdicts")
-    def verdicts(request: Request): return templates.TemplateResponse("verdicts.html", {"request": request, "items": get_verdicts(conn())})
+    def verdicts(request: Request): return render_template(request, "verdicts.html", items=get_verdicts(conn()))
 
     @router.get("/verdicts/{verdict_id}")
     def verdict_detail(request: Request, verdict_id: str):
         d = get_verdict_detail(conn(), verdict_id)
         if not d: raise HTTPException(404)
         memo_preview = read_artifact_preview(repo_root, d["memo_path"]) if d.get("memo_path") else None
-        return templates.TemplateResponse("verdict_detail.html", {"request": request, "item": d, "memo_preview": memo_preview})
+        return render_template(request, "verdict_detail.html", item=d, memo_preview=memo_preview)
 
     @router.get("/state-findings")
     def state_findings(request: Request, state_variable: str | None = None, dataset_type: str | None = None, polarity: str | None = None, min_trades: int = 0):
         items = get_state_findings(conn(), state_variable, dataset_type, polarity, min_trades)
-        return templates.TemplateResponse("state_findings.html", {"request": request, "items": items})
+        return render_template(request, "state_findings.html", items=items)
 
     @router.get("/alpha-zoo")
-    def alpha_zoo(request: Request): return templates.TemplateResponse("alpha_zoo.html", {"request": request, "items": get_alpha_zoo(conn(), repo_root)})
+    def alpha_zoo(request: Request): return render_template(request, "alpha_zoo.html", items=get_alpha_zoo(conn(), repo_root))
 
     @router.get("/approvals")
-    def approvals(request: Request): return templates.TemplateResponse("approvals.html", {"request": request, "items": get_approvals(conn()), "enable_actions": config.enable_actions})
+    def approvals(request: Request): return render_template(request, "approvals.html", items=get_approvals(conn()), enable_actions=config.enable_actions)
 
     @router.post("/approvals/{queue_id}/approve")
     def approve(queue_id: str, confirm: str = Form("no")):
@@ -82,7 +89,7 @@ def build_router(config: DashboardConfig) -> APIRouter:
         log = repo_root / "logs/research_daemon.log"
         status = json.loads(hb.read_text(encoding="utf-8")) if hb.exists() else {}
         lines = log.read_text(encoding="utf-8", errors="replace").splitlines()[-200:] if log.exists() else []
-        return templates.TemplateResponse("daemon.html", {"request": request, "status": status, "log_lines": lines})
+        return render_template(request, "daemon.html", status=status, log_lines=lines)
 
     @router.get('/api/summary')
     def api_summary(): return JSONResponse(get_summary(conn()))
