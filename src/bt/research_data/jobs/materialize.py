@@ -206,6 +206,11 @@ def _filter_active_rows(panel: pd.DataFrame, intervals: pd.DataFrame) -> pd.Data
 
 def _select_materialized_columns(frame: pd.DataFrame) -> pd.DataFrame:
     columns = [col for col in MATERIALIZED_RESEARCH_PANEL_COLUMNS if col in frame.columns]
+    columns.extend(
+        col
+        for col in frame.columns
+        if col.startswith("entry_state_") and col not in columns
+    )
     return frame.loc[:, columns]
 
 

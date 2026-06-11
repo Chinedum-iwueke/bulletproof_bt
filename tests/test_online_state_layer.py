@@ -83,3 +83,30 @@ def test_online_state_minimal_profile_omits_perp_feature_windows() -> None:
     assert snap["entry_state_trend_ready"] is True
     assert "entry_state_atr_pct" in snap
     assert "entry_state_funding_rate" not in snap
+
+
+def test_online_state_layer_uses_precomputed_snapshot_without_recompute() -> None:
+    layer = OnlineStateFeatureLayer()
+    ts = pd.Timestamp("2025-01-01T00:00:00Z")
+
+    layer.update(
+        symbol="BTCUSDT",
+        ts=ts,
+        open_px=100,
+        high=101,
+        low=99,
+        close=100,
+        volume=1000,
+        extra={
+            "entry_state_csi_raw": 0.77,
+            "entry_state_csi_pctile": 0.88,
+            "entry_state_csi_source": "enriched",
+            "entry_state_funding_pctile": 0.91,
+        },
+    )
+
+    snap = layer.snapshot(symbol="BTCUSDT")
+    assert snap["entry_state_precomputed"] is True
+    assert snap["entry_state_csi_raw"] == 0.77
+    assert snap["entry_state_csi_pctile"] == 0.88
+    assert snap["entry_state_funding_pctile"] == 0.91

@@ -12,6 +12,7 @@ from bt.research_data.jobs.build_panel import build_panels
 from bt.research_data.jobs.build_universe import build_volatile_universe
 from bt.research_data.jobs.coverage import build_coverage, write_coverage_dashboard
 from bt.research_data.jobs.materialize import materialize_volatile_panel
+from bt.research_data.jobs.state_features import build_htf_context_features, build_l7_h1_kernel_features, build_panel_state_features
 from bt.research_data.jobs.validate import validate_all
 from bt.research_data.live import aggregate_liquidations, collect_liquidations
 
@@ -61,6 +62,32 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--start", default=None)
     p.add_argument("--end", default="now")
     p.add_argument("--row-group-size", type=int, default=120_000)
+
+    p = sub.add_parser("build-state-features")
+    p.add_argument("--exchange", default=DEFAULT_EXCHANGE)
+    p.add_argument("--timeframe", default=DEFAULT_TIMEFRAME)
+    p.add_argument("--symbols", default=None, type=_csv)
+    p.add_argument("--universe", default="all", choices=["all", "stable", "volatile", "volatile-active"])
+    p.add_argument("--start", default=None)
+    p.add_argument("--end", default=None)
+
+    p = sub.add_parser("build-l7h1-kernel-features")
+    p.add_argument("--exchange", default=DEFAULT_EXCHANGE)
+    p.add_argument("--timeframe", default=DEFAULT_TIMEFRAME)
+    p.add_argument("--signal-timeframes", default="15m,1h", type=_csv)
+    p.add_argument("--symbols", default=None, type=_csv)
+    p.add_argument("--universe", default="all", choices=["all", "stable", "volatile", "volatile-active"])
+    p.add_argument("--start", default=None)
+    p.add_argument("--end", default=None)
+
+    p = sub.add_parser("build-htf-context-features")
+    p.add_argument("--exchange", default=DEFAULT_EXCHANGE)
+    p.add_argument("--timeframe", default=DEFAULT_TIMEFRAME)
+    p.add_argument("--signal-timeframes", default="5m,15m,1h", type=_csv)
+    p.add_argument("--symbols", default=None, type=_csv)
+    p.add_argument("--universe", default="stable", choices=["all", "stable", "volatile", "volatile-active"])
+    p.add_argument("--start", default=None)
+    p.add_argument("--end", default=None)
 
     p = sub.add_parser("validate")
     p.add_argument("--exchange", default="all")
@@ -135,6 +162,38 @@ def main(argv: list[str] | None = None) -> None:
             row_group_size=args.row_group_size,
         )
         print(str(path))
+    elif args.command == "build-state-features":
+        report = build_panel_state_features(
+            args.exchange,
+            args.timeframe,
+            symbols=args.symbols,
+            universe=args.universe,
+            start=args.start,
+            end=args.end,
+        )
+        print(report.to_string(index=False))
+    elif args.command == "build-l7h1-kernel-features":
+        report = build_l7_h1_kernel_features(
+            args.exchange,
+            args.timeframe,
+            signal_timeframes=args.signal_timeframes,
+            symbols=args.symbols,
+            universe=args.universe,
+            start=args.start,
+            end=args.end,
+        )
+        print(report.to_string(index=False))
+    elif args.command == "build-htf-context-features":
+        report = build_htf_context_features(
+            args.exchange,
+            args.timeframe,
+            signal_timeframes=args.signal_timeframes,
+            symbols=args.symbols,
+            universe=args.universe,
+            start=args.start,
+            end=args.end,
+        )
+        print(report.to_string(index=False))
     elif args.command == "validate":
         report = validate_all("all" if args.all else args.exchange)
         print(report.to_string(index=False))

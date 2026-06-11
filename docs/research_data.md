@@ -170,6 +170,23 @@ python -m bt.research_data.cli materialize-volatile-panel \
   --end now
 ```
 
+Build compiled L7-H1 strategy-family feature columns after panel/materialized
+panel refreshes:
+
+```bash
+python -m bt.research_data.cli build-l7h1-kernel-features \
+  --exchange binance \
+  --universe stable \
+  --timeframe 1m \
+  --signal-timeframes 15m,1h
+
+python -m bt.research_data.cli build-l7h1-kernel-features \
+  --exchange binance \
+  --universe volatile-active \
+  --timeframe 1m \
+  --signal-timeframes 15m,1h
+```
+
 Validate coverage and causal source timestamps:
 
 ```bash

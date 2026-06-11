@@ -160,6 +160,47 @@ class OnlineStateFeatureLayer:
         if normalized_profile not in {"minimal", "full"}:
             raise ValueError("state feature profile must be 'minimal' or 'full'")
         self._profile = normalized_profile
+        self._precomputed: dict[str, dict[str, Any]] = {}
+
+    def _precomputed_snapshot(
+        self,
+        *,
+        symbol: str,
+        ts: pd.Timestamp,
+        extra: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if not extra:
+            return None
+        snapshot = {
+            key: value
+            for key, value in extra.items()
+            if key.startswith("entry_state_") and value is not None and not pd.isna(value)
+        }
+        if not snapshot:
+            return None
+        snapshot.setdefault("entry_state_ts", ts)
+        snapshot.setdefault("entry_state_symbol", symbol)
+        snapshot["entry_state_precomputed"] = True
+        if self._profile == "minimal":
+            rich_markers = (
+                "funding",
+                "oi_",
+                "open_interest",
+                "mark_",
+                "index_",
+                "basis",
+                "premium",
+                "crowding",
+                "constraint",
+                "liq_",
+            )
+            snapshot = {
+                key: value
+                for key, value in snapshot.items()
+                if not any(marker in key for marker in rich_markers)
+                or key in {"entry_state_precomputed", "entry_state_ts", "entry_state_symbol"}
+            }
+        return snapshot
 
     def update(
         self,
@@ -174,6 +215,10 @@ class OnlineStateFeatureLayer:
         extra: dict[str, Any] | None = None,
     ) -> None:
         if not self._enabled:
+            return
+        precomputed = self._precomputed_snapshot(symbol=symbol, ts=ts, extra=extra)
+        if precomputed is not None:
+            self._precomputed[symbol] = precomputed
             return
         st = self._states.setdefault(symbol, _SymbolState())
         prev_close = st.closes[-1] if st.closes else close
@@ -309,6 +354,9 @@ class OnlineStateFeatureLayer:
                 "entry_state_csi_ready": False,
                 "entry_state_htf_ready": False,
             }
+        precomputed = self._precomputed.get(symbol)
+        if precomputed is not None:
+            return dict(precomputed)
         st = self._states.get(symbol)
         if st is None or st.ts is None:
             return {

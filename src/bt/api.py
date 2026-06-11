@@ -90,6 +90,7 @@ def _build_engine(
     from bt.strategy import make_strategy
     from bt.strategy.htf_context import (
         HTFContextStrategyAdapter,
+        PrecomputedHTFContextStrategyAdapter,
         ReadOnlyContextStrategyAdapter,
         SignalConflictPolicyStrategyAdapter,
     )
@@ -145,7 +146,16 @@ def _build_engine(
         else:
             config["htf_resampler"] = {"timeframes": [parsed_timeframe], "strict": True}
 
-    htf_resampler = config.get("htf_resampler")
+    htf_resampler = None if data_cfg.get("requires_htf_context") is False else config.get("htf_resampler")
+    if (
+        isinstance(htf_resampler, dict)
+        and str(data_cfg.get("htf_context_source", "")).strip().lower() == "precomputed"
+    ):
+        strategy = PrecomputedHTFContextStrategyAdapter(
+            inner=strategy,
+            timeframes=[str(tf) for tf in htf_resampler.get("timeframes", [])],
+        )
+        htf_resampler = None
     if isinstance(htf_resampler, dict):
         htf_resampler = TimeframeResampler(
             timeframes=[str(tf) for tf in htf_resampler.get("timeframes", [])],
@@ -245,6 +255,8 @@ def _build_engine(
         max_leverage=portfolio_max_leverage,
     )
 
+    outputs_cfg = config.get("outputs") if isinstance(config.get("outputs"), dict) else {}
+
     return BacktestEngine(
         datafeed=datafeed,
         universe=universe,
@@ -259,6 +271,7 @@ def _build_engine(
             run_id=run_id,
             hypothesis_id=resolved_hypothesis_id,
             tier=resolved_tier,
+            flush_every=int(outputs_cfg.get("trade_flush_every", config.get("trade_flush_every", 100))),
         ),
         equity_path=run_dir / "equity.csv",
         config=config,
@@ -330,6 +343,7 @@ def run_backtest(
     from bt.benchmark.tracker import BenchmarkTracker, BenchmarkTrackingFeed, write_benchmark_equity_csv
     from bt.data.dataset import load_dataset_manifest
     from bt.data.load_feed import load_feed
+    from bt.engine.fast_path import TimingRecorder, run_fast_path_if_supported
     from bt.experiments.grid_runner import _write_run_status
     from bt.logging.trades import make_run_id, prepare_run_dir, write_config_used, write_data_scope
     from bt.metrics.performance import compute_performance, write_performance_artifacts
@@ -350,16 +364,26 @@ def run_backtest(
 
     resolved_run_name = run_name or make_run_id()
     run_dir = prepare_run_dir(Path(out_dir), resolved_run_name)
+    timing = TimingRecorder(run_dir / "run_timing.json")
     sanity_counters = SanityCounters(run_id=resolved_run_name)
     audit_manager = AuditManager(run_dir=run_dir, config=config, run_id=resolved_run_name)
 
     try:
-        write_config_used(run_dir, config)
-        write_data_scope(
-            run_dir,
+        with timing.stage("artifact.setup"):
+            write_config_used(run_dir, config)
+            write_data_scope(
+                run_dir,
+                config=config,
+                dataset_dir=data_path if Path(data_path).is_dir() else None,
+            )
+
+        fast_result = run_fast_path_if_supported(
             config=config,
-            dataset_dir=data_path if Path(data_path).is_dir() else None,
+            data_path=data_path,
+            run_dir=run_dir,
+            timing=timing,
         )
+        timing.event("execution_engine.selected", mode=fast_result.mode, reason=fast_result.reason)
 
         benchmark_spec = parse_benchmark_spec(config)
         benchmark_tracker: BenchmarkTracker | None = None
@@ -373,11 +397,13 @@ def run_backtest(
                     )
             benchmark_tracker = BenchmarkTracker(benchmark_spec)
 
-        datafeed = load_feed(data_path, config)
+        with timing.stage("data.load"):
+            datafeed = load_feed(data_path, config)
         if audit_manager.enabled and hasattr(datafeed, "_bars"):
             from bt.audit.data_audit import run_data_audit
 
-            data_report = run_data_audit(datafeed._bars)
+            with timing.stage("audit.data"):
+                data_report = run_data_audit(datafeed._bars)
             audit_manager.write_json("data_audit.json", data_report)
 
         mode, engine_timeframe, _, _ = _resolve_timeframe_mode(config)
@@ -390,40 +416,45 @@ def run_backtest(
                 strict = bool(data_cfg.get("resample_strict"))
             elif isinstance(config.get("htf_resampler"), dict):
                 strict = bool(config["htf_resampler"].get("strict", True))
-            datafeed = ResampledDataFeed(
-                inner_feed=datafeed,
-                timeframe=engine_timeframe,
-                strict=strict,
-                audit_manager=audit_manager,
-            )
+            with timing.stage("data.resample_feed_wrap", timeframe=engine_timeframe):
+                datafeed = ResampledDataFeed(
+                    inner_feed=datafeed,
+                    timeframe=engine_timeframe,
+                    strict=strict,
+                    audit_manager=audit_manager,
+                )
 
         benchmark_metrics: dict[str, Any] | None = None
         if benchmark_tracker is not None:
             datafeed = BenchmarkTrackingFeed(inner_feed=datafeed, tracker=benchmark_tracker)
 
         try:
-            engine = _build_engine(
-                config,
-                datafeed,
-                run_dir,
-                run_id=resolved_run_name,
-                hypothesis_id=(config.get("identity") or {}).get("hypothesis_id") if isinstance(config.get("identity"), dict) else None,
-                tier=(config.get("identity") or {}).get("tier") if isinstance(config.get("identity"), dict) else None,
-                sanity_counters=sanity_counters,
-                audit_manager=audit_manager,
-            )
+            with timing.stage("engine.build"):
+                engine = _build_engine(
+                    config,
+                    datafeed,
+                    run_dir,
+                    run_id=resolved_run_name,
+                    hypothesis_id=(config.get("identity") or {}).get("hypothesis_id") if isinstance(config.get("identity"), dict) else None,
+                    tier=(config.get("identity") or {}).get("tier") if isinstance(config.get("identity"), dict) else None,
+                    sanity_counters=sanity_counters,
+                    audit_manager=audit_manager,
+                )
         except TypeError:
-            engine = _build_engine(
-                config,
-                datafeed,
-                run_dir,
-                run_id=resolved_run_name,
-                hypothesis_id=(config.get("identity") or {}).get("hypothesis_id") if isinstance(config.get("identity"), dict) else None,
-                tier=(config.get("identity") or {}).get("tier") if isinstance(config.get("identity"), dict) else None,
-                sanity_counters=sanity_counters,
-            )
-        engine.run()
-        _write_strategy_artifacts(strategy=getattr(engine, "_strategy", None), run_dir=run_dir)
+            with timing.stage("engine.build"):
+                engine = _build_engine(
+                    config,
+                    datafeed,
+                    run_dir,
+                    run_id=resolved_run_name,
+                    hypothesis_id=(config.get("identity") or {}).get("hypothesis_id") if isinstance(config.get("identity"), dict) else None,
+                    tier=(config.get("identity") or {}).get("tier") if isinstance(config.get("identity"), dict) else None,
+                    sanity_counters=sanity_counters,
+                )
+        with timing.stage("engine.run", mode=fast_result.mode):
+            engine.run()
+        with timing.stage("artifact.strategy"):
+            _write_strategy_artifacts(strategy=getattr(engine, "_strategy", None), run_dir=run_dir)
 
         if benchmark_tracker is not None:
             benchmark_initial_equity = (
@@ -437,9 +468,10 @@ def run_backtest(
             benchmark_metrics["schema_version"] = BENCHMARK_METRICS_SCHEMA_VERSION
             write_json_deterministic(run_dir / "benchmark_metrics.json", benchmark_metrics)
 
-        report = compute_performance(run_dir)
-        write_performance_artifacts(report, run_dir)
-        reconcile_execution_costs(run_dir)
+        with timing.stage("metrics.performance"):
+            report = compute_performance(run_dir)
+            write_performance_artifacts(report, run_dir)
+            reconcile_execution_costs(run_dir)
 
         if benchmark_spec.enabled:
             if benchmark_metrics is None:
@@ -489,18 +521,19 @@ def run_backtest(
             audit_manager.write_json("determinism_report.json", report_det)
 
         execution_snapshot = build_effective_execution_snapshot(config)
-        _write_run_status(
-            run_dir,
-            {
-                "status": "PASS",
-                "error_type": "",
-                "error_message": "",
-                "traceback": "",
-                "run_id": resolved_run_name,
-                **execution_snapshot,
-            },
-            config=config,
-        )
+        with timing.stage("artifact.run_status"):
+            _write_run_status(
+                run_dir,
+                {
+                    "status": "PASS",
+                    "error_type": "",
+                    "error_message": "",
+                    "traceback": "",
+                    "run_id": resolved_run_name,
+                    **execution_snapshot,
+                },
+                config=config,
+            )
     except Exception as exc:
         status_payload = {
             "status": "FAIL",
@@ -521,6 +554,7 @@ def run_backtest(
         )
         raise
     finally:
+        timing.write()
         write_sanity_json(
             run_dir,
             sanity_counters,

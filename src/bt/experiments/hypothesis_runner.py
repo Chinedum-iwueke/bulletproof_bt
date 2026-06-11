@@ -130,18 +130,51 @@ def build_runtime_override(contract: HypothesisContract, spec: dict[str, Any], t
         if expected_base != "1m" or exit_tf != "1m":
             raise ValueError("L1-H1 runner requires canonical 1m base data and 1m exit monitoring.")
 
+    data_override: dict[str, Any] = {
+        "engine_timeframe": None,
+        "entry_timeframe": None,
+        "exit_timeframe": "1m",
+    }
+    strategy_name = str(entry.get("strategy", "l1_h1_vol_floor_trend"))
+    use_compiled_features = spec_params.get("use_compiled_features")
+    if use_compiled_features is None:
+        use_compiled_features = True
+    if strategy_name == "l7_h1_csi_gated_displacement_trend" and bool(use_compiled_features):
+        from bt.engine.fast_path.l7_h1_kernel import prefix_for_timeframe
+
+        data_override["extra_column_prefixes"] = [prefix_for_timeframe(signal_timeframe)]
+        data_override["requires_htf_context"] = False
+    elif bool(use_compiled_features):
+        data_override["extra_column_prefixes"] = [f"htf_{tf}_" for tf in htf_timeframes]
+        data_override["htf_context_source"] = "precomputed"
+
+    strategy_params = dict(spec["params"])
+    if strategy_name != "l7_h1_csi_gated_displacement_trend":
+        # These are runner fast-path hints, not public constructor parameters
+        # for ordinary strategies. The generic stable fast path swaps only the
+        # HTF context source; strategy logic remains byte-for-byte classic.
+        strategy_params.pop("use_compiled_features", None)
+        strategy_params.pop("use_compiled_event_kernel", None)
+        strategy_params.pop("compiled_event_source", None)
+
+    strategy_payload = {
+        "name": strategy_name,
+        "signal_conflict_policy": "reject",
+        **strategy_params,
+        "timeframe": signal_timeframe,
+        "disallow_flip": bool(entry.get("disallow_flip", True)),
+    }
+    if strategy_name == "l7_h1_csi_gated_displacement_trend":
+        strategy_payload["use_compiled_event_kernel"] = bool(use_compiled_features)
+
     return {
         "identity": {
             "hypothesis_id": str(spec["hypothesis_id"]),
             "grid_id": str(spec["grid_id"]),
             "tier": tier,
-            "strategy_id": str(entry.get("strategy", "l1_h1_vol_floor_trend")),
+            "strategy_id": strategy_name,
         },
-        "data": {
-            "engine_timeframe": None,
-            "entry_timeframe": None,
-            "exit_timeframe": "1m",
-        },
+        "data": data_override,
         "execution": {
             "profile": _tier_to_execution_profile(tier),
         },
@@ -149,13 +182,12 @@ def build_runtime_override(contract: HypothesisContract, spec: dict[str, Any], t
             "timeframes": htf_timeframes,
             "strict": True,
         },
-        "strategy": {
-            "name": str(entry.get("strategy", "l1_h1_vol_floor_trend")),
-            "signal_conflict_policy": "reject",
-            **spec["params"],
-            "timeframe": signal_timeframe,
-            "disallow_flip": bool(entry.get("disallow_flip", True)),
-        },
+        "strategy": strategy_payload,
+        "indicator_profile": "none" if strategy_name == "l7_h1_csi_gated_displacement_trend" and bool(use_compiled_features) else "default",
+        "state_features": {
+            "enabled": False,
+            "profile": "full",
+        } if strategy_name == "l7_h1_csi_gated_displacement_trend" and bool(use_compiled_features) else {},
     }
 
 
@@ -202,7 +234,47 @@ def apply_runtime_data_memory_controls(runtime_override: dict[str, Any], overrid
     Reducing the batch size changes only IO granularity; it does not alter bar
     order, membership gating, fills, or no-lookahead behavior.
     """
-    if _research_panel_universe_from_overrides(override_paths) != "volatile":
+    universe = _research_panel_universe_from_overrides(override_paths)
+    strategy = runtime_override.get("strategy") if isinstance(runtime_override.get("strategy"), dict) else {}
+    data = runtime_override.get("data") if isinstance(runtime_override.get("data"), dict) else {}
+    if (
+        universe == "volatile"
+        and isinstance(strategy, dict)
+        and strategy.get("name") == "l7_h1_csi_gated_displacement_trend"
+    ):
+        wants_event_kernel = bool(strategy.get("use_compiled_event_kernel"))
+        if os.environ.get("BT_ALLOW_VOLATILE_L7H1_COMPILED", "").strip() == "1" and wants_event_kernel:
+            # Volatile membership streams are path-dependent: active rows come
+            # from the materialized feed, while continuation rows for live
+            # positions/orders come from individual symbol panels. Static
+            # precomputed columns cannot exactly match that stream. The online
+            # event source keeps the fast engine controls while computing the
+            # L7-H1 feature state from exactly the emitted bars.
+            strategy["compiled_event_source"] = "online"
+            runtime_override["state_features"] = {"enabled": True, "profile": "full"}
+            if isinstance(data, dict):
+                data.pop("extra_column_prefixes", None)
+                data.pop("extra_columns", None)
+                data["requires_htf_context"] = False
+        elif wants_event_kernel or bool(strategy.get("use_compiled_features")):
+            # Volatile materialization only contains active membership rows.
+            # The engine may still request inactive symbols after entry so
+            # positions can exit and mark-to-market honestly. Default to the
+            # classic strategy feature path unless the online event source is
+            # explicitly enabled for comparison/validation.
+            strategy["use_compiled_features"] = False
+            strategy["use_compiled_event_kernel"] = False
+            runtime_override["indicator_profile"] = "default"
+            runtime_override["state_features"] = {"enabled": True, "profile": "full"}
+            if isinstance(data, dict):
+                data.pop("extra_column_prefixes", None)
+                data.pop("extra_columns", None)
+                data.pop("requires_htf_context", None)
+        else:
+            strategy.pop("compiled_event_source", None)
+            if isinstance(data, dict):
+                data.pop("requires_htf_context", None)
+    if universe != "volatile":
         return
     data = runtime_override.setdefault("data", {})
     if not isinstance(data, dict):

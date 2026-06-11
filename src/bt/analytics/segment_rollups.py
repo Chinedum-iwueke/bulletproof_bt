@@ -90,15 +90,15 @@ def load_trades_with_entry_metadata(run_dir: str | Path, *, required_segment_key
         key = _key_tuple(symbol=str(getattr(row, "symbol", "")), ts=str(getattr(row, "entry_ts", "")), side=str(getattr(row, "side", "")))
         metadata_rows.append(entry_map.get(key, {}))
 
-    all_keys = sorted({k for md in metadata_rows for k in md.keys()})
-    for key in all_keys:
-        enriched[f"entry_meta__{key}"] = [_normalize_segment_value(md.get(key)) for md in metadata_rows]
-
+    all_keys = set(k for md in metadata_rows for k in md.keys())
     if required_segment_keys:
-        for key in required_segment_keys:
-            column = f"entry_meta__{key}"
-            if column not in enriched.columns:
-                enriched[column] = _MISSING
+        all_keys.update(required_segment_keys)
+    metadata_columns = {
+        f"entry_meta__{key}": [_normalize_segment_value(md.get(key)) for md in metadata_rows]
+        for key in sorted(all_keys)
+    }
+    if metadata_columns:
+        enriched = pd.concat([enriched, pd.DataFrame(metadata_columns, index=enriched.index)], axis=1)
 
     return enriched
 

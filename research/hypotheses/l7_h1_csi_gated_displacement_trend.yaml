@@ -59,7 +59,7 @@ parameter_grid:
   k_stop: [3, 4]
   k_trail: [3, 5]
   k_atr: [3.0]
-  T_hold: [48]
+  T_hold: [24]
   tp_enabled: [false]
   r_per_trade: [0.01]
 

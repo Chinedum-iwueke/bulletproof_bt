@@ -3,6 +3,7 @@
 # Use execution.profile=custom with execution.* override fields for custom execution behavior.
 initial_cash: 100000.0
 model: fixed_bps
+execution_engine: auto        # classic | auto | fast_path; unsupported fast runs fall back safely
 
 # Data loading and streaming controls.
 data:
@@ -64,6 +65,10 @@ metrics: {}
 outputs:
   root_dir: outputs/runs
   jsonl: true
+  # Flush buffered artifacts periodically, not every row. This preserves exact
+  # CSV/JSONL contents while avoiding huge syscall overhead on long 1m runs.
+  equity_flush_every: 5000
+  trade_flush_every: 100
 
 # Online entry-state enrichment. The default remains full so existing research
 # artifacts keep funding/OI/mark/index/liquidation fields. Production daemon

@@ -11,6 +11,8 @@ import pandas as pd
 
 from bt.core.enums import Side
 from bt.core.types import Bar, Signal
+from bt.data.resample import TimeframeResampler
+from bt.engine.fast_path.l7_h1_kernel import prefix_for_timeframe
 from bt.indicators.atr import ATR
 from bt.logging.decision_trace import make_decision_trace
 from bt.strategy import register_strategy
@@ -23,6 +25,15 @@ def _finite(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return parsed if math.isfinite(parsed) else None
+
+
+def _is_missing_metadata_value(value: Any) -> bool:
+    if value is None:
+        return True
+    try:
+        return bool(value != value)
+    except Exception:
+        return False
 
 
 def _extra_num(extra: Mapping[str, Any], keys: tuple[str, ...]) -> float | None:
@@ -130,6 +141,9 @@ class L7H1CSIGatedDisplacementTrendStrategy(Strategy):
         T_hold: int = 48,
         r_per_trade: float = 0.01,
         disallow_flip: bool = True,
+        use_compiled_features: bool = True,
+        use_compiled_event_kernel: bool = False,
+        compiled_event_source: str = "columns",
     ) -> None:
         self._timeframe = str(signal_timeframe or timeframe).lower()
         self._atr_period = int(atr_period)
@@ -143,6 +157,12 @@ class L7H1CSIGatedDisplacementTrendStrategy(Strategy):
         self._T_hold = int(T_hold)
         self._r_per_trade = float(r_per_trade)
         self._disallow_flip = bool(disallow_flip)
+        self._use_compiled_features = bool(use_compiled_features)
+        self._use_compiled_event_kernel = bool(use_compiled_event_kernel)
+        self._compiled_event_source = str(compiled_event_source or "columns").strip().lower()
+        if self._compiled_event_source not in {"columns", "online"}:
+            raise ValueError("compiled_event_source must be one of: columns, online")
+        self._online_resampler = TimeframeResampler(timeframes=[self._timeframe], strict=True)
         self._state: dict[str, _FeatureState] = {}
 
     def _state_for(self, symbol: str) -> _FeatureState:
@@ -327,6 +347,134 @@ class L7H1CSIGatedDisplacementTrendStrategy(Strategy):
         state.last_features = dict(features)
         return features
 
+    def _precomputed_features_for_signal_bar(
+        self,
+        *,
+        state: _FeatureState,
+        decision_bar: Bar,
+        signal_bar: Bar,
+    ) -> dict[str, Any] | None:
+        if not self._use_compiled_features:
+            return None
+        extra = decision_bar.extra if isinstance(decision_bar.extra, Mapping) else {}
+        prefix = prefix_for_timeframe(self._timeframe)
+        if not bool(extra.get(f"{prefix}compiled_feature_ready", False)):
+            return None
+
+        def pick(name: str) -> Any:
+            return extra.get(f"{prefix}{name}")
+
+        d_t = _finite(pick("D_t"))
+        atr = _finite(pick("ATR_14"))
+        csi = _finite(pick("CSI"))
+        csi_raw = _finite(pick("CSI_raw"))
+        side_code = _finite(pick("side_code"))
+        side = Side.BUY if side_code is not None and side_code > 0 else Side.SELL
+        components = {
+            "funding_pct": float(_finite(pick("csi_component_funding")) or 0.5),
+            "oi_z": float(_finite(pick("csi_component_oi")) or 0.5),
+            "D_t": float(_finite(pick("csi_component_displacement")) or 0.0),
+            "S_t": float(_finite(pick("csi_component_spread")) or 0.5),
+        }
+        funding_pct = _finite(pick("funding_pct"))
+        basis_pct = _finite(pick("basis_pct"))
+        oi_z = _finite(pick("oi_z"))
+        volume_z = _finite(pick("volume_z"))
+        funding_source = "funding" if funding_pct is not None else "basis_fallback"
+        oi_source = "oi" if oi_z is not None else "volume_fallback"
+        spread = _finite(pick("S_t"))
+        spread_component = _finite(pick("spread_rank_desc"))
+        state.prev_signal_close = float(signal_bar.close)
+        features = {
+            "D_t": d_t,
+            "ATR_14": atr,
+            "CSI": csi,
+            "CSI_raw": csi_raw,
+            "funding_pct": funding_pct,
+            "basis_pct": basis_pct,
+            "oi_z": oi_z,
+            "volume_z": volume_z,
+            "S_t": spread,
+            "spread_rank_desc": spread_component,
+            "csi_component_funding": components["funding_pct"],
+            "csi_component_oi": components["oi_z"],
+            "csi_component_displacement": components["D_t"],
+            "csi_component_spread": components["S_t"],
+            "csi_components_json": _json(components),
+            "csi_source": f"{funding_source}+{oi_source}+compiled_l7h1",
+            "basis_skip_reason": None if basis_pct is not None else "spot_index_missing",
+            "oi_fallback_used": oi_z is None,
+            "signal_timeframe": self._timeframe,
+            "exit_monitoring_timeframe": "1m",
+            "entry_signal_ts": str(signal_bar.ts),
+            "side_from_displacement": side.name,
+            "recent_return_1": None,
+            "recent_return_5": None,
+            "volatility_20": None,
+            "l7h1_feature_kernel": "compiled",
+        }
+        for key, value in extra.items():
+            if key.startswith("entry_state_") and key not in features:
+                features[key] = value
+        panel_state_aliases = {
+            "entry_state_mark_price": ("mark_close", "mark_price", "mark"),
+            "entry_state_mark_close": ("mark_close", "mark_price", "mark"),
+            "entry_state_index_price": ("index_close", "index_price", "index"),
+            "entry_state_index_close": ("index_close", "index_price", "index"),
+            "entry_state_funding_raw": ("funding_rate", "funding", "funding_raw", "funding_rate_realized"),
+            "entry_state_funding_rate": ("funding_rate", "funding", "funding_raw", "funding_rate_realized"),
+            "entry_state_funding_source_ts": ("funding_source_ts", "funding_available_at", "available_at"),
+            "entry_state_open_interest": ("open_interest", "oi", "oi_value", "oi_contracts", "oi_usd"),
+            "entry_state_oi_level": ("open_interest", "oi", "oi_value", "oi_contracts", "oi_usd"),
+            "entry_state_oi_source_ts": ("oi_source_ts", "oi_available_at", "available_at"),
+            "entry_state_oi_change_1": ("oi_change_1", "oi_change", "open_interest_change"),
+            "entry_state_oi_change_pct_1": ("oi_change_pct_1", "oi_change_pct", "open_interest_change_pct"),
+            "entry_state_premium_raw": ("premium_mark_vs_index", "premium", "premium_pct"),
+            "entry_state_premium_mark_vs_index": ("premium_mark_vs_index", "premium", "premium_pct"),
+            "entry_state_basis_raw": ("basis_close_vs_index", "basis", "basis_pct", "mark_index_basis", "mark_index_basis_pct"),
+            "entry_state_basis_close_vs_index": ("basis_close_vs_index", "basis", "basis_pct", "mark_index_basis", "mark_index_basis_pct"),
+            "entry_state_liq_buy_notional": ("liq_buy_notional",),
+            "entry_state_liq_sell_notional": ("liq_sell_notional",),
+        }
+        for state_key, source_keys in panel_state_aliases.items():
+            if state_key in features and not _is_missing_metadata_value(features.get(state_key)):
+                continue
+            for source_key in source_keys:
+                if source_key in extra and not _is_missing_metadata_value(extra.get(source_key)):
+                    features[state_key] = extra.get(source_key)
+                    break
+        features["state_vector"] = _json(
+            {
+                "CSI": csi,
+                "ATR_14": atr,
+                "D_t": d_t,
+                "S_t": spread,
+                "oi_z": oi_z,
+                "volume_z": volume_z,
+                "funding_pct": funding_pct,
+                "basis_pct": basis_pct,
+                "kernel": "compiled_l7h1",
+            }
+        )
+        state.last_features = dict(features)
+        return features
+
+    def _compiled_features_available(self, bar: Bar) -> bool:
+        if not self._use_compiled_features:
+            return False
+        extra = bar.extra if isinstance(bar.extra, Mapping) else {}
+        prefix = prefix_for_timeframe(self._timeframe)
+        return any(key.startswith(prefix) for key in extra)
+
+    def _compiled_ready(self, bar: Bar) -> bool:
+        if not self._compiled_features_available(bar):
+            return False
+        extra = bar.extra if isinstance(bar.extra, Mapping) else {}
+        return bool(extra.get(f"{prefix_for_timeframe(self._timeframe)}compiled_feature_ready", False))
+
+    def _compiled_features_for_decision_bar(self, *, state: _FeatureState, bar: Bar) -> dict[str, Any] | None:
+        return self._precomputed_features_for_signal_bar(state=state, decision_bar=bar, signal_bar=bar)
+
     def _entry_metadata(self, *, symbol: str, ts: pd.Timestamp, side: Side, entry_ref: float, stop_distance: float, features: dict[str, Any]) -> dict[str, Any]:
         stop_price = entry_ref - stop_distance if side == Side.BUY else entry_ref + stop_distance
         gate_values = {"D_t": features.get("D_t"), "CSI": features.get("CSI")}
@@ -482,12 +630,216 @@ class L7H1CSIGatedDisplacementTrendStrategy(Strategy):
         ]
 
     def on_bars(self, ts: pd.Timestamp, bars_by_symbol: dict[str, Bar], tradeable: set[str], ctx: Mapping[str, Any]) -> list[Signal]:
+        if self._use_compiled_event_kernel:
+            return self._on_bars_compiled_event(ts, bars_by_symbol, tradeable, ctx)
+
         htf_root = ctx.get("htf") if isinstance(ctx, Mapping) else None
         if not isinstance(htf_root, Mapping):
             raise RuntimeError(f"L7-H1 requires ctx['htf']['{self._timeframe}'] for two-clock semantics.")
         htf_for_tf = htf_root.get(self._timeframe, {})
         if not isinstance(htf_for_tf, Mapping):
             raise RuntimeError(f"L7-H1 requires mapping ctx['htf']['{self._timeframe}'] for two-clock semantics.")
+
+        signals: list[Signal] = []
+        for symbol in sorted(tradeable):
+            bar = bars_by_symbol.get(symbol)
+            if bar is None:
+                continue
+            state = self._state_for(symbol)
+            compiled_available = self._compiled_features_available(bar)
+            if not compiled_available:
+                self._update_base_features(state, bar)
+
+            signal_bar = htf_for_tf.get(symbol)
+            has_new_signal_bar = signal_bar is not None and signal_bar.ts != state.last_signal_ts
+            if has_new_signal_bar and signal_bar is not None:
+                state.last_signal_ts = signal_bar.ts
+                features = self._precomputed_features_for_signal_bar(
+                    state=state,
+                    decision_bar=bar,
+                    signal_bar=signal_bar,
+                )
+                if features is None:
+                    if compiled_available:
+                        features = {
+                            "D_t": None,
+                            "ATR_14": None,
+                            "CSI": None,
+                            "CSI_raw": None,
+                            "signal_timeframe": self._timeframe,
+                            "exit_monitoring_timeframe": "1m",
+                            "entry_signal_ts": str(signal_bar.ts),
+                            "basis_skip_reason": "compiled_features_not_ready",
+                            "oi_fallback_used": None,
+                            "l7h1_feature_kernel": "compiled_missing",
+                        }
+                    else:
+                        features = self._features_for_signal_bar(state=state, signal_bar=signal_bar)
+                state.last_features = features
+
+            current = self._ctx_position_side(ctx, symbol)
+            if current is not None:
+                signals.extend(self._handle_open_position(ts=ts, symbol=symbol, bar=bar, state=state, side=current, has_new_signal_bar=has_new_signal_bar))
+                continue
+            if state.position is not None:
+                self._clear_trade_state(state)
+            if not has_new_signal_bar:
+                continue
+
+            features = state.last_features
+            d_t = _finite(features.get("D_t"))
+            csi = _finite(features.get("CSI"))
+            if d_t is None or features.get("ATR_14") is None:
+                signals.append(self._state_log_signal(ts=ts, symbol=symbol, features=features, reason="indicators_not_ready"))
+                continue
+            if d_t < self._d0 or csi is None or csi < self._theta:
+                signals.append(self._state_log_signal(ts=ts, symbol=symbol, features=features, reason="gates_failed"))
+                continue
+
+            side = Side.BUY if features.get("side_from_displacement") == Side.BUY.name else Side.SELL
+            if self._disallow_flip and current is not None and current != side:
+                signals.append(self._state_log_signal(ts=ts, symbol=symbol, features=features, reason="flip_disallowed"))
+                continue
+            atr = float(features["ATR_14"])
+            stop_distance = self._k_stop * atr
+            entry_ref = float(bar.close)
+            metadata = self._entry_metadata(symbol=symbol, ts=ts, side=side, entry_ref=entry_ref, stop_distance=stop_distance, features=features)
+            state.entry_price = entry_ref
+            state.atr_entry = atr
+            state.stop_distance = stop_distance
+            state.stop_price = metadata["stop_price"]
+            state.trailing_stop = metadata["trailing_stop"]
+            state.high_since_entry = float(bar.high)
+            state.low_since_entry = float(bar.low)
+            state.signal_bars_held = 0
+            state.csi_low_count = 0
+            signals.append(Signal(ts=ts, symbol=symbol, side=side, signal_type="l7_h1_entry", confidence=1.0, metadata=metadata))
+
+        return signals
+
+    def _on_bars_compiled_event(
+        self,
+        ts: pd.Timestamp,
+        bars_by_symbol: dict[str, Bar],
+        tradeable: set[str],
+        ctx: Mapping[str, Any],
+    ) -> list[Signal]:
+        """Compiled-column event adapter for L7-H1.
+
+        This path deliberately emits the same public ``Signal`` objects as the
+        classic strategy and leaves all order/risk/execution/accounting/logging
+        semantics to the existing engine. It is safe only when exact causal
+        L7-H1 columns have been stamped onto the panel.
+        """
+        if self._compiled_event_source == "online":
+            return self._on_bars_online_event(ts, bars_by_symbol, tradeable, ctx)
+
+        signals: list[Signal] = []
+        positions = ctx.get("positions") if isinstance(ctx, Mapping) else {}
+        active_position_symbols: set[str] = set()
+        if isinstance(positions, Mapping):
+            active_position_symbols = {
+                str(symbol)
+                for symbol, payload in positions.items()
+                if isinstance(payload, Mapping) and payload.get("side") is not None
+            }
+
+        # Exits only need to inspect currently open positions. This avoids the
+        # classic per-minute scan over every tradeable symbol for inactive names.
+        for symbol in sorted(active_position_symbols):
+            bar = bars_by_symbol.get(symbol)
+            if bar is None:
+                continue
+            state = self._state_for(symbol)
+            current = self._ctx_position_side(ctx, symbol)
+            if current is None:
+                self._clear_trade_state(state)
+                continue
+            has_new_signal_bar = self._compiled_ready(bar) and bar.ts != state.last_signal_ts
+            if has_new_signal_bar:
+                state.last_signal_ts = bar.ts
+                features = self._compiled_features_for_decision_bar(state=state, bar=bar)
+                if features is not None:
+                    state.last_features = features
+            signals.extend(
+                self._handle_open_position(
+                    ts=ts,
+                    symbol=symbol,
+                    bar=bar,
+                    state=state,
+                    side=current,
+                    has_new_signal_bar=has_new_signal_bar,
+                )
+            )
+
+        # Entries are only possible on compiled decision timestamps.
+        for symbol in sorted(tradeable):
+            if symbol in active_position_symbols:
+                continue
+            bar = bars_by_symbol.get(symbol)
+            if bar is None or not self._compiled_ready(bar):
+                continue
+            state = self._state_for(symbol)
+            if bar.ts == state.last_signal_ts:
+                continue
+            state.last_signal_ts = bar.ts
+            if state.position is not None:
+                self._clear_trade_state(state)
+            features = self._compiled_features_for_decision_bar(state=state, bar=bar)
+            if features is None:
+                continue
+            state.last_features = features
+
+            d_t = _finite(features.get("D_t"))
+            csi = _finite(features.get("CSI"))
+            if d_t is None or features.get("ATR_14") is None:
+                signals.append(self._state_log_signal(ts=ts, symbol=symbol, features=features, reason="indicators_not_ready"))
+                continue
+            if d_t < self._d0 or csi is None or csi < self._theta:
+                signals.append(self._state_log_signal(ts=ts, symbol=symbol, features=features, reason="gates_failed"))
+                continue
+
+            side = Side.BUY if features.get("side_from_displacement") == Side.BUY.name else Side.SELL
+            atr = float(features["ATR_14"])
+            stop_distance = self._k_stop * atr
+            entry_ref = float(bar.close)
+            metadata = self._entry_metadata(symbol=symbol, ts=ts, side=side, entry_ref=entry_ref, stop_distance=stop_distance, features=features)
+            state.position = side
+            state.entry_price = entry_ref
+            state.atr_entry = atr
+            state.stop_distance = stop_distance
+            state.stop_price = metadata["stop_price"]
+            state.trailing_stop = metadata["trailing_stop"]
+            state.high_since_entry = float(bar.high)
+            state.low_since_entry = float(bar.low)
+            state.signal_bars_held = 0
+            state.csi_low_count = 0
+            signals.append(Signal(ts=ts, symbol=symbol, side=side, signal_type="l7_h1_entry", confidence=1.0, metadata=metadata))
+
+        return signals
+
+    def _on_bars_online_event(
+        self,
+        ts: pd.Timestamp,
+        bars_by_symbol: dict[str, Bar],
+        tradeable: set[str],
+        ctx: Mapping[str, Any],
+    ) -> list[Signal]:
+        """Online event adapter for path-dependent volatile streams.
+
+        Volatile feeds emit active membership bars plus continuation bars for
+        symbols with open positions or live orders. That exact stream is
+        path-dependent, so pre-stamped static L7-H1 columns cannot be the source
+        of truth. This adapter keeps the HTF resampling and feature state inside
+        the strategy while consuming exactly the same bars the classic strategy
+        sees. Risk, execution, accounting, and artifact writing remain in the
+        canonical engine.
+        """
+        htf_for_tf: dict[str, Any] = {}
+        for bar in bars_by_symbol.values():
+            for htf_bar in self._online_resampler.update(bar):
+                if htf_bar.timeframe == self._timeframe:
+                    htf_for_tf[htf_bar.symbol] = htf_bar
 
         signals: list[Signal] = []
         for symbol in sorted(tradeable):
@@ -502,11 +854,21 @@ class L7H1CSIGatedDisplacementTrendStrategy(Strategy):
             if has_new_signal_bar and signal_bar is not None:
                 state.last_signal_ts = signal_bar.ts
                 features = self._features_for_signal_bar(state=state, signal_bar=signal_bar)
+                features["l7h1_feature_kernel"] = "online_event"
                 state.last_features = features
 
             current = self._ctx_position_side(ctx, symbol)
             if current is not None:
-                signals.extend(self._handle_open_position(ts=ts, symbol=symbol, bar=bar, state=state, side=current, has_new_signal_bar=has_new_signal_bar))
+                signals.extend(
+                    self._handle_open_position(
+                        ts=ts,
+                        symbol=symbol,
+                        bar=bar,
+                        state=state,
+                        side=current,
+                        has_new_signal_bar=has_new_signal_bar,
+                    )
+                )
                 continue
             if state.position is not None:
                 self._clear_trade_state(state)

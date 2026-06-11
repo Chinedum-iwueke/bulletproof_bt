@@ -3,7 +3,7 @@ queue_name: approved_backtests
 locked_by_prefix: research-daemon
 default_phase: tier2
 default_max_workers: 8
-volatile_max_workers: 6
+volatile_max_workers: 8
 default_config: configs/engine.yaml
 default_local_config: configs/local/engine.lab.yaml
 data_mode: research_panel

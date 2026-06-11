@@ -11,23 +11,104 @@ This document corrects the earlier greenfield assumption. There is already a rea
 
 The product should not be rebuilt from scratch. The existing Strategy Robustness Lab in `invariance_research` should be treated as the incomplete product surface, and `bulletproof_bt` should be treated as the engine and research substrate that powers it.
 
-The first commercial wedge remains narrow:
+The May 2026 commercial wedge was narrow:
 
 > Upload strategy evidence. Get a hostile, auditable validation report.
 
-The revised implementation thesis is:
+That wedge produced useful infrastructure, but early user testing exposed a demand ceiling: upload-only software cannot reliably infer enough strategy truth from random, under-specified artifacts. A serious trader's edge lives in the hypothesis, rule logic, data context, execution assumptions, parameter choices, experiment lineage, and failed variants. A CSV or broker export is usually an output artifact, not the research system.
 
-> Make the current Strategy Robustness Lab real, trustworthy, and saleable before expanding into the full claim-first research operating system.
+The June 2026 implementation thesis is now:
 
-Approach A should be first:
+> Move from upload-only validation to a full research pipeline product, while keeping the Strategy Robustness Lab as the audit, import, report, and snapshot subsystem.
 
-> Harden and deepen the existing upload-to-diagnostics Lab using the current `invariance_research` product shell and the current `bulletproof_bt` engine seam.
+Approach A has been demoted from product center to product infrastructure:
 
-The full ambition remains larger:
+> Upload evidence, validate existing results, produce report snapshots, and route incomplete cases into deeper research.
 
-> A claim-first strategy validation and research intelligence platform that remembers every hypothesis, every failure, every regime dependency, and every unsupported conclusion.
+Approach B is now the product center:
 
-The sequencing matters. The platform should grow from the existing app, not around it.
+> A continuous research pipeline that turns raw trading intuition into testable hypotheses, queues experiments, runs them through `bulletproof_bt`, interprets results, remembers the lineage, and recommends the next falsification step.
+
+The product should still grow from the existing app, not around it. The difference is that the app should now be reorganized around Research Programs, Hypotheses, Experiment Queues, Runs, Verdicts, and Research Memory instead of only uploaded analyses.
+
+## June 2026 Demand Learning: Approach A Is Infrastructure, Not The Company
+
+After rolling out Approach A and getting early users to test it, the key learning is blunt:
+
+> There is no durable company in upload-only strategy validation.
+
+Parts of Approach A are valuable:
+
+- report snapshots
+- exportable validation memos
+- share-safe proof reports
+- artifact intake
+- prop feasibility from trade histories
+- evidence and assumption ledgers
+- diagnostic honesty
+- admin, billing, storage, worker, and queue infrastructure
+
+But upload-only validation is not enough because the product receives artifacts without the causal system that produced them. The user often cannot supply enough context for a serious decision:
+
+- strategy rules may be absent
+- signal logic may be informal
+- execution assumptions may be missing
+- market context may not be aligned
+- parameter history may not exist
+- failed variants may be unknown
+- the user may upload a random broker export and expect institutional inference
+
+The right product is the process that produced the artifact, not only the artifact review.
+
+### New Product Thesis
+
+Invariance Research should provide the research pipeline built inside `bulletproof_bt`, surfaced through the SaaS app and assisted by AI agents:
+
+> Describe a market intuition. The system turns it into a falsifiable hypothesis, converts it into a strategy spec, queues experiments, runs them continuously, attacks the results, stores the lineage, and tells the user what to test next.
+
+This makes the product a research operating system from day one, but with a narrow first workflow:
+
+> Hypothesis-to-Experiment Workbench for systematic traders.
+
+### New Magic Moment
+
+The magic moment is no longer:
+
+> I uploaded a CSV and got a report.
+
+The magic moment is:
+
+> I wrote a rough trading idea, the system asked for missing assumptions, converted it into a valid strategy spec, ran the first experiment overnight, showed why it failed, and queued the next five better tests.
+
+### Positioning Shift
+
+Old positioning:
+
+> Upload strategy evidence. Get hostile validation.
+
+New positioning:
+
+> Turn every trading idea into a disciplined research program.
+
+Sharper product line:
+
+> From trading intuition to falsified strategy research, without losing the thread.
+
+Do not claim that the system finds alpha every day. The honest promise is research throughput, falsification discipline, memory, and compounding experiment quality.
+
+### Approach A Remains In Scope As A Subsystem
+
+Approach A should remain because it already built important machinery:
+
+- artifact ingestion becomes import mode
+- Strategy Truth Room becomes audit/report mode
+- report snapshots become durable research artifacts
+- Share Room becomes recipient-safe publication
+- Research Desk becomes escalation and expert review
+- prop evaluation remains a trade-history feasibility workspace
+- billing/admin/storage/worker infrastructure remains the SaaS foundation
+
+But the default product should no longer be "upload and inspect." The default product should be "start or continue a research program."
 
 ## Office-Hours Position
 
@@ -313,10 +394,12 @@ The first release should be instrumented to learn which of these is true.
 1. `invariance_research` is the product app and should remain the primary user-facing repo.
 2. `bulletproof_bt` is the engine and research substrate and should expose stable seams to the web app.
 3. The existing Strategy Robustness Lab is real but incomplete.
-4. The fastest credible path is to harden existing upload, analysis, diagnostics, report, entitlement, and ops flows.
-5. Claim-first research OS features should be progressively introduced after users trust artifact-backed validation.
-6. Research memory is the eventual moat, but tenant safety and auditability must come before cross-user intelligence.
-7. Product honesty matters more than feature breadth.
+4. Early users showed that upload-only validation is too weak to be the product center.
+5. The fastest credible path is now to productize the `bulletproof_bt` research pipeline behind the existing SaaS shell.
+6. Approach A infrastructure remains useful as import, audit, proof-report, Share Room, Research Desk, and billing/ops substrate.
+7. Claim-first research features should now be introduced as the default workflow, not only as later extensions.
+8. Research memory is the eventual moat, but tenant safety and auditability must come before cross-user intelligence.
+9. Product honesty matters more than feature breadth.
 
 ## Strategic Approaches Considered
 
@@ -361,17 +444,17 @@ Cons:
 
 Recommendation:
 
-Choose Approach A first. It is the best path from current repo reality to real product evidence.
+Historical May 2026 recommendation: choose Approach A first because it was the best path from current repo reality to real product evidence. June 2026 user testing superseded this as the product center. Keep Approach A as import/audit/report infrastructure, not as the main company direction.
 
 ### Approach B: Claim-First Research OS
 
 Summary:
 
-Make the core product object a market claim or hypothesis rather than an uploaded artifact. Users define a falsifiable claim, attach evidence, run experiments, and track lineage.
+Make the core product object a Research Program rather than an uploaded artifact. Users begin with a market intuition or claim, turn it into falsifiable hypotheses, generate strategy specs, queue experiments, run them through `bulletproof_bt`, interpret results, and track lineage.
 
 Effort: Large
 
-Risk: High
+Risk: Medium-high
 
 Reuses:
 
@@ -380,6 +463,8 @@ Reuses:
 - research memory schema
 - research data panels
 - existing diagnostic/report pages after adaptation
+- Strategy Research Terminal cards and command layer
+- current SaaS auth, billing, workspace, workers, storage, exports, and admin ops
 
 Pros:
 
@@ -387,18 +472,20 @@ Pros:
 - aligns with the deepest research culture in `bulletproof_bt`
 - creates a durable data model for lineage, failures, and follow-on research
 - better supports systematic traders and research teams
+- solves the real demand problem found by early Approach A users: users need a process, not only a post-hoc artifact review
+- creates a compounding loop where every run improves memory and the next experiment
 
 Cons:
 
-- too abstract as the first user experience
+- more complex than upload-only validation
 - requires new product objects in the web app: claims, hypotheses, experiments, validations, forks
 - needs careful UX to avoid feeling like homework
-- pushes demand validation farther away
-- risks building a system before knowing which report customers will pay for
+- requires guarded AI assistance so generated specs do not violate engine contracts
+- requires stronger tenant isolation and job orchestration
 
 Recommendation:
 
-Do not lead with this. Build toward it through artifact-backed validation and add claim capture when a user already has a reason to care.
+Lead with a narrow version of this. The first Approach B product is not the full institutional research OS. It is the Hypothesis-to-Experiment Workbench: raw English intuition to approved strategy spec to queued experiments to interpreted verdict to memory-backed next tests.
 
 ### Approach C: Advisory / Research Desk First
 
@@ -438,23 +525,26 @@ Use this as a companion to Approach A, not a replacement. The Lab should produce
 
 ## Recommended Path
 
-Choose Approach A first.
+Choose Approach B as the product center, using Approach A as infrastructure.
 
 The product should advance in this order:
 
-1. Make the existing Lab trustworthy.
-2. Make the first report worth sharing.
-3. Make the data eligibility model impossible to misunderstand.
-4. Add Research Desk handoff for serious users.
-5. Add claim capture inside the analysis flow.
-6. Add tenant-scoped research memory.
-7. Expand into the full claim-first Research OS.
+1. Preserve the existing Lab as audit/import/report mode.
+2. Add Research Programs as the main workspace object.
+3. Add plain-English idea intake and clarification.
+4. Convert ideas into versioned hypothesis specs.
+5. Generate engine-safe strategy specs with human approval gates.
+6. Queue and run experiments continuously through `bulletproof_bt`.
+7. Interpret results into verdicts, failure causes, and next experiments.
+8. Persist tenant-scoped research memory.
+9. Use report snapshots, exports, Share Room, and Research Desk as the proof and escalation layer.
+10. Expand toward the full claim-first Research OS after the pipeline loop is reliable.
 
 ## CEO Review Scope Additions
 
 Generated by `/plan-ceo-review` in selective-expansion mode on 2026-05-15.
 
-Approach A remains the baseline. The following additions are now in scope because they strengthen the Lab-first wedge without turning the first implementation into the full research OS.
+Historical note: this section was written when Approach A remained the baseline. The additions are still useful because they strengthen the Lab as an import/audit/report subsystem, but the June 2026 product center is Approach B: Research Pipeline First.
 
 ### 1. Evidence Sufficiency Ledger
 
@@ -841,7 +931,7 @@ Do not add all of these in the first pass. Add `strategy`, `project`, and `marke
 
 Generated by `/plan-eng-review` on 2026-05-15 after the complexity gate selected phased scope.
 
-Approach A remains the baseline and the CEO scope remains valid, but implementation should not land as one large cross-repo change. The first slice must prove the trust contract before adding share rooms, Research Desk handoff, or learning/memory features.
+Historical Approach A note: the CEO scope remains valid for the Lab subsystem, but it is no longer the product center. These slices remain useful wherever the Research Pipeline needs import/audit/report capabilities.
 
 ### Slice 1: Evidence And Seam Foundation
 
@@ -3305,11 +3395,11 @@ Definition of done:
 - first-client smoke test can run from upload through share link
 - failure states are visible, retryable, or intentionally terminal
 
-## Approach A Launch Wedge Refinement: Prop Challenge Truth Room
+## Approach A Launch Wedge Refinement: Trade-History Strategy Robustness Lab
 
 Office Hours conclusion: the first wedge should become narrower, sharper, and more painful. The broad promise remains Strategy Truth Room, but the launch offer should overdeliver on the simplest artifact users already have: trade history. The first monopoly attempt is not "validate every strategy artifact." It is:
 
-> Upload a trade CSV or exchange/broker export. Get a brutally accurate prop-firm feasibility and strategy survivability verdict.
+> Upload a trade CSV or exchange/broker export. Get a brutally clear strategy survivability verdict, with prop-firm feasibility as a high-value supported workflow when exact rules are supplied.
 
 This is the smallest market with urgent, repeated demand:
 
@@ -3322,11 +3412,13 @@ This is the smallest market with urgent, repeated demand:
 
 Primary line:
 
-> Find out if this strategy can survive a real prop-firm evaluation before you pay for one.
+> Find out what your trade history can actually prove before you deploy, sell, or fund it.
 
 Supporting line:
 
-> Upload trades. Declare the challenge rules. Invariance reconstructs the evaluation path, exposes the first failure mode, and produces a shareable validation memo with limitations.
+> Upload trades. Declare the claim, rules, and assumptions that matter. Invariance reconstructs the evidence path, exposes the first failure mode, and produces a shareable validation memo with limitations.
+
+Prop evaluation remains a launch wedge inside the workbench, not the whole product identity. It should be visible anywhere it creates strong user value, but the Lab's language should preserve the full workbench: Overview, Execution, Distribution, Monte Carlo, Ruin, Prop Evaluation, Assumption Ledger, Report, and Research Desk escalation.
 
 Avoid broad first-launch positioning such as:
 
@@ -3425,10 +3517,37 @@ Approach A is not launch-ready if a user can upload a trade CSV and still see:
 
 These are not polish issues. They break trust in the product's core claim.
 
+### 101% Launch Wedge Audit Bar
+
+Current product surfaces must be judged against the narrower trade-history-first Strategy Robustness Lab promise, not the full Research OS ambition. The launch pass is acceptable only when the public copy, app intake, upload docs, pricing, and reports all say the same thing:
+
+- self-serve launch is trade-history-first: trade CSVs and exchange/broker exports normalized into a closed trade ledger
+- exact prop challenge rules are the decision-grade path; fallback rules are only preview
+- prop evaluation is a major workbench capability, but it must not dominate language for Overview, Execution, Distribution, Monte Carlo, Ruin, Assumptions, Report, or Research Desk
+- optional context ZIPs improve provenance, assumptions, report quality, and Research Desk packet quality
+- optional context ZIPs must not be marketed as automated proof of true parameter stability, multi-asset regime attribution, broker microstructure realism, strategy reconstruction, portfolio exposure, or independent review
+- Free exposes enough preview to prove value but not exports or share links
+- Individual is the paid self-serve trader plan: exports, core diagnostics, exact rules per run, limited shares
+- Pro is the higher-volume wedge plan: saved prop profiles, more shares, richer appendices, and Research Desk request eligibility
+- Team remains deferred until repeated sharing and desk-level workflows are proven
+- Research Desk is the honest escalation path whenever the upload evidence cannot support the requested conclusion
+
+The first-client bar is higher than "the pages render." A user should be able to upload a simple trade file, enter claims and relevant rules, and receive a clinical answer to:
+
+- Which rule failed first, on what date, at which trade index, with what account/equity state?
+- Did the target happen before the daily or total drawdown breach in any rolling evaluation windows?
+- How many windows passed, failed, or remained unresolved?
+- How much does fee/slippage stress change the validation verdict?
+- How much of the edge depends on the largest few trades?
+- What does Monte Carlo say about sequence risk and target-before-breach survival?
+- What evidence is missing before making stronger regime, parameter, broker, or portfolio claims?
+
+The app should not use broad Strategy Truth Room language to hide a narrower launch product, but it also should not let prop evaluation swallow the entire workbench identity. The sharper wedge is trade-history-first validation with prop feasibility as an obvious high-value path.
+
 ### Go-To-War Plan
 
-1. Own "prop challenge truth" first.
-   The first pages, examples, docs, and report screenshots should show concrete prop-firm feasibility, not an abstract strategy OS.
+1. Own trade-history truth first.
+   The first pages, examples, docs, and report screenshots should show concrete trade-history validation, with prop-firm feasibility as one of the clearest examples of the Lab's practical value.
 
 2. Publish examples users recognize.
    Use simple trade CSVs, MT5/TradingView/exchange exports, and challenge rule presets. Show exactly what first breach and rolling-window feasibility look like.
@@ -4295,7 +4414,7 @@ This order matters. The app should not spend another pass polishing workbench pa
 
 ## Moving From Approach A To Full Ambition
 
-Approach A should produce an excellent validation product. The full ambition emerges by adding research operating system concepts only when users need them.
+Approach A should now be treated as import/audit/report infrastructure. The full ambition no longer waits behind upload validation; it starts through a narrow Research Pipeline workflow and reuses Approach A artifacts where they are useful.
 
 ### Stage 1: Artifact Validation
 
@@ -4447,6 +4566,653 @@ Product object:
 
 This is the 10-star product. It should be earned by the wedge, not built before the wedge works.
 
+## Approach B: Research Pipeline First
+
+Approach B supersedes Approach A as the main product path.
+
+Approach B does not mean shipping every full-ambition surface at once. It means the default workflow is no longer upload-first. The default workflow is:
+
+```text
+Research Program
+  -> Idea Intake
+  -> Clarification
+  -> Hypothesis Spec
+  -> Strategy Spec
+  -> Experiment Plan
+  -> Queue
+  -> Engine Run
+  -> Verdict
+  -> Memory
+  -> Next Experiment
+  -> Report Snapshot
+```
+
+The Strategy Robustness Lab remains as a mode inside the system:
+
+```text
+External Artifact
+  -> Import / Audit
+  -> Validation Report
+  -> Snapshot / Export / Share
+  -> Research Desk or Research Program handoff
+```
+
+### Approach B Product Objects
+
+| Product object | Purpose | Primary repo owner |
+| --- | --- | --- |
+| Research Program | User-facing container for a market thesis, hypotheses, runs, reports, and memory. | `invariance_research` |
+| Idea Intake | Plain-English entry point for a trading intuition. | `invariance_research` |
+| Clarification Session | Structured assistant questions that turn vague intuition into testable constraints. | `invariance_research` |
+| Hypothesis Spec | Versioned falsifiable claim: thesis, observables, data needs, invalidation criteria, assumptions. | Shared; schema in `bulletproof_bt`, persistence/UI in `invariance_research` |
+| Strategy Spec | Engine-safe executable or declarative strategy definition generated from the hypothesis. | `bulletproof_bt` owns contract and validation; `invariance_research` owns approval UI |
+| Experiment Plan | Run matrix: baseline, costs, parameter grid, regime split, holdout, null comparison, alternative exits. | `bulletproof_bt` |
+| Experiment Queue | Durable SaaS job queue for research runs. | `invariance_research` owns tenant/job lifecycle; `bulletproof_bt` owns daemon execution semantics |
+| Run Manifest | Immutable per-run contract: code/spec version, data version, config, assumptions, hashes, status. | `bulletproof_bt` |
+| Verdict Card | Result interpretation: pass/fail/fragile, failure cause, evidence quality, next action. | `bulletproof_bt` emits; `invariance_research` displays |
+| Research Memory | Tenant-scoped history of hypotheses, failures, state buckets, promoted candidates, and next experiments. | Shared; engine algorithms in `bulletproof_bt`, tenant product memory in `invariance_research` |
+| Report Snapshot | Shareable proof artifact for a run or research program milestone. | `invariance_research` |
+
+### Assistant Roles
+
+Approach B should use assistants as constrained workflow actors, not as free-form magic.
+
+| Assistant | Job | Guardrail |
+| --- | --- | --- |
+| Research Intake Assistant | Turns raw English into structured clarifying questions. | Must expose missing assumptions instead of inventing them. |
+| Hypothesis Assistant | Produces falsifiable hypothesis specs and invalidation criteria. | Must output schema-valid hypotheses only. |
+| Strategy Spec Assistant | Converts approved hypotheses into engine-safe strategy specs or code patches. | Must pass static validation, no-lookahead checks, and human approval before execution. |
+| Experiment Planner | Proposes baseline and falsification runs. | Must label cost, data, and runtime implications. |
+| Result Interpreter | Reads engine artifacts and emits verdict cards. | Must consume existing artifacts only; no unsupported claims. |
+| Memory Assistant | Retrieves similar failures and prior related work. | Tenant-scoped only; no cross-user memory by default. |
+
+## Approach B Codex Implementation Phases
+
+Each phase should be implemented as a Codex slice with tests, migration notes, and a verification note. The goal is a solid Approach B product, not a demo. A phase is complete only when the product loop works through the web app and the engine contract is covered by fixtures.
+
+### Phase B0: Reframe Product Contract And Navigation
+
+Goal:
+
+Make the product internally and externally consistent with Research Pipeline First while preserving Approach A as audit/import/report mode.
+
+`invariance_research` owns:
+
+- update public copy from upload-first to research-pipeline-first
+- add top-level IA for Research Programs, Experiment Queue, Memory, Reports, and Audit Imports
+- demote `/app/new-analysis` from primary entry to "Audit an artifact"
+- create empty-state flows for "Start a Research Program" and "Import Existing Evidence"
+- update pricing/upgrade copy so paid value is continuous research throughput, not only report exports
+- update docs/lab to say upload artifacts are one path, not the whole product
+
+`bulletproof_bt` owns:
+
+- update docs to mark Strategy Robustness Lab as a service surface, not the product center
+- document current research daemon, hypothesis, experiment, and research terminal capabilities as product substrate
+
+Exit criteria:
+
+- user-facing app does not imply upload-only is the main product
+- design doc, public copy, and app IA all name Research Programs as the core object
+- Approach A artifacts remain accessible as Audit/Import mode
+
+### Phase B1: Research Program Data Model
+
+Goal:
+
+Introduce the durable product container that holds thesis, hypotheses, runs, memory, reports, and handoffs.
+
+`invariance_research` owns:
+
+- Postgres/SQLite migrations for:
+  - `research_programs`
+  - `program_members`
+  - `program_events`
+  - `program_artifacts`
+  - `program_notes`
+  - `program_report_snapshots`
+- app routes:
+  - `/app/programs`
+  - `/app/programs/new`
+  - `/app/programs/[id]`
+- program library with status, last run, active hypothesis count, failed/promoted counts, and next action
+- permissions: owner/account scoped, admin override, future team-ready shape
+- attach existing analyses/imports to a program
+
+`bulletproof_bt` owns:
+
+- no runtime changes required
+- provide program-facing terminology mapping in docs: hypothesis, experiment, run, verdict, state finding
+
+Exit criteria:
+
+- a user can create a program, attach an existing analysis, and see a timeline
+- all program objects are tenant-scoped
+- reports can reference a program ID when available
+
+### Phase B2: Idea Intake And Clarification
+
+Goal:
+
+Turn raw English trading intuition into a structured research brief before any engine run.
+
+`invariance_research` owns:
+
+- create idea intake UI inside a program
+- add fields:
+  - market intuition
+  - asset universe
+  - timeframe
+  - holding period
+  - entry idea
+  - exit idea
+  - risk assumption
+  - cost/slippage assumption
+  - data source
+  - what would disprove this
+- implement clarification assistant endpoint using current LLM provider abstraction
+- store clarification sessions and accepted answers
+- require human acceptance before generating a hypothesis spec
+- show "missing assumptions" as first-class cards, not hidden validation errors
+
+`bulletproof_bt` owns:
+
+- define `research_brief_v1` schema
+- define required/optional fields by asset class and strategy family
+- add fixture examples for trend, mean reversion, breakout, funding/liquidation, FX session, and equity/index cases
+
+Exit criteria:
+
+- user can type a vague idea and end with a structured research brief
+- assistant cannot silently fill unknown strategy assumptions
+- briefs are versioned and attached to program events
+
+### Phase B3: Hypothesis Spec Contract
+
+Goal:
+
+Convert an accepted research brief into a falsifiable, engine-compatible hypothesis spec.
+
+`bulletproof_bt` owns:
+
+- formalize `hypothesis_spec_v1`
+- include:
+  - thesis
+  - market mechanism
+  - observable features
+  - entry condition intent
+  - exit condition intent
+  - invalidation criteria
+  - required datasets
+  - cost model assumptions
+  - benchmark/null comparison
+  - expected failure modes
+  - safe parameter ranges
+  - out-of-sample plan
+- add validation CLI:
+  - `bt hypothesis validate <spec>`
+  - `bt hypothesis explain-missing <spec>`
+- add golden fixtures and tests
+- map existing hypothesis YAML patterns into the new schema where possible
+
+`invariance_research` owns:
+
+- hypothesis spec editor and review UI
+- version history and diff view
+- approval state machine:
+  - draft
+  - needs clarification
+  - approved for strategy generation
+  - retired
+- persistence:
+  - `hypotheses`
+  - `hypothesis_versions`
+  - `hypothesis_approvals`
+- display invalidation criteria and required evidence before the user can run experiments
+
+Exit criteria:
+
+- every program can hold one or more versioned hypotheses
+- invalid specs fail closed with actionable repair guidance
+- no experiment can be queued without an approved hypothesis version
+
+### Phase B4: Strategy Spec Generation And Validation
+
+Goal:
+
+Generate or assemble engine-safe strategy specs from approved hypotheses.
+
+`bulletproof_bt` owns:
+
+- define `strategy_spec_v1`
+- add validators for:
+  - no lookahead
+  - no interpolation assumptions unless explicit
+  - data fields exist
+  - timeframe compatibility
+  - cost/slippage model declared
+  - parameter ranges bounded
+  - signal functions registered
+- create strategy-spec-to-run-config compiler
+- support safe templates for first strategy families:
+  - trend continuation
+  - mean reversion
+  - breakout
+  - volatility filter
+  - funding/liquidation context where data exists
+- add tests for invalid generated specs
+
+`invariance_research` owns:
+
+- strategy spec review UI
+- assistant-generated spec proposal flow
+- manual edit mode with schema validation
+- approval gate before execution
+- attach generated spec to hypothesis version
+- show "what the assistant assumed" and "what the user approved"
+
+Exit criteria:
+
+- user can approve a generated strategy spec
+- invalid specs never reach the experiment queue
+- every run can trace back to user-approved hypothesis and strategy spec versions
+
+### Phase B5: Experiment Planner And Queue
+
+Goal:
+
+Turn a strategy spec into a falsification-oriented experiment plan and queue.
+
+`bulletproof_bt` owns:
+
+- define `experiment_plan_v1`
+- implement planner defaults:
+  - baseline
+  - cost sensitivity
+  - slippage sensitivity
+  - parameter grid
+  - walk-forward or holdout split where data permits
+  - benchmark/null comparison
+  - regime/state split where data permits
+  - alternative exit tests
+- add validation for compute/data requirements
+- expose CLI/service:
+  - `bt experiment plan <strategy_spec>`
+  - `bt experiment validate <plan>`
+
+`invariance_research` owns:
+
+- experiment plan review UI
+- queue selected experiments from the web app
+- database tables:
+  - `experiment_plans`
+  - `experiment_plan_items`
+  - `experiment_jobs`
+  - `experiment_job_events`
+- queue controls:
+  - pause
+  - cancel
+  - retry
+  - priority
+  - max concurrent per account
+- entitlement limits by plan:
+  - queued experiment count
+  - concurrent runs
+  - monthly compute budget
+  - memory retention
+
+Exit criteria:
+
+- user can approve a plan and queue experiments
+- queued experiments survive process restarts
+- admin can see and manage jobs
+- plan limits prevent runaway compute
+
+### Phase B6: Engine Execution Service
+
+Goal:
+
+Run research experiments through `bulletproof_bt` continuously with durable artifacts.
+
+`bulletproof_bt` owns:
+
+- expose a stable research execution entrypoint for SaaS:
+  - input: hypothesis spec, strategy spec, experiment plan item, data profile, runtime limits
+  - output: run manifest, result artifacts, verdict cards, logs, failure classification
+- adapt `orchestrator/research_daemon.py` and `orchestrator/run_experiment_pipeline.py` into tenant-safe service mode
+- enforce deterministic/no-lookahead contracts
+- emit:
+  - run manifest
+  - metrics
+  - trades
+  - equity curve
+  - diagnostics
+  - state findings
+  - verdict bundle
+  - terminal-grade intelligence cards
+- add fixture-driven integration tests
+
+`invariance_research` owns:
+
+- new research worker or extension of analysis worker:
+  - claims experiment jobs
+  - calls engine service
+  - streams status
+  - uploads artifacts to R2
+  - persists result envelope
+- program run pages
+- job heartbeat and stuck-job recovery
+- first-pass worker deployment docs and health checks
+
+Exit criteria:
+
+- a queued experiment runs without manual shell access
+- artifacts land in object storage
+- run status and logs are visible in the SaaS app
+- failed runs produce useful failure artifacts
+
+### Phase B7: Verdict Cards And Result Interpreter
+
+Goal:
+
+Turn raw experiment outputs into decision-grade research feedback.
+
+`bulletproof_bt` owns:
+
+- standardize intelligence cards:
+  - Hypothesis Card
+  - Run Quality Card
+  - Execution Drag Card
+  - Failure Cause Card
+  - Regime/State Dependency Card
+  - Parameter Fragility Card
+  - Null Comparison Card
+  - Verdict Card
+  - Next Experiment Card
+- ensure cards consume only emitted artifacts
+- add Markdown and JSON card outputs under run artifact directories
+- register cards in research DB/artifact manifest
+
+`invariance_research` owns:
+
+- card renderer library
+- run result page organized around:
+  - verdict
+  - why it failed or survived
+  - evidence confidence
+  - next experiment
+  - artifact links
+- program timeline integration
+- report snapshot generation from run cards
+
+Exit criteria:
+
+- every completed run has cards
+- missing artifacts degrade gracefully
+- the UI can explain failure without raw notebook spelunking
+
+### Phase B8: Tenant-Scoped Research Memory
+
+Goal:
+
+Make the system remember what each user has tried, what failed, what improved, and what to test next.
+
+`bulletproof_bt` owns:
+
+- memory extraction algorithms:
+  - failure clustering
+  - state bucket summaries
+  - similar run lookup
+  - parameter cliff detection
+  - execution-cost kill patterns
+  - promoted/scrapped criteria
+- memory export contract for SaaS ingestion
+
+`invariance_research` owns:
+
+- Postgres memory tables:
+  - `research_memory_items`
+  - `research_memory_links`
+  - `research_findings`
+  - `program_recommendations`
+  - `similar_run_index`
+- tenant isolation and access checks
+- memory search UI:
+  - "similar failures"
+  - "what changed"
+  - "what should I test next"
+  - "where did this thesis fail before"
+- privacy guardrails:
+  - no cross-tenant search
+  - no cross-user learning by default
+  - explicit future opt-in only
+
+Exit criteria:
+
+- a user can retrieve prior related failures within their own account
+- next experiment recommendations cite evidence
+- memory never leaks another tenant's run, symbol set, strategy text, or artifact
+
+### Phase B9: Research Program Workbench
+
+Goal:
+
+Replace the analysis-only workbench with a coherent program workbench.
+
+`invariance_research` owns:
+
+- program overview:
+  - thesis
+  - active hypotheses
+  - queued/running experiments
+  - latest verdicts
+  - promoted/scrapped candidates
+  - memory highlights
+  - next recommended actions
+- hypothesis detail page
+- experiment queue page
+- run detail page
+- memory page
+- reports page
+- import/audit tab for Approach A artifacts
+- command palette for:
+  - create hypothesis
+  - queue next experiment
+  - explain failure
+  - find similar runs
+  - generate report
+  - request Research Desk review
+
+`bulletproof_bt` owns:
+
+- no UI ownership
+- ensure engine outputs are stable enough for every workbench panel
+
+Exit criteria:
+
+- a user can manage research from program level without jumping between isolated analysis pages
+- the old analysis pages still work for imported artifacts
+- the main dashboard is no longer analysis-library-first
+
+### Phase B10: Report, Share, And Research Desk For Programs
+
+Goal:
+
+Make proof artifacts work for both single runs and research program milestones.
+
+`invariance_research` owns:
+
+- program-level report snapshots
+- report sections:
+  - research question
+  - hypotheses tested
+  - experiments run
+  - rejected variants
+  - surviving candidates
+  - evidence limits
+  - next experiment plan
+- Share Room for program snapshots
+- Research Desk handoff packet:
+  - hypothesis spec
+  - strategy spec
+  - experiment plan
+  - run artifacts
+  - verdict cards
+  - memory summary
+- admin reviewer workflow for program reviews
+
+`bulletproof_bt` owns:
+
+- package run artifacts into program-level evidence bundles
+- emit program milestone summaries where enough run data exists
+
+Exit criteria:
+
+- a user can share not only one result but the reasoning path behind it
+- Research Desk can review a complete program packet without asking engineering for raw files
+
+### Phase B11: Billing, Entitlements, And Compute Economics
+
+Goal:
+
+Price and gate the real product: continuous research throughput.
+
+`invariance_research` owns:
+
+- replace upload/export-centric limits with:
+  - programs
+  - active hypotheses
+  - queued experiments
+  - concurrent experiments
+  - monthly experiment runtime or credit budget
+  - memory retention
+  - assistant usage
+  - Research Desk eligibility
+- billing pages and Stripe mapping
+- usage metering:
+  - experiment queued
+  - experiment runtime
+  - artifact storage
+  - assistant calls
+  - exports/shares
+- admin overrides for compute limits
+
+`bulletproof_bt` owns:
+
+- estimate cost/time per experiment plan item
+- expose runtime budget hints before queueing
+- classify heavy jobs requiring approval
+
+Exit criteria:
+
+- pricing maps to the product's real cost and value
+- users understand what they are buying: research throughput and memory
+- runaway compute is impossible by default
+
+### Phase B12: Reliability, Security, And Production Runbooks
+
+Goal:
+
+Make the system safe for real user research programs.
+
+`invariance_research` owns:
+
+- production worker deployment for:
+  - analysis/audit worker
+  - export worker
+  - research experiment worker
+  - optional assistant worker
+- queue backpressure and kill switches
+- object storage lifecycle policies
+- Postgres connection pooling rules
+- rate limits and abuse controls
+- audit logs for assistant-generated specs and approvals
+- admin ops dashboards for research jobs and memory
+- first-100-user monitoring
+
+`bulletproof_bt` owns:
+
+- deterministic replay tests
+- artifact manifest integrity checks
+- run resume/recovery docs
+- daemon/service health checks
+- data profile validation
+- engine resource limits
+
+Exit criteria:
+
+- production can run research jobs continuously without manual babysitting
+- stuck jobs are visible and recoverable
+- every assistant-generated artifact has approval and provenance
+- every engine run has a replayable manifest
+
+### Phase B13: Beta Protocol For Research Pipeline
+
+Goal:
+
+Validate that the new product creates real pull before scaling it broadly.
+
+Pilot customers:
+
+- 3 systematic independent traders
+- 2 crypto researchers with recurring hypotheses
+- 2 strategy sellers/educators who need proof trails
+- 2 prop-style operators testing challenge/strategy feasibility
+- 1 emerging manager or allocator-style reviewer
+
+Track:
+
+- number of ideas entered
+- number converted to approved hypotheses
+- number of experiments queued per program
+- time from idea to first verdict
+- number of failed variants remembered
+- number of next experiments accepted
+- whether the user returns to continue the same program
+- whether the user exports or shares a program report
+- whether they would pay for more experiment throughput
+
+Success signal:
+
+Users do not merely upload files. They return because the system has become their research loop.
+
+## Approach B Repo Ownership Summary
+
+| Workstream | `invariance_research` | `bulletproof_bt` |
+| --- | --- | --- |
+| Product IA | Primary owner: routes, dashboard, copy, billing, public positioning. | Docs support only. |
+| Research Programs | Primary owner: persistence, UI, permissions, events. | Provides terminology and engine linkage. |
+| Idea Intake | Primary owner: forms, clarification assistant, session persistence. | Defines research brief schema and examples. |
+| Hypothesis Specs | UI, persistence, approval state, version diffs. | Schema, validation CLI, fixtures, mapping to engine concepts. |
+| Strategy Specs | Review UI, human approval, audit log. | Contract, compiler, validators, safe templates. |
+| Experiment Planning | Plan review UI, queue records, entitlement gates. | Plan generator, validation, compute estimates. |
+| Experiment Execution | Worker lifecycle, tenant/job records, storage, status UI. | Daemon/service execution, deterministic run artifacts. |
+| Verdict Interpretation | Render cards, program timeline, reports. | Emit cards from artifacts, failure classifiers. |
+| Research Memory | Tenant-scoped persistence, search UI, privacy controls. | Memory algorithms and export contracts. |
+| Reports/Share/Desk | Snapshot, export, Share Room, Research Desk packet. | Program evidence bundle and milestone summaries. |
+| Billing/Ops | Stripe, usage, admin, worker deployment, monitoring. | Runtime cost hints, health, replay/recovery docs. |
+
+## Approach B Codex Implementation Order
+
+1. Phase B0: product contract/navigation reframing.
+2. Phase B1: Research Program data model and routes.
+3. Phase B2: idea intake and clarification.
+4. Phase B3: hypothesis spec contract and approval UI.
+5. Phase B4: strategy spec generation and validation.
+6. Phase B5: experiment planner and queue.
+7. Phase B6: engine execution service and research worker.
+8. Phase B7: verdict cards and result interpreter.
+9. Phase B8: tenant-scoped research memory.
+10. Phase B9: program workbench.
+11. Phase B10: program reports, Share Room, and Research Desk handoff.
+12. Phase B11: billing, entitlements, and compute economics.
+13. Phase B12: reliability, security, and production runbooks.
+14. Phase B13: beta protocol.
+
+Implementation principle:
+
+Do not build autonomous strategy generation first. Build a governed research pipeline where the user approves hypothesis specs, strategy specs, and experiment plans before compute runs. The system should accelerate disciplined research, not pretend to be an alpha vending machine.
+
 ## Target Architecture
 
 ```text
@@ -4455,8 +5221,12 @@ User
   v
 invariance_research Next.js App
   |-- public authority site
-  |-- Strategy Robustness Lab
+  |-- Research Pipeline / Research Program workspace
+  |-- Strategy Robustness Lab as Audit Import mode
   |-- authenticated workspace
+  |-- idea intake and clarification assistant
+  |-- hypothesis spec editor and approval UI
+  |-- experiment plan review and queue
   |-- upload inspection
   |-- diagnostic pages
   |-- report/export pages
@@ -4467,6 +5237,10 @@ invariance_research Next.js App
   |
   v
 TypeScript API + Services
+  |-- research program lifecycle
+  |-- hypothesis lifecycle
+  |-- assistant clarification sessions
+  |-- experiment queue lifecycle
   |-- upload intake
   |-- analysis creation
   |-- entitlement policy
@@ -4479,6 +5253,7 @@ TypeScript API + Services
   |
   v
 Worker Runtime
+  |-- research experiment worker
   |-- analysis worker
   |-- export worker
   |-- health/heartbeat
@@ -4491,6 +5266,12 @@ Python Bridge
   |
   v
 bulletproof_bt
+  |-- hypothesis_spec_v1 validator
+  |-- strategy_spec_v1 validator/compiler
+  |-- experiment_plan_v1 planner
+  |-- research daemon/service execution
+  |-- terminal-grade intelligence cards
+  |-- tenant-safe memory export contract
   |-- bt.run_analysis_from_parsed_artifact
   |-- StrategyRobustnessLabService
   |-- diagnostics
@@ -4506,6 +5287,8 @@ Storage
   |-- S3/R2 uploads and exports
   |-- benchmark manifests and datasets
   |-- immutable derived artifacts
+  |-- program run artifacts
+  |-- tenant-scoped research memory
 ```
 
 ## Contract Boundaries
@@ -4515,6 +5298,10 @@ Storage
 - accounts and users
 - auth and sessions
 - plans and entitlements
+- research programs
+- hypothesis approval lifecycle
+- assistant session persistence
+- experiment queue lifecycle
 - upload envelopes
 - artifact ownership
 - analysis/job lifecycle
@@ -4529,6 +5316,12 @@ Storage
 
 - diagnostic computation
 - strategy/backtest execution
+- hypothesis spec validation
+- strategy spec validation and compilation
+- experiment plan generation
+- research daemon execution semantics
+- terminal-grade intelligence cards
+- memory extraction algorithms
 - execution assumptions
 - robustness metrics
 - Monte Carlo assumptions
@@ -4549,6 +5342,13 @@ DiagnosticCapabilityProfile
 EngineRunContext
 DiagnosticPayload
 ReportSourcePayload
+ResearchBriefV1
+HypothesisSpecV1
+StrategySpecV1
+ExperimentPlanV1
+ExperimentRunEnvelope
+VerdictCardV1
+ResearchMemoryExportV1
 ```
 
 The web app should never import engine internals. The engine should never know about web app sessions, Stripe plans, or React routes.
@@ -4972,8 +5772,8 @@ Mitigation:
 - public strategy marketplace
 - social feed
 - public leaderboards
-- fully automated strategy generation
-- natural-language compiler as first surface
+- fully autonomous strategy generation without approval gates
+- natural-language compiler that bypasses hypothesis/spec review
 - portfolio allocator
 - cross-user intelligence
 - complex visual market-structure explorer
@@ -4982,7 +5782,7 @@ These can exist later. They do not prove the wedge.
 
 ## The Assignment
 
-Before broadening the platform, collect ten real artifact bundles from the exact first customers:
+Before broadening the platform beyond Approach B v1, collect ten real research programs from the exact first customers:
 
 - two serious independent traders
 - two strategy sellers or educators
@@ -4990,35 +5790,38 @@ Before broadening the platform, collect ten real artifact bundles from the exact
 - two crypto-native researchers
 - two emerging fund, allocator, or prop-style operators
 
-For each bundle, record:
+For each program, record:
 
-- what they uploaded
-- what claim they wanted supported
-- what the product could support
-- what the product could not support
-- which diagnostic mattered most
-- whether they exported the report
-- whether they would share the report
-- whether they would pay for the report
-- whether they requested deeper review
-- what richer artifact they could provide next
+- what raw idea they entered
+- what clarification questions mattered
+- what hypothesis spec was approved
+- what strategy spec was generated or edited
+- what experiments were queued
+- how long it took to reach first verdict
+- what failed and why
+- what next experiment the system recommended
+- whether the user accepted the next experiment
+- whether memory helped avoid repeated work
+- whether they exported or shared a report
+- whether they would pay for more research throughput
+- whether they requested deeper Research Desk review
 
-This is the demand test. If users pay for or share negative/conditional reports, the product has real pull. If they only want confirmation, reposition toward strategy sellers, allocators, and serious research teams.
+This is the demand test. If users return to continue a research program, accept next experiments, and pay for more throughput, the product has real pull. If they only want one-off confirmation, keep upload validation as a side door and sell the product to serious systematic researchers instead.
 
 ## Final Recommendation
 
-Build the full ambition, but do it through the existing app.
+Build the full ambition, but start with the narrowest working Research Pipeline.
 
 First:
 
-> Make `invariance_research` Strategy Robustness Lab the best artifact-to-validation-report product available.
+> Make `invariance_research` a Research Program workbench where raw trading intuition becomes approved hypothesis specs, queued experiments, verdict cards, memory, and proof reports.
 
 Then:
 
-> Add claim capture, strategy workspaces, hypothesis planning, and tenant-scoped research memory.
+> Keep Strategy Robustness Lab as the import/audit/report subsystem for external artifacts and existing results.
 
 Eventually:
 
 > Become the claim-first strategy research OS.
 
-The sequence matters. The existing app is not a throwaway prototype. It is the right starting surface. The job now is to make it honest, durable, report-worthy, and commercially sharp.
+The sequence matters. The existing app is not a throwaway prototype. It is the right SaaS shell. The job now is to productize the process inside `bulletproof_bt`: disciplined hypothesis formation, safe strategy spec generation, continuous experiment execution, hostile interpretation, and persistent research memory.

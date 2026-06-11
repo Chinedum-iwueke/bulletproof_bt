@@ -29,6 +29,7 @@ from bt.research_data.instruments import write_instrument_manifest, write_stable
 from bt.research_data.jobs.build_panel import build_panels
 from bt.research_data.jobs.build_universe import build_volatile_universe
 from bt.research_data.jobs.materialize import materialize_volatile_panel
+from bt.research_data.jobs.state_features import build_panel_state_features
 from bt.research_data.storage import ResearchDataStore
 
 
@@ -89,6 +90,8 @@ def main() -> int:
     panel_symbols = sorted(set(stable_symbols) | set(membership_symbols))
     log(f"building canonical panels symbols={len(panel_symbols)}")
     build_panels(EXCHANGE, panel_symbols, TIMEFRAME, store)
+    log(f"precomputing stable causal state features symbols={len(stable_symbols)}")
+    build_panel_state_features(EXCHANGE, TIMEFRAME, symbols=stable_symbols, store=store)
     log(f"materializing active volatile panel symbols={len(membership_symbols)}")
     path = materialize_volatile_panel(
         EXCHANGE,
@@ -98,6 +101,8 @@ def main() -> int:
         store=store,
     )
     log(f"materialized active volatile panel path={path}")
+    log("precomputing materialized volatile causal state features")
+    build_panel_state_features(EXCHANGE, TIMEFRAME, universe="volatile-active", store=store)
     log("research_data bootstrap complete")
     return 0
 

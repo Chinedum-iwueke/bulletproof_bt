@@ -44,6 +44,14 @@ def _state_feature_options(config: dict[str, Any]) -> tuple[bool, str]:
     return bool(enabled), str(profile or "full")
 
 
+def _positive_int_option(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
 def _is_missing_metadata_value(value: Any) -> bool:
     if value is None:
         return True
@@ -86,10 +94,20 @@ class BacktestEngine:
         self._config = config
         self._order_counter = 0
         self._indicators: dict[str, dict[str, Indicator]] = {}
+        self._indicator_profile = str(config.get("indicator_profile", "default") or "default").strip().lower()
+        if self._indicator_profile not in {"default", "none"}:
+            raise ValueError("indicator_profile must be one of: default, none")
         self._sanity_counters = sanity_counters
         self._audit = audit_manager
         state_enabled, state_profile = _state_feature_options(config)
+        self._state_context_enabled = bool(state_enabled)
         self._state_layer = OnlineStateFeatureLayer(enabled=state_enabled, profile=state_profile)
+        outputs_cfg = config.get("outputs") if isinstance(config.get("outputs"), dict) else {}
+        self._equity_flush_every = _positive_int_option(
+            config.get("equity_flush_every", outputs_cfg.get("equity_flush_every", 5000)),
+            5000,
+        )
+        self._equity_rows_since_flush = 0
 
     def _sync_datafeed_required_symbols(self, open_orders: list[Order]) -> None:
         setter = getattr(self._datafeed, "set_required_symbols", None)
@@ -292,6 +310,8 @@ class BacktestEngine:
         )
 
     def _build_indicator_set(self) -> dict[str, Indicator]:
+        if self._indicator_profile == "none":
+            return {}
         return {
             "ema_20": EMA(20),
             "ema_50": EMA(50),
@@ -410,29 +430,35 @@ class BacktestEngine:
                     indicators = self._ensure_symbol_indicators(bar.symbol)
                     for indicator in indicators.values():
                         indicator.update(bar)
-                    self._state_layer.update(
-                        symbol=bar.symbol,
-                        ts=bar.ts,
-                        open_px=bar.open,
-                        high=bar.high,
-                        low=bar.low,
-                        close=bar.close,
-                        volume=bar.volume,
-                        extra=bar.extra,
-                    )
+                    if self._state_context_enabled:
+                        self._state_layer.update(
+                            symbol=bar.symbol,
+                            ts=bar.ts,
+                            open_px=bar.open,
+                            high=bar.high,
+                            low=bar.low,
+                            close=bar.close,
+                            volume=bar.volume,
+                            extra=bar.extra,
+                        )
 
                 tradeable = self._universe.tradeable_at(ts)
                 indicators_snapshot: dict[str, dict[str, tuple[float | None, bool]]] = {}
-                for symbol in bars_by_symbol:
-                    symbol_indicators = self._indicators.get(symbol, {})
-                    indicators_snapshot[symbol] = {
-                        name: (indicator.value, indicator.is_ready)
-                        for name, indicator in symbol_indicators.items()
-                    }
+                if self._indicator_profile != "none":
+                    for symbol in bars_by_symbol:
+                        symbol_indicators = self._indicators.get(symbol, {})
+                        indicators_snapshot[symbol] = {
+                            name: (indicator.value, indicator.is_ready)
+                            for name, indicator in symbol_indicators.items()
+                        }
                 ctx: Mapping[str, Any] = {
                     "indicators": indicators_snapshot,
                     "tradeable": tradeable,
-                    "state": {symbol: self._state_layer.snapshot(symbol=symbol) for symbol in bars_by_symbol},
+                    "state": (
+                        {symbol: self._state_layer.snapshot(symbol=symbol) for symbol in bars_by_symbol}
+                        if self._state_context_enabled
+                        else {}
+                    ),
                 }
                 signals = self._strategy.on_bars(ts, bars_by_symbol, tradeable, self._ctx_with_positions(ctx))
                 if self._audit is not None and self._audit.enabled:
@@ -584,6 +610,7 @@ class BacktestEngine:
                 if forced_liquidated:
                     self._sync_datafeed_required_symbols(open_orders)
                     handle.flush()
+                    self._equity_rows_since_flush = 0
                     continue
 
                 writer.writerow(
@@ -597,7 +624,10 @@ class BacktestEngine:
                         self._portfolio.free_margin,
                     ]
                 )
-                handle.flush()
+                self._equity_rows_since_flush += 1
+                if self._equity_rows_since_flush >= self._equity_flush_every:
+                    handle.flush()
+                    self._equity_rows_since_flush = 0
                 self._sync_datafeed_required_symbols(open_orders)
 
                 if self._audit is not None and self._audit.enabled:
@@ -621,6 +651,7 @@ class BacktestEngine:
                     liquidation_reason=FORCED_LIQUIDATION_END_OF_RUN,
                 )
                 handle.flush()
+                self._equity_rows_since_flush = 0
 
         self._decisions_writer.close()
         self._fills_writer.close()

@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 from enum import Enum
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -154,7 +155,9 @@ def to_jsonable(obj: Any) -> Any:
         return {key: to_jsonable(value) for key, value in obj.items()}
     if isinstance(obj, list):
         return [to_jsonable(value) for value in obj]
-    if isinstance(obj, (str, float, int, bool)) or obj is None:
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, (str, int, bool)) or obj is None:
         return obj
     return str(obj)
 
@@ -171,8 +174,8 @@ class JsonlWriter:
         """Append one JSON line."""
         _validate_order_record(record, where=f"JsonlWriter.write[{self._path.name}]")
         json_record = to_jsonable(_with_canonical_fill_costs(record))
-        json.dump(json_record, self._file, ensure_ascii=False)
-        self._file.write("\n")
+        line = json.dumps(json_record, ensure_ascii=False, allow_nan=False)
+        self._file.write(line + "\n")
         self._pending_lines += 1
         if self._pending_lines >= self._flush_every:
             self._file.flush()

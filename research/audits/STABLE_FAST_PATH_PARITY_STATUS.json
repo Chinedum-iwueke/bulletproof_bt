@@ -1,0 +1,38 @@
+{
+  "generated_at": "2026-06-11T15:50:20Z",
+  "implemented": {
+    "generic_stable_precomputed_htf_context": true,
+    "l7_h1_family_specific_kernel": true,
+    "volatile_fast_path_enabled": false,
+    "matrix_runner_resumable_by_timeframe": true,
+    "comparison_heartbeat": true
+  },
+  "verified_gates": [
+    {
+      "hypothesis": "l1_h2_compression_mean_reversion.yaml",
+      "signal_timeframe": "5m",
+      "window": "2025-05-05/2025-05-07",
+      "status": "passed",
+      "same_metrics": true,
+      "same_trades": true,
+      "same_equity": true,
+      "speedup_observed": 0.909845
+    },
+    {
+      "hypothesis": "l1_h11b.yaml",
+      "signal_timeframe": "15m",
+      "window": "2025-05-05T00:00:00Z/2025-05-05T00:45:00Z",
+      "status": "passed",
+      "same_metrics": true,
+      "same_trades": true,
+      "same_equity": true,
+      "speedup_observed": 0.975181
+    }
+  ],
+  "all_hypotheses_passed": false,
+  "blockers": [
+    "The two-day all-hypothesis matrix was interrupted by overlapping comparison jobs and partial output directories.",
+    "Generic precomputed HTF context is parity-safe but has not shown broad speedup; true speedups still require family-specific kernels."
+  ],
+  "resume_command": "PYTHONPATH=src:. python3 scripts/compare_all_stable_fast_paths.py --hypotheses-dir research/hypotheses --output-root outputs/kernel_comparison/stable_family_parity_all --config configs/engine.yaml --local-config configs/local/engine.lab.yaml --data-root research_data --exchange binance --timeframe 1m --stable-manifest research_data/manifests/stable_universe.parquet --start 2025-05-05 --end 2025-05-07 --max-workers 2 --gate-workers 1 --run-timeout-seconds 2400 --clean"
+}

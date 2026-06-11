@@ -350,12 +350,15 @@ class TradesCsvWriter:
         run_id: str | None = None,
         hypothesis_id: str | None = None,
         tier: str | None = None,
+        flush_every: int = 100,
     ):
         path.parent.mkdir(parents=True, exist_ok=True)
         self._path = path
         self._run_id = run_id
         self._hypothesis_id = hypothesis_id
         self._tier = tier
+        self._flush_every = max(int(flush_every), 1)
+        self._pending_rows = 0
         self._columns = list(type(self)._columns)
         file_exists = path.exists()
         self._file = path.open("a", encoding="utf-8", newline="")
@@ -363,6 +366,14 @@ class TradesCsvWriter:
         if not file_exists or path.stat().st_size == 0:
             self._writer.writerow(self._columns)
             self._file.flush()
+
+    def _flush_pending(self, *, force: bool = False) -> None:
+        if self._file.closed:
+            self._pending_rows = 0
+            return
+        if force or self._pending_rows >= self._flush_every:
+            self._file.flush()
+            self._pending_rows = 0
 
     def _serialize_value(self, value: Any) -> str:
         if value is None:
@@ -419,7 +430,7 @@ class TradesCsvWriter:
 
         old_columns = list(self._columns)
         self._columns.extend(new_columns)
-        self._file.flush()
+        self._flush_pending(force=True)
         self._file.close()
 
         with self._path.open("r", encoding="utf-8", newline="") as handle:
@@ -436,6 +447,7 @@ class TradesCsvWriter:
 
         self._file = self._path.open("a", encoding="utf-8", newline="")
         self._writer = csv.writer(self._file)
+        self._pending_rows = 0
 
     def write_trade(self, trade: Trade) -> None:
         """Append one trade row."""
@@ -588,8 +600,10 @@ class TradesCsvWriter:
                 value = getattr(trade, column, "")  # TODO: populate when Trade adds field.
             row.append(self._serialize_value(value))
         self._writer.writerow(row)
-        self._file.flush()
+        self._pending_rows += 1
+        self._flush_pending()
 
     def close(self) -> None:
         if not self._file.closed:
+            self._flush_pending(force=True)
             self._file.close()

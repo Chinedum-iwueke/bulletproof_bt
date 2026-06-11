@@ -366,6 +366,31 @@ def test_funding_and_oi_source_ts_never_exceed_bar_ts(tmp_path) -> None:
         load_research_panels(root, "binance", ["BTCUSDT"], "1m")
 
 
+def test_research_panel_loader_preserves_precomputed_state_columns(tmp_path) -> None:
+    root = tmp_path / "research_data"
+    df = _panel(root, "BTCUSDT", [1.0])
+    df["entry_state_csi_raw"] = [0.7]
+    df["entry_state_csi_source"] = ["enriched"]
+    path = root / "canonical" / "binance" / "BTCUSDT" / "timeframe=1m" / "research_panel.parquet"
+    df.to_parquet(path, index=False)
+
+    feed = build_streaming_research_panel_feed_from_config(
+        {
+            "dataset_kind": "research_panel",
+            "exchange": "binance",
+            "universe": "custom",
+            "symbols": ["BTCUSDT"],
+            "root": str(root),
+            "timeframe": "1m",
+        }
+    )
+    bars = feed.next()
+
+    assert bars is not None
+    assert bars[0].extra["entry_state_csi_raw"] == 0.7
+    assert bars[0].extra["entry_state_csi_source"] == "enriched"
+
+
 def test_missing_panels_produce_clear_errors(tmp_path) -> None:
     with pytest.raises(DataError, match="Missing research panel"):
         load_research_panels(tmp_path / "research_data", "binance", ["BTCUSDT"], "1m")

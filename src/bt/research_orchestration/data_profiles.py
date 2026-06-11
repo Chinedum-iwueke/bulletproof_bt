@@ -79,6 +79,11 @@ def preflight_research_data_profile(
 ) -> None:
     if not profile.root.exists():
         raise FileNotFoundError(f"research_data root does not exist: {profile.root}")
+    if profile.universe == "volatile":
+        materialized_path = _volatile_materialized_panel_path(profile)
+        if materialized_path.exists() and symbols_subset is None and max_symbols is None:
+            _validate_panel_path(materialized_path, label=f"{profile.exchange}/_volatile_active")
+            return
     if profile.universe == "stable":
         symbols = _stable_symbols(profile)
     else:
@@ -121,6 +126,21 @@ def _validate_panel_file(profile: ResearchDataProfile, symbol: str) -> None:
     path = profile.root / "canonical" / profile.exchange / symbol / f"timeframe={profile.timeframe}" / "research_panel.parquet"
     if not path.exists():
         raise FileNotFoundError(f"research panel missing for {profile.exchange}/{symbol}: {path}")
+    _validate_panel_path(path, label=f"{profile.exchange}/{symbol}")
+
+
+def _volatile_materialized_panel_path(profile: ResearchDataProfile) -> Path:
+    return (
+        profile.root
+        / "canonical"
+        / profile.exchange
+        / "_volatile_active"
+        / f"timeframe={profile.timeframe}"
+        / "research_panel.parquet"
+    )
+
+
+def _validate_panel_path(path: Path, *, label: str) -> None:
     available_columns = set(pq.ParquetFile(path).schema_arrow.names)
     missing = REQUIRED_PANEL_COLUMNS - available_columns
     if missing:
@@ -134,8 +154,8 @@ def _validate_panel_file(profile: ResearchDataProfile, symbol: str) -> None:
         if source_col in df.columns:
             source = pd.to_datetime(df[source_col], utc=True, errors="coerce")
             mask = source.notna()
-        if (source[mask] > ts[mask]).any():
-            raise ValueError(f"{source_col} exceeds bar ts in {path}")
+            if (source[mask] > ts[mask]).any():
+                raise ValueError(f"{source_col} exceeds bar ts in {path}")
 
 
 def _dedupe_volatile_membership(membership: pd.DataFrame) -> pd.DataFrame:

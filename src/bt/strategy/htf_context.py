@@ -56,6 +56,70 @@ class HTFContextStrategyAdapter(Strategy):
         return self._inner.on_bars(ts, bars_by_symbol, tradeable, StrategyContextView(new_ctx))
 
 
+class PrecomputedHTFContextStrategyAdapter(Strategy):
+    """Inject closed HTF bars from causal research-panel columns.
+
+    The research-data stamper writes ``htf_<tf>_*`` columns only on the 1m bar
+    where the streaming ``TimeframeResampler`` would have emitted a completed
+    HTF candle. This adapter reconstructs that emitted-index shape and avoids
+    recomputing HTF aggregation inside every stable backtest worker.
+    """
+
+    def __init__(self, *, inner: Strategy, timeframes: list[str]) -> None:
+        self._inner = inner
+        self._timeframes = list(dict.fromkeys(str(tf).lower() for tf in timeframes))
+        self._first_seen: dict[tuple[str, str], pd.Timestamp] = {}
+
+    def on_bars(
+        self,
+        ts: pd.Timestamp,
+        bars_by_symbol: dict[str, Bar],
+        tradeable: set[str],
+        ctx: Mapping[str, Any],
+    ) -> list[Signal]:
+        emitted_index: dict[str, dict[str, HTFBar]] = {}
+        for bar in bars_by_symbol.values():
+            extra = bar.extra if isinstance(bar.extra, Mapping) else {}
+            for timeframe in self._timeframes:
+                key = (bar.symbol, timeframe)
+                first_seen = self._first_seen.setdefault(key, pd.Timestamp(bar.ts))
+                prefix = f"htf_{timeframe}_"
+                if not bool(extra.get(f"{prefix}ready", False)):
+                    continue
+                htf_ts = pd.to_datetime(extra.get(f"{prefix}ts"), utc=True, errors="coerce")
+                if pd.isna(htf_ts):
+                    continue
+                htf_ts = pd.Timestamp(htf_ts)
+                # Match the classic streaming resampler's cold-start behavior:
+                # a backtest that begins at T has not seen any HTF bucket whose
+                # open timestamp is before T, even if the full-history panel has
+                # a precomputed emission row at T.
+                if htf_ts < first_seen:
+                    continue
+                try:
+                    htf_bar = HTFBar(
+                        ts=htf_ts,
+                        symbol=bar.symbol,
+                        open=float(extra[f"{prefix}open"]),
+                        high=float(extra[f"{prefix}high"]),
+                        low=float(extra[f"{prefix}low"]),
+                        close=float(extra[f"{prefix}close"]),
+                        volume=float(extra[f"{prefix}volume"]),
+                        timeframe=timeframe,
+                        n_bars=int(extra.get(f"{prefix}n_bars", 0) or 0),
+                        expected_bars=int(extra.get(f"{prefix}expected_bars", 0) or 0),
+                        is_complete=bool(extra.get(f"{prefix}is_complete", True)),
+                        metadata={},
+                    )
+                except (KeyError, TypeError, ValueError):
+                    continue
+                emitted_index.setdefault(timeframe, {})[bar.symbol] = htf_bar
+
+        new_ctx = dict(ctx)
+        new_ctx["htf"] = emitted_index
+        return self._inner.on_bars(ts, bars_by_symbol, tradeable, StrategyContextView(new_ctx))
+
+
 class SignalConflictPolicyStrategyAdapter(Strategy):
     """Wrap strategy output with deterministic same-(ts,symbol) conflict resolution."""
 

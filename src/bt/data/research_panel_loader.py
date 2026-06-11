@@ -53,6 +53,58 @@ BAR_COLUMNS = ("ts", "symbol", "open", "high", "low", "close", "volume")
 STREAM_COLUMNS = BAR_COLUMNS + FEATURE_COLUMNS
 
 
+def _configured_extra_columns(
+    available_columns: set[str],
+    *,
+    exact: Iterable[str] | None = None,
+    prefixes: Iterable[str] | None = None,
+) -> list[str]:
+    """Return optional strategy-family columns requested by the runtime config.
+
+    The canonical research panel stores some family-specific compiled features
+    such as ``l7h1_15m_*``. They are intentionally not part of the always-on
+    rich feature list because most strategies do not need them. When a strategy
+    explicitly opts into a compiled path, the runner asks for the relevant
+    prefixes and the loader projects only those extra columns.
+    """
+    wanted: set[str] = set()
+    for col in exact or ():
+        if col in available_columns:
+            wanted.add(str(col))
+    normalized_prefixes = tuple(str(prefix) for prefix in (prefixes or ()) if str(prefix))
+    if normalized_prefixes:
+        for col in available_columns:
+            if col.startswith(normalized_prefixes):
+                wanted.add(col)
+    return sorted(wanted)
+
+
+def _read_columns_for_panel(
+    available_columns: set[str],
+    *,
+    extra_columns: Iterable[str] | None = None,
+    extra_column_prefixes: Iterable[str] | None = None,
+    include_entry_state_columns: bool = True,
+) -> list[str]:
+    read_columns = [col for col in STREAM_COLUMNS if col in available_columns]
+    read_columns.extend(
+        col
+        for col in _configured_extra_columns(
+            available_columns,
+            exact=extra_columns,
+            prefixes=extra_column_prefixes,
+        )
+        if col not in read_columns
+    )
+    if include_entry_state_columns:
+        read_columns.extend(
+            col
+            for col in sorted(col for col in available_columns if col.startswith("entry_state_"))
+            if col not in read_columns
+        )
+    return read_columns
+
+
 def _is_present(value: object) -> bool:
     try:
         missing = pd.isna(value)
@@ -257,6 +309,8 @@ def build_streaming_research_panel_feed_from_config(config: dict[str, object]) -
     max_symbols = _optional_int(config.get("max_symbols"))
     row_limit = _optional_int(config.get("row_limit_per_symbol"))
     chunksize = _optional_int(config.get("chunksize")) or 5_000
+    extra_columns = _symbols_from_config(config.get("extra_columns"))
+    extra_column_prefixes = _symbols_from_config(config.get("extra_column_prefixes"))
 
     if universe == "stable":
         stable_manifest = config.get("stable_manifest")
@@ -276,6 +330,8 @@ def build_streaming_research_panel_feed_from_config(config: dict[str, object]) -
             end_ts=end_ts,
             row_limit_per_symbol=row_limit,
             chunksize=chunksize,
+            extra_columns=extra_columns,
+            extra_column_prefixes=extra_column_prefixes,
         )
 
     if universe == "volatile":
@@ -289,6 +345,8 @@ def build_streaming_research_panel_feed_from_config(config: dict[str, object]) -
                 start_ts=start_ts,
                 end_ts=end_ts,
                 chunksize=chunksize,
+                extra_columns=extra_columns,
+                extra_column_prefixes=extra_column_prefixes,
             )
         membership = _volatile_membership(
             exchange=exchange,
@@ -309,6 +367,8 @@ def build_streaming_research_panel_feed_from_config(config: dict[str, object]) -
             row_limit_per_symbol=row_limit,
             chunksize=chunksize,
             membership=membership,
+            extra_columns=extra_columns,
+            extra_column_prefixes=extra_column_prefixes,
         )
 
     symbols = config.get("symbols")
@@ -328,6 +388,8 @@ def build_streaming_research_panel_feed_from_config(config: dict[str, object]) -
         end_ts=end_ts,
         row_limit_per_symbol=row_limit,
         chunksize=chunksize,
+        extra_columns=extra_columns,
+        extra_column_prefixes=extra_column_prefixes,
     )
 
 
@@ -402,6 +464,8 @@ class ResearchPanelStreamingFeed:
         row_limit_per_symbol: int | None = None,
         chunksize: int = 5_000,
         membership: pd.DataFrame | None = None,
+        extra_columns: Iterable[str] | None = None,
+        extra_column_prefixes: Iterable[str] | None = None,
     ) -> None:
         if chunksize <= 0:
             raise DataError("Research panel chunksize must be positive")
@@ -416,6 +480,8 @@ class ResearchPanelStreamingFeed:
         self._row_limit_per_symbol = row_limit_per_symbol
         self._chunksize = chunksize
         self._membership = _dedupe_volatile_membership(membership) if membership is not None else None
+        self._extra_columns = tuple(str(col) for col in (extra_columns or ()))
+        self._extra_column_prefixes = tuple(str(prefix) for prefix in (extra_column_prefixes or ()))
         self._membership_intervals = _membership_intervals(self._membership) if self._membership is not None else None
         self._membership_schedule: dict[pd.Timestamp, set[str]] = {}
         self._rebalance_ts: list[pd.Timestamp] = []
@@ -456,6 +522,8 @@ class ResearchPanelStreamingFeed:
                 chunksize=self._chunksize,
                 membership_intervals=self._membership_intervals,
                 required_symbols=self._required_symbols,
+                extra_columns=self._extra_columns,
+                extra_column_prefixes=self._extra_column_prefixes,
             )
             self._iter_by_symbol[symbol] = iterator
             try:
@@ -530,6 +598,8 @@ class ResearchPanelStreamingFeed:
             chunksize=self._chunksize,
             membership_intervals=None,
             required_symbols=None,
+            extra_columns=self._extra_columns,
+            extra_column_prefixes=self._extra_column_prefixes,
         )
         self._iter_by_symbol[symbol] = iterator
         try:
@@ -647,6 +717,8 @@ class MaterializedResearchPanelStreamingFeed:
         start_ts: pd.Timestamp | None = None,
         end_ts: pd.Timestamp | None = None,
         chunksize: int = 50_000,
+        extra_columns: Iterable[str] | None = None,
+        extra_column_prefixes: Iterable[str] | None = None,
     ) -> None:
         if chunksize <= 0:
             raise DataError("Materialized research panel chunksize must be positive")
@@ -654,6 +726,8 @@ class MaterializedResearchPanelStreamingFeed:
         self._start_ts = start_ts
         self._end_ts = end_ts
         self._chunksize = chunksize
+        self._extra_columns = tuple(str(col) for col in (extra_columns or ()))
+        self._extra_column_prefixes = tuple(str(prefix) for prefix in (extra_column_prefixes or ()))
         self._batch_iter: Iterator[Any] | None = None
         self._groups: deque[tuple[pd.Timestamp, list[Bar]]] = deque()
         self._carry = pd.DataFrame()
@@ -679,7 +753,11 @@ class MaterializedResearchPanelStreamingFeed:
         missing = set(BAR_COLUMNS) - available_columns
         if missing:
             raise DataError(f"Materialized research panel missing columns {sorted(missing)} at {self._path}")
-        read_columns = [col for col in STREAM_COLUMNS if col in available_columns]
+        read_columns = _read_columns_for_panel(
+            available_columns,
+            extra_columns=self._extra_columns,
+            extra_column_prefixes=self._extra_column_prefixes,
+        )
         self._batch_iter = parquet_file.iter_batches(batch_size=self._chunksize, columns=read_columns)
         self._groups = deque()
         self._carry = pd.DataFrame()
@@ -748,6 +826,8 @@ class MaterializedResearchPanelStreamingFeed:
             chunksize=self._chunksize,
             membership_intervals=None,
             required_symbols=None,
+            extra_columns=self._extra_columns,
+            extra_column_prefixes=self._extra_column_prefixes,
         )
         self._required_iter_by_symbol[symbol] = iterator
         self._advance_one_required_symbol(symbol)
@@ -835,6 +915,8 @@ def _iter_research_panel_bars(
     chunksize: int,
     membership_intervals: pd.DataFrame | None,
     required_symbols: set[str] | None = None,
+    extra_columns: Iterable[str] | None = None,
+    extra_column_prefixes: Iterable[str] | None = None,
 ) -> Iterator[Bar]:
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -847,7 +929,11 @@ def _iter_research_panel_bars(
     missing = set(BAR_COLUMNS) - available_columns
     if missing:
         raise DataError(f"Research panel missing columns {sorted(missing)} at {path}")
-    read_columns = [col for col in STREAM_COLUMNS if col in available_columns]
+    read_columns = _read_columns_for_panel(
+        available_columns,
+        extra_columns=extra_columns,
+        extra_column_prefixes=extra_column_prefixes,
+    )
     intervals = None
     if membership_intervals is not None and not membership_intervals.empty:
         intervals = membership_intervals[membership_intervals["symbol"].astype(str).eq(expected_symbol)]

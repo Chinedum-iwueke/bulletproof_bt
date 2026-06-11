@@ -9,7 +9,11 @@ _TIMEFRAME_TO_HOURS_BARS: dict[str, dict[int, int]] = {
     "15m": {
         24: 96,
         72: 288,
-    }
+    },
+    "1h": {
+        24: 24,
+        72: 72,
+    },
 }
 
 
