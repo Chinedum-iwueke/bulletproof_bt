@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://invarianceresearch.xyz/schemas/research_brief_v1.schema.json",
+  "title": "Research Brief v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "program_id",
+    "title",
+    "thesis",
+    "market_intuition",
+    "missing_assumptions",
+    "clarification_answers",
+    "readiness",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": { "const": "research_brief_v1" },
+    "program_id": { "type": "string", "minLength": 1 },
+    "title": { "type": "string", "minLength": 1 },
+    "thesis": { "type": "string", "minLength": 1 },
+    "market_intuition": { "type": "string", "minLength": 10 },
+    "asset_universe": { "type": "string" },
+    "timeframe": { "type": "string" },
+    "holding_period": { "type": "string" },
+    "entry_idea": { "type": "string" },
+    "exit_idea": { "type": "string" },
+    "risk_assumption": { "type": "string" },
+    "cost_slippage_assumption": { "type": "string" },
+    "data_source": { "type": "string" },
+    "disproof_condition": { "type": "string" },
+    "missing_assumptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["assumption_id", "field", "label", "severity", "why_it_matters"],
+        "properties": {
+          "assumption_id": { "type": "string" },
+          "field": { "type": "string" },
+          "label": { "type": "string" },
+          "severity": { "enum": ["blocking", "important", "optional"] },
+          "why_it_matters": { "type": "string" }
+        }
+      }
+    },
+    "clarification_answers": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "readiness": {
+      "enum": ["needs_clarification", "ready_for_hypothesis_draft"]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

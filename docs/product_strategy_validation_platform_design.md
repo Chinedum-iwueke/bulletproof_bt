@@ -4690,6 +4690,17 @@ Exit criteria:
 - all program objects are tenant-scoped
 - reports can reference a program ID when available
 
+Implementation note:
+
+- `bulletproof_bt` does not need runtime changes in B1. The engine terminology mapping for the app is:
+  - Research Program: SaaS-owned thesis container; engine runs should receive `program_id` when available but remain deterministic without it.
+  - Hypothesis: falsifiable claim that will become a schema-validated engine object in B3.
+  - Experiment: planned run matrix item; engine-facing details arrive in B5/B6.
+  - Run: immutable engine execution with manifest, config, artifacts, and hashes.
+  - Verdict: interpretation emitted from existing artifacts only; no unsupported market claims.
+  - State finding: regime/state/context observation that must point to explicit data artifacts.
+  - Audit Import: Approach A upload analysis attached as evidence inside a Research Program.
+
 ### Phase B2: Idea Intake And Clarification
 
 Goal:
@@ -4726,6 +4737,13 @@ Exit criteria:
 - user can type a vague idea and end with a structured research brief
 - assistant cannot silently fill unknown strategy assumptions
 - briefs are versioned and attached to program events
+
+Implementation note:
+
+- `invariance_research` persists clarification sessions and accepted `research_brief_v1` records under the Research Program.
+- LLM clarification is optional and provider-backed; deterministic rules must always provide fallback questions and missing assumption cards.
+- The accepted brief is not an executable strategy and not yet a hypothesis spec. B3 owns conversion from `research_brief_v1` to `hypothesis_spec_v1`.
+- `bulletproof_bt` owns the `research_brief_v1` JSON schema and fixtures by strategy family. Engine execution should ignore briefs until a later phase converts them into approved specs.
 
 ### Phase B3: Hypothesis Spec Contract
 
@@ -4776,6 +4794,15 @@ Exit criteria:
 - invalid specs fail closed with actionable repair guidance
 - no experiment can be queued without an approved hypothesis version
 
+Implementation status:
+
+- `bulletproof_bt` now ships `schemas/hypothesis_spec_v1.schema.json`, a reference fixture in `examples/hypothesis_specs/`, and a validator exposed through `bt hypothesis validate <spec>` and `bt hypothesis explain-missing <spec>`.
+- The validator maps the existing engine hypothesis discipline into the new product contract: declared mechanism, observable fields, entry/exit intent, falsification criteria, required datasets, cost assumptions, benchmark/null, bounded parameters, and closed-bar execution semantics.
+- `invariance_research` now persists `hypotheses`, `hypothesis_versions`, and `hypothesis_approvals`; accepted research briefs can generate deterministic hypothesis drafts inside the Research Program detail page.
+- The UI shows invalidation criteria and required evidence before strategy generation, supports manual JSON edits saved as new versions, and includes side-by-side comparison with the previous version.
+- The approval action fails closed when validation errors exist.
+- B3 intentionally does not queue experiments. It only creates the approved hypothesis version B5 must require.
+
 ### Phase B4: Strategy Spec Generation And Validation
 
 Goal:
@@ -4816,6 +4843,15 @@ Exit criteria:
 - user can approve a generated strategy spec
 - invalid specs never reach the experiment queue
 - every run can trace back to user-approved hypothesis and strategy spec versions
+
+Implementation status:
+
+- `bulletproof_bt` now ships `schemas/strategy_spec_v1.schema.json`, safe templates for trend continuation, mean reversion, breakout, volatility filter, and funding/liquidation context, plus an invalid lookahead fixture.
+- The CLI supports `bt strategy validate <spec>` and `bt strategy compile <spec>`. The compiler emits a `run_config_from_strategy_spec_v1` object only after validation passes.
+- Validation rejects lookahead language, negative shifts, missing cost/slippage/risk models, unbounded parameters, unsupported timeframes, undeclared datasets, interpolation assumptions, and unregistered signal functions.
+- `invariance_research` now persists `strategy_specs` linked to approved hypothesis versions. The program workbench can generate a strategy proposal from an approved hypothesis, show assistant assumptions, expose execution guardrails, and require explicit user approval before execution.
+- Manual strategy JSON edits are saved as new versioned records and revalidated before approval.
+- B4 does not execute the spec. It creates the approved strategy-spec record that B5 will convert into experiment plans and queue items.
 
 ### Phase B5: Experiment Planner And Queue
 
@@ -4868,6 +4904,18 @@ Exit criteria:
 - admin can see and manage jobs
 - plan limits prevent runaway compute
 
+Implementation status:
+
+- `bulletproof_bt` now ships `schemas/experiment_plan_v1.schema.json`, a reference experiment plan fixture, and planner/validator CLI support:
+  - `bt experiment plan <strategy_spec>`
+  - `bt experiment validate <plan>`
+- The planner emits the first falsification matrix from an approved strategy spec: baseline, cost sensitivity, slippage sensitivity, parameter grid, holdout split, benchmark/null comparison, optional regime/state split, and optional alternative-exit test.
+- `invariance_research` now persists `experiment_plans`, `experiment_plan_items`, `experiment_jobs`, and `experiment_job_events`.
+- Research Programs can generate an experiment plan from an approved strategy spec, approve the plan, and queue enabled plan items as durable jobs.
+- Queue controls now exist for pause, cancel, retry, priority update, and admin retry visibility.
+- Server-side plan limits are enforced by account plan before queueing. B5 limits queued items, concurrent budget policy, and monthly compute-unit budget before B6 execution workers exist.
+- B5 does not run experiments. B6 owns worker claiming, engine execution, artifact emission, and completion/failure transitions.
+
 ### Phase B6: Engine Execution Service
 
 Goal:
@@ -4911,6 +4959,22 @@ Exit criteria:
 - run status and logs are visible in the SaaS app
 - failed runs produce useful failure artifacts
 
+Implementation status:
+
+- `bulletproof_bt` now exposes the first stable SaaS execution entrypoint:
+  - `bt experiment execute --strategy-spec <file> --experiment-plan <file> --item-id <id> --output-dir <dir>`
+- The B6 execution contract validates an approved strategy spec plus experiment plan item and materializes:
+  - `run_config.json`
+  - `execution_manifest.json`
+  - `verdict.json`
+  - `execution_log.md`
+- The emitted manifest is `experiment_execution_manifest_v1` with status `contract_ready`. This is intentionally honest: it proves the research protocol can be executed and audited, while full tenant-safe market-data backtest execution remains the next engine service extension behind the same entrypoint.
+- `invariance_research` now has a dedicated `experiment-worker` that claims durable `experiment_jobs`, calls the Bulletproof execution contract without manual shell access, uploads outputs to object storage under the account/program/job path, records job events, and updates program history.
+- Worker deployment now includes `analysis-worker`, `export-worker`, and `experiment-worker`; admin queue and startup-health surfaces include experiment backlog and heartbeat state.
+- B6 is covered by:
+  - Bulletproof contract tests for successful materialization and fail-closed unknown item handling.
+  - SaaS executor smoke test proving artifacts are stored through the object-storage contract.
+
 ### Phase B7: Verdict Cards And Result Interpreter
 
 Goal:
@@ -4950,6 +5014,27 @@ Exit criteria:
 - every completed run has cards
 - missing artifacts degrade gracefully
 - the UI can explain failure without raw notebook spelunking
+
+Implementation status:
+
+- `bulletproof_bt` now emits a B7 card bundle as part of `bt experiment execute`.
+- Contract-run outputs include:
+  - `cards.json`
+  - `cards.md`
+  - `HypothesisCard.json`
+  - `RunQualityCard.json`
+  - `ExecutionDragCard.json`
+  - `FailureCauseCard.json`
+  - `RegimeStateDependencyCard.json`
+  - `ParameterFragilityCard.json`
+  - `NullComparisonCard.json`
+  - `VerdictCard.json`
+  - `NextExperimentCard.json`
+- The current cards are protocol-grade cards for the B6 contract runner. They deliberately state that market-data performance, execution drag, regime dependency, parameter fragility, and null comparison are not decision-grade until completed run artifacts exist.
+- `invariance_research` now summarizes the card bundle after each experiment job, records it in experiment job events and program timeline events, and uploads all card artifacts to object storage.
+- Terminal failures also produce a failure verdict packet with `FailureCauseCard`, `VerdictCard`, and `NextExperimentCard` so a failed run can be explained without raw log spelunking.
+- The Research Program page renders a B7 verdict-card section organized around verdict, failure/survival reason, decision-grade boundary, supporting cards, and next experiment.
+- B7 is covered by the existing Bulletproof contract tests and the SaaS deployment-contract smoke test that verifies card artifacts and summaries are produced and stored.
 
 ### Phase B8: Tenant-Scoped Research Memory
 
@@ -4993,6 +5078,20 @@ Exit criteria:
 - next experiment recommendations cite evidence
 - memory never leaks another tenant's run, symbol set, strategy text, or artifact
 
+Implementation status:
+
+- `invariance_research` now includes tenant-scoped B8 memory tables:
+  - `research_memory_items`
+  - `research_memory_links`
+  - `research_findings`
+  - `program_recommendations`
+  - `similar_run_index`
+- B8 ingestion is driven by B7 verdict-card events. Completed and terminal-failed experiment jobs produce memory items, findings, recommendations, and similarity signatures inside the owning account.
+- The account-level Research Memory page now renders remembered cards, findings, recommendations, similar signatures, and a scoped search box.
+- Research Program detail pages show program-local memory highlights after verdict cards.
+- Repository reads and search require `account_id`; no cross-account memory retrieval exists.
+- Current SaaS memory is card-derived. The richer `bulletproof_bt/orchestrator/research_memory/*` algorithms remain the deeper engine-side memory substrate for later ingestion of full run artifacts, trades, state buckets, and candidate promotion data.
+
 ### Phase B9: Research Program Workbench
 
 Goal:
@@ -5034,6 +5133,22 @@ Exit criteria:
 - the old analysis pages still work for imported artifacts
 - the main dashboard is no longer analysis-library-first
 
+Implementation status:
+
+- `invariance_research` now has a program operating view on each research program page. It summarizes thesis state, active hypotheses, approved strategy specs, queued/running/completed/failed experiments, the latest verdict packet, memory count, findings, similar signatures, and command readiness.
+- The program overview now includes direct workbench navigation for Hypotheses, Experiments, Runs, Memory, Reports, and Imports.
+- Program-level pages now exist for:
+  - hypothesis versions and validation state
+  - experiment plans and queueable plan items
+  - run queue/list view
+  - individual run detail with event timeline, verdict packet, and artifact summary
+  - program-scoped memory
+  - report readiness and persisted program report snapshots
+  - Approach A audit imports
+- The command surface now gives users a stable place to create hypotheses, queue experiments, explain failures, find similar runs, generate report milestones, and request Research Desk review from the program context.
+- The main authenticated workspace now leads with research programs and treats upload audits as import evidence, while existing analysis pages remain available for single-artifact workflows.
+- `bulletproof_bt` remains UI-free for B9. Its responsibility is unchanged: keep B6/B7 experiment outputs stable enough for the SaaS workbench panels.
+
 ### Phase B10: Report, Share, And Research Desk For Programs
 
 Goal:
@@ -5070,6 +5185,28 @@ Exit criteria:
 
 - a user can share not only one result but the reasoning path behind it
 - Research Desk can review a complete program packet without asking engineering for raw files
+
+Implementation status:
+
+- `invariance_research` now creates first-class program report snapshots with schema `program_report_snapshot_v1`.
+- Program report payloads include:
+  - research question
+  - hypotheses tested
+  - experiments run
+  - rejected variants
+  - surviving candidates
+  - evidence limits
+  - next experiment plan
+  - memory summary
+  - attached Approach A imports
+  - Research Desk handoff packet
+  - public Share Room redaction policy
+- Program reports can be generated from the program Reports page and through `POST /api/programs/[id]/reports`.
+- Program reports can be downloaded as Markdown or JSON through `/api/programs/[id]/reports/[reportId]/download`.
+- Program Share Room links now use dedicated program report share tokens and render at `/program-share/[token]`, so recipients see the reasoning path rather than only a single imported analysis.
+- Program Research Desk handoff is supported when the program report has at least one completed audit import that can back the request with an immutable report snapshot. The handoff packet includes hypothesis specs, strategy specs, experiment plans, run artifact summaries, verdict cards, and memory summary.
+- Existing single-analysis report/share/export paths remain unchanged.
+- `bulletproof_bt` ownership for B10 remains artifact stability: B6/B7 run artifacts and verdict-card packets are the evidence substrate consumed by program reports.
 
 ### Phase B11: Billing, Entitlements, And Compute Economics
 
@@ -5109,6 +5246,37 @@ Exit criteria:
 - users understand what they are buying: research throughput and memory
 - runaway compute is impossible by default
 
+Implementation status:
+
+- `invariance_research` now extends plan entitlements from upload/export limits into research-throughput limits:
+  - programs
+  - active hypotheses
+  - queued experiments
+  - concurrent experiments
+  - monthly experiment compute units
+  - assistant calls
+  - memory retention
+  - Research Desk eligibility
+- Usage snapshots now meter:
+  - programs created
+  - hypotheses created
+  - experiments queued
+  - experiment compute units reserved
+  - assistant calls
+  - share links created
+  - Research Desk requests
+  - existing analyses, uploads, and exports
+- B-flow services now enforce limits before expensive actions:
+  - program creation checks `programs_limit`
+  - clarification/spec/plan generation checks `monthly_assistant_calls`
+  - hypothesis creation checks `active_hypotheses_limit`
+  - experiment queueing checks queued jobs, concurrency posture, and monthly compute units
+  - program share creation checks share entitlement and share quota
+- Billing and pricing surfaces now explain the product as research throughput and memory rather than only upload analysis.
+- Admin Ops now exposes research-throughput usage separately from audit-import usage and supports audited plan overrides, which are the launch mechanism for raising or lowering compute capacity without code changes.
+- Existing upload/export limits remain for Approach A audit imports, but they are secondary to the Approach B program loop.
+- `bulletproof_bt` already exposes per-item runtime budgets through experiment plan items. B11 uses those `max_variants` values as SaaS compute units until the engine emits richer real runtime/cost telemetry.
+
 ### Phase B12: Reliability, Security, And Production Runbooks
 
 Goal:
@@ -5145,6 +5313,35 @@ Exit criteria:
 - stuck jobs are visible and recoverable
 - every assistant-generated artifact has approval and provenance
 - every engine run has a replayable manifest
+
+Implementation status:
+
+- `invariance_research` now exposes env-driven production controls:
+  - global platform pause
+  - all-queue pause
+  - analysis queue pause
+  - export queue pause
+  - experiment queue pause
+  - assistant-generation pause
+- Admin Health reports operation-control state, Postgres pool posture, object-storage lifecycle acknowledgement, all three worker heartbeats, queue backlog, overdue processing jobs, and rate-limit event volume.
+- New work intake honors the controls:
+  - new analysis requests are rejected with 503 while the analysis queue is paused
+  - export requests are rejected with 503 while the export queue is paused
+  - experiment queueing is rejected with 503 while the experiment queue is paused
+  - assistant-generated clarification, hypothesis, strategy-spec, and experiment-plan actions are rejected with 503 while assistant generation is paused
+- Research-pipeline mutation endpoints now have explicit rate-limit buckets for assistant work, program writes, and experiment queueing.
+- Admin Maintenance can recover stale processing analysis, export, and research experiment jobs by safely requeueing jobs that still have retry budget.
+- Maintenance cleanup is now provider-aware for Postgres and SQLite instead of relying on SQLite-only cleanup paths.
+- Worker deployment docs now cover:
+  - Supabase-compatible Postgres URL settings
+  - connection-pool limits
+  - kill-switch procedure
+  - rate-limit defaults
+  - R2 lifecycle policy expectations
+  - stuck-job recovery
+  - first-100-user monitoring checklist
+- Assistant-generated artifacts already carry approval/provenance through program events, hypothesis approval records, strategy-spec approval fields, experiment-plan approval fields, and actor user IDs.
+- `bulletproof_bt` replayability remains anchored by B6/B7 artifacts: experiment contract, run config, manifest, verdict packet, and logs are stored under the program experiment artifact path.
 
 ### Phase B13: Beta Protocol For Research Pipeline
 

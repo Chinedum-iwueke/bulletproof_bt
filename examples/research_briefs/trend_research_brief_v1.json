@@ -1,0 +1,23 @@
+{
+  "schema_version": "research_brief_v1",
+  "program_id": "example-trend-program",
+  "title": "Crypto trend continuation after volatility expansion",
+  "thesis": "Large-cap crypto assets may continue intraday trend moves after volatility expansion when pullbacks hold above the session VWAP.",
+  "market_intuition": "When BTC and ETH expand range early in the session and then hold above VWAP, continuation may outperform mean reversion for the next several hours.",
+  "asset_universe": "BTCUSDT, ETHUSDT",
+  "timeframe": "15m",
+  "holding_period": "4-16 bars",
+  "entry_idea": "Enter long after range expansion if price pulls back toward VWAP and closes back above it.",
+  "exit_idea": "Exit on fixed R target, close below VWAP, or end of session.",
+  "risk_assumption": "Fixed fractional risk with a volatility-adjusted stop below VWAP.",
+  "cost_slippage_assumption": "Use explicit exchange taker fees and 3-5 bps slippage stress.",
+  "data_source": "Exchange OHLCV plus tradeable mark/index context where available.",
+  "disproof_condition": "Reject if expectancy disappears after costs or if edge is concentrated in fewer than five outlier trades.",
+  "missing_assumptions": [],
+  "clarification_answers": {
+    "q_session": "Use UTC session boundaries for the first test.",
+    "q_benchmark": "Compare to buy-and-hold and randomized entry with same holding period."
+  },
+  "readiness": "ready_for_hypothesis_draft",
+  "created_at": "2026-06-12T00:00:00.000Z"
+}

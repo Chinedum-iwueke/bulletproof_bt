@@ -23,6 +23,9 @@ dev = [
   "mypy",
 ]
 
+[project.scripts]
+bt = "bt.cli:main"
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 

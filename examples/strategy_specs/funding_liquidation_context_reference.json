@@ -1,0 +1,30 @@
+{
+  "schema_version": "strategy_spec_v1",
+  "strategy_spec_id": "STRAT-REF-FUNDING-LIQ-001",
+  "hypothesis_id": "HYP-REF-FUNDING-LIQ-001",
+  "strategy_family": "funding_liquidation_context",
+  "universe": ["BTCUSDT"],
+  "timeframe": "15m",
+  "required_datasets": ["ohlcv", "funding", "open_interest", "liquidations"],
+  "signals": [
+    { "name": "funding_extreme", "function": "funding_extreme_gate", "fields": ["funding_rate"], "closed_bar_only": true },
+    { "name": "liquidation_impulse", "function": "liquidation_impulse_gate", "fields": ["liquidation_notional"], "closed_bar_only": true },
+    { "name": "stop", "function": "atr_stop", "fields": ["atr", "close"], "multiple_param": "atr_stop_multiple" }
+  ],
+  "parameters": {
+    "funding_pctile": { "min": 70, "max": 98, "default": 90 },
+    "liquidation_impulse_pctile": { "min": 70, "max": 99, "default": 92 },
+    "atr_stop_multiple": { "min": 1.2, "max": 4.0, "default": 2.4 }
+  },
+  "cost_model": { "kind": "bps", "round_trip_bps": 10 },
+  "slippage_model": { "kind": "bps", "round_trip_bps": 6 },
+  "risk_model": { "kind": "fixed_fractional", "risk_per_trade_pct": 0.35, "no_pyramiding": true },
+  "execution_semantics": {
+    "lookahead_allowed": false,
+    "interpolation_allowed": false,
+    "signal_bar_policy": "closed_bar_only",
+    "base_data_frequency_expected": "1m",
+    "exit_monitoring_timeframe": "1m"
+  },
+  "compiler": { "target": "classic_engine_run_config", "safe_mode": "classic_with_optional_compiled_features", "assistant_assumptions": ["Funding and liquidation fields must be timestamped at or before the decision bar."] }
+}

@@ -1,0 +1,28 @@
+{
+  "schema_version": "strategy_spec_v1",
+  "strategy_spec_id": "STRAT-REF-MR-001",
+  "hypothesis_id": "HYP-REF-MR-001",
+  "strategy_family": "mean_reversion",
+  "universe": ["BTCUSDT"],
+  "timeframe": "5m",
+  "required_datasets": ["ohlcv"],
+  "signals": [
+    { "name": "vwap_reversion", "function": "vwap_reversion", "fields": ["close", "vwap"], "closed_bar_only": true },
+    { "name": "stop", "function": "atr_stop", "fields": ["atr", "close"], "multiple_param": "atr_stop_multiple" }
+  ],
+  "parameters": {
+    "z_entry": { "min": 1.0, "max": 3.0, "default": 1.8 },
+    "atr_stop_multiple": { "min": 1.0, "max": 3.5, "default": 2.0 }
+  },
+  "cost_model": { "kind": "bps", "round_trip_bps": 8 },
+  "slippage_model": { "kind": "bps", "round_trip_bps": 4 },
+  "risk_model": { "kind": "fixed_fractional", "risk_per_trade_pct": 0.35, "no_pyramiding": true },
+  "execution_semantics": {
+    "lookahead_allowed": false,
+    "interpolation_allowed": false,
+    "signal_bar_policy": "closed_bar_only",
+    "base_data_frequency_expected": "1m",
+    "exit_monitoring_timeframe": "1m"
+  },
+  "compiler": { "target": "classic_engine_run_config", "safe_mode": "classic_with_optional_compiled_features", "assistant_assumptions": [] }
+}

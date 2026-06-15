@@ -1,0 +1,23 @@
+{
+  "schema_version": "research_brief_v1",
+  "program_id": "example-funding-liquidation-program",
+  "title": "Perp funding and liquidation reversal",
+  "thesis": "Crypto perpetual markets may mean-revert after crowded liquidation events when funding is extended and price stabilizes near mark/index divergence extremes.",
+  "market_intuition": "Liquidation spikes with stretched funding can mark short-term exhaustion if price stops making new lows/highs after forced flow clears.",
+  "asset_universe": "BTCUSDT perpetuals, ETHUSDT perpetuals",
+  "timeframe": "5m",
+  "holding_period": "1-8 hours",
+  "entry_idea": "Enter opposite the liquidation impulse after stabilization and mark/index divergence contraction.",
+  "exit_idea": "Exit at mean reversion target, stop beyond liquidation extreme, or funding window close.",
+  "risk_assumption": "Volatility-adjusted stop with max loss cap per event.",
+  "cost_slippage_assumption": "Include taker fees, spread, and additional slippage during liquidation windows.",
+  "data_source": "OHLCV, mark/index, funding, open interest, and liquidation feeds.",
+  "disproof_condition": "Reject if edge cannot survive delayed entries or if liquidation data is unavailable for most events.",
+  "missing_assumptions": [],
+  "clarification_answers": {
+    "q_event_threshold": "Start with top decile liquidation notional by symbol.",
+    "q_direction": "Test both long and short exhaustion separately."
+  },
+  "readiness": "ready_for_hypothesis_draft",
+  "created_at": "2026-06-12T00:00:00.000Z"
+}

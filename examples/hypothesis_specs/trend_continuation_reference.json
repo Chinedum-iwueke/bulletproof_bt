@@ -1,0 +1,32 @@
+{
+  "schema_version": "hypothesis_spec_v1",
+  "hypothesis_id": "HYP-REF-TREND-001",
+  "title": "Volatility-gated trend continuation",
+  "thesis": "A crypto perpetual that breaks above a closed-bar range during expanding volatility should have positive forward expectancy after explicit trading costs.",
+  "market_mechanism": "Momentum traders and forced hedging can extend moves after confirmed range expansion, but the edge should disappear in low-liquidity or mean-reverting states.",
+  "observable_features": ["close", "high", "low", "volume", "atr", "donchian_high", "volatility_percentile"],
+  "entry_condition_intent": "Enter long only after a closed signal bar confirms a range breakout with volatility above a pre-registered floor.",
+  "exit_condition_intent": "Exit via fixed ATR stop, time stop, or trend failure on closed signal bars.",
+  "invalidation_criteria": [
+    "Net expectancy is not positive after fees and slippage across out-of-sample symbols.",
+    "Performance is dominated by fewer than three rare trades.",
+    "The strategy fails the null benchmark after cost perturbation."
+  ],
+  "required_datasets": ["ohlcv", "benchmark"],
+  "cost_model_assumptions": "Use explicit maker/taker fees plus conservative round-trip slippage before any promotion.",
+  "benchmark_or_null": "Compare against random-entry same-hold-time null and buy-and-hold benchmark.",
+  "expected_failure_modes": ["breakout fakeouts", "volatility crush", "spread expansion", "rare-trade dominance"],
+  "safe_parameter_ranges": {
+    "lookback_bars": { "min": 20, "max": 120, "default": 55 },
+    "atr_stop_multiple": { "min": 1.2, "max": 4.0, "default": 2.2 },
+    "volatility_floor_pctile": { "min": 40, "max": 90, "default": 65 }
+  },
+  "out_of_sample_plan": "Hold out the final third of the panel by time and require stable rank across stable and volatile universes.",
+  "execution_semantics": {
+    "signal_timeframe": "15m",
+    "base_data_frequency_expected": "1m",
+    "signal_bar_policy": "closed_bar_only",
+    "exit_monitoring_timeframe": "1m",
+    "no_pyramiding": true
+  }
+}

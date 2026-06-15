@@ -1,0 +1,50 @@
+{
+  "schema_version": "strategy_spec_v1",
+  "strategy_spec_id": "STRAT-REF-TREND-001",
+  "hypothesis_id": "HYP-REF-TREND-001",
+  "strategy_family": "trend_continuation",
+  "universe": ["BTCUSDT", "ETHUSDT"],
+  "timeframe": "15m",
+  "required_datasets": ["ohlcv", "benchmark"],
+  "signals": [
+    {
+      "name": "range_breakout",
+      "function": "donchian_breakout",
+      "fields": ["close", "high", "low"],
+      "direction": "long",
+      "closed_bar_only": true
+    },
+    {
+      "name": "volatility_gate",
+      "function": "volatility_percentile_gate",
+      "fields": ["atr", "close"],
+      "threshold_param": "volatility_floor_pctile"
+    },
+    {
+      "name": "stop",
+      "function": "atr_stop",
+      "fields": ["atr", "close"],
+      "multiple_param": "atr_stop_multiple"
+    }
+  ],
+  "parameters": {
+    "lookback_bars": { "min": 20, "max": 120, "default": 55 },
+    "atr_stop_multiple": { "min": 1.2, "max": 4.0, "default": 2.2 },
+    "volatility_floor_pctile": { "min": 40, "max": 90, "default": 65 }
+  },
+  "cost_model": { "kind": "bps", "round_trip_bps": 8 },
+  "slippage_model": { "kind": "bps", "round_trip_bps": 4 },
+  "risk_model": { "kind": "fixed_fractional", "risk_per_trade_pct": 0.5, "no_pyramiding": true },
+  "execution_semantics": {
+    "lookahead_allowed": false,
+    "interpolation_allowed": false,
+    "signal_bar_policy": "closed_bar_only",
+    "base_data_frequency_expected": "1m",
+    "exit_monitoring_timeframe": "1m"
+  },
+  "compiler": {
+    "target": "classic_engine_run_config",
+    "safe_mode": "classic_with_optional_compiled_features",
+    "assistant_assumptions": ["Long-only reference template until the user approves short-side rules."]
+  }
+}

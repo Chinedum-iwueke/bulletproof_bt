@@ -1,0 +1,25 @@
+{
+  "schema_version": "strategy_spec_v1",
+  "strategy_spec_id": "STRAT-INVALID-LOOKAHEAD",
+  "hypothesis_id": "HYP-INVALID-LOOKAHEAD",
+  "strategy_family": "trend_continuation",
+  "universe": ["BTCUSDT"],
+  "timeframe": "15m",
+  "required_datasets": ["ohlcv"],
+  "signals": [
+    { "name": "bad_future_signal", "function": "donchian_breakout", "fields": ["close", "high", "low"], "expression": "close.shift(-1) > high" }
+  ],
+  "parameters": {
+    "lookback_bars": { "min": 20, "max": 120, "default": 55 }
+  },
+  "cost_model": { "kind": "bps", "round_trip_bps": 8 },
+  "slippage_model": { "kind": "bps", "round_trip_bps": 4 },
+  "risk_model": { "kind": "fixed_fractional", "risk_per_trade_pct": 0.5 },
+  "execution_semantics": {
+    "lookahead_allowed": false,
+    "interpolation_allowed": false,
+    "signal_bar_policy": "closed_bar_only",
+    "base_data_frequency_expected": "1m"
+  },
+  "compiler": { "target": "classic_engine_run_config", "safe_mode": "classic_with_optional_compiled_features" }
+}

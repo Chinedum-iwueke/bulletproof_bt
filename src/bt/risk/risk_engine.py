@@ -338,7 +338,7 @@ class RiskEngine:
 
     def allows_may_liquidate(self) -> bool:
         risk_cfg = self._config.get("risk", {}) if isinstance(self._config, dict) else {}
-        return bool(risk_cfg.get("may_liquidate", False)) if isinstance(risk_cfg, dict) else False
+        return bool(risk_cfg.get("may_liquidate", True)) if isinstance(risk_cfg, dict) else True
 
     def _margin_adverse_move_tier_multiplier(self) -> float:
         return {1: 1.0, 2: 2.0, 3: 3.0}.get(self.margin_buffer_tier, 1.0)

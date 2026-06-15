@@ -1,0 +1,30 @@
+{
+  "schema_version": "research_brief_v1",
+  "program_id": "example-equity-index-program",
+  "title": "Equity index trend day continuation",
+  "thesis": "US equity index futures may continue on trend days when early breadth, opening drive, and shallow pullbacks align.",
+  "market_intuition": "Opening drive strength with shallow pullbacks may identify days where buying dips outperforms fading extremes.",
+  "asset_universe": "ES, NQ",
+  "timeframe": "5m",
+  "holding_period": "Regular session",
+  "entry_idea": "Enter long on first shallow pullback after opening drive confirmation.",
+  "exit_idea": "Exit on trend failure, trailing stop, or session close.",
+  "risk_assumption": "Fixed R stop below pullback low with daily loss cap.",
+  "cost_slippage_assumption": "Use futures commissions plus one tick slippage per side, stress to two ticks.",
+  "data_source": "Futures OHLCV and optional breadth proxy.",
+  "disproof_condition": "Reject if edge is limited to a handful of high-volatility trend days or fails in holdout years.",
+  "missing_assumptions": [
+    {
+      "assumption_id": "missing_breadth_proxy",
+      "field": "data_source",
+      "label": "Breadth proxy definition",
+      "severity": "important",
+      "why_it_matters": "The thesis names breadth, so the experiment must define whether breadth is sourced, proxied, or excluded."
+    }
+  ],
+  "clarification_answers": {
+    "q_benchmark": "Compare to opening-drive entry without pullback filter."
+  },
+  "readiness": "needs_clarification",
+  "created_at": "2026-06-12T00:00:00.000Z"
+}

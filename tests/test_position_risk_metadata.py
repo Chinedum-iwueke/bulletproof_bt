@@ -147,3 +147,69 @@ def test_entry_context_metadata_survives_until_trade_close() -> None:
     assert trade.metadata["signal_bars_held"] == 48
     assert float(trade.metadata["vwap_t"]) == pytest.approx(101.5)
     assert float(trade.metadata["custom_quality_score"]) == pytest.approx(0.77)
+
+
+def test_exit_metadata_cannot_overwrite_frozen_entry_research_state() -> None:
+    book = PositionBook()
+    book.apply_fill(
+        Fill(
+            order_id="entry",
+            ts=pd.Timestamp("2024-01-01T00:01:00Z"),
+            symbol="AAA",
+            side=Side.BUY,
+            qty=1.0,
+            price=100.0,
+            fee=0.0,
+            slippage=0.0,
+            metadata={
+                "risk_amount": 10.0,
+                "stop_distance": 10.0,
+                "signal_ts": pd.Timestamp("2024-01-01T00:00:00Z"),
+                "identity_ts_signal": "2024-01-01T00:00:00+00:00",
+                "identity_ts_entry_fill": "2024-01-01T00:01:00+00:00",
+                "entry_state_ts": "2024-01-01T00:00:00+00:00",
+                "entry_state_csi_source": "enriched",
+                "entry_state_csi_pctile": 0.82,
+                "entry_state_funding_raw": 0.0003,
+                "entry_decision_setup_class": "trend",
+                "entry_gate_values_json": '{"csi":0.82}',
+            },
+        )
+    )
+
+    _, trade = book.apply_fill(
+        Fill(
+            order_id="exit",
+            ts=pd.Timestamp("2024-01-01T03:01:00Z"),
+            symbol="AAA",
+            side=Side.SELL,
+            qty=1.0,
+            price=103.0,
+            fee=0.0,
+            slippage=0.0,
+            metadata={
+                "signal_ts": pd.Timestamp("2024-01-01T03:00:00Z"),
+                "identity_ts_signal": "2024-01-01T03:00:00+00:00",
+                "identity_ts_entry_fill": "2024-01-01T03:01:00+00:00",
+                "entry_state_ts": "2024-01-01T03:00:00+00:00",
+                "entry_state_csi_source": "ohlcv_proxy",
+                "entry_state_csi_pctile": 0.10,
+                "entry_state_funding_raw": -0.001,
+                "entry_decision_setup_class": "exit",
+                "entry_gate_values_json": '{"csi":0.10}',
+                "exit_reason": "trend_failure",
+            },
+        )
+    )
+
+    assert trade is not None
+    assert trade.metadata["signal_ts"] == pd.Timestamp("2024-01-01T00:00:00Z")
+    assert trade.metadata["identity_ts_signal"] == "2024-01-01T00:00:00+00:00"
+    assert trade.metadata["identity_ts_entry_fill"] == "2024-01-01T00:01:00+00:00"
+    assert trade.metadata["entry_state_ts"] == "2024-01-01T00:00:00+00:00"
+    assert trade.metadata["entry_state_csi_source"] == "enriched"
+    assert trade.metadata["entry_state_csi_pctile"] == pytest.approx(0.82)
+    assert trade.metadata["entry_state_funding_raw"] == pytest.approx(0.0003)
+    assert trade.metadata["entry_decision_setup_class"] == "trend"
+    assert trade.metadata["entry_gate_values_json"] == '{"csi":0.82}'
+    assert trade.metadata["exit_reason"] == "trend_failure"

@@ -1,0 +1,29 @@
+{
+  "schema_version": "strategy_spec_v1",
+  "strategy_spec_id": "STRAT-REF-VOL-001",
+  "hypothesis_id": "HYP-REF-VOL-001",
+  "strategy_family": "volatility_filter",
+  "universe": ["BTCUSDT"],
+  "timeframe": "15m",
+  "required_datasets": ["ohlcv"],
+  "signals": [
+    { "name": "volatility_gate", "function": "volatility_percentile_gate", "fields": ["atr", "close"], "threshold_param": "volatility_floor_pctile" },
+    { "name": "ema_context", "function": "ema_cross", "fields": ["close"], "closed_bar_only": true }
+  ],
+  "parameters": {
+    "volatility_floor_pctile": { "min": 30, "max": 90, "default": 60 },
+    "ema_fast": { "min": 8, "max": 30, "default": 12 },
+    "ema_slow": { "min": 21, "max": 120, "default": 48 }
+  },
+  "cost_model": { "kind": "bps", "round_trip_bps": 8 },
+  "slippage_model": { "kind": "bps", "round_trip_bps": 4 },
+  "risk_model": { "kind": "fixed_fractional", "risk_per_trade_pct": 0.35, "no_pyramiding": true },
+  "execution_semantics": {
+    "lookahead_allowed": false,
+    "interpolation_allowed": false,
+    "signal_bar_policy": "closed_bar_only",
+    "base_data_frequency_expected": "1m",
+    "exit_monitoring_timeframe": "1m"
+  },
+  "compiler": { "target": "classic_engine_run_config", "safe_mode": "classic_with_optional_compiled_features", "assistant_assumptions": [] }
+}

@@ -213,7 +213,7 @@ def test_engine_forced_liquidation_on_negative_free_margin(tmp_path: Path) -> No
     assert int(sanity.get("forced_liquidations", 0)) >= 1
 
 
-def test_engine_strict_mode_prevents_negative_free_margin_forced_liquidation(tmp_path: Path) -> None:
+def test_engine_defaults_to_forced_liquidation_on_negative_free_margin(tmp_path: Path) -> None:
     ts_index = pd.date_range("2024-01-01", periods=2, freq="D", tz="UTC")
     df = pd.DataFrame(
         {
@@ -259,7 +259,7 @@ def test_engine_strict_mode_prevents_negative_free_margin_forced_liquidation(tmp
     engine.run()
 
     fill_rows = [json.loads(line) for line in (tmp_path / "fills.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
-    assert not any(
+    assert any(
         isinstance(row.get("metadata"), dict)
         and row["metadata"].get("forced_liquidation") is True
         and row["metadata"].get("liquidation_reason") == "liquidation:negative_free_margin"

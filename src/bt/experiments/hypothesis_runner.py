@@ -237,6 +237,23 @@ def apply_runtime_data_memory_controls(runtime_override: dict[str, Any], overrid
     universe = _research_panel_universe_from_overrides(override_paths)
     strategy = runtime_override.get("strategy") if isinstance(runtime_override.get("strategy"), dict) else {}
     data = runtime_override.get("data") if isinstance(runtime_override.get("data"), dict) else {}
+    if universe == "volatile" and isinstance(data, dict):
+        prefixes = data.get("extra_column_prefixes")
+        htf_prefix_requested = False
+        if isinstance(prefixes, list):
+            htf_prefix_requested = any(str(prefix).startswith("htf_") for prefix in prefixes)
+        elif isinstance(prefixes, str):
+            htf_prefix_requested = prefixes.startswith("htf_")
+        if str(data.get("htf_context_source", "")).strip().lower() == "precomputed" or htf_prefix_requested:
+            # The materialized volatile feed contains active membership rows,
+            # not per-symbol full-history HTF stamps. Supplying precomputed
+            # HTF context here can silently starve two-clock strategies of
+            # closed HTF bars. Use the classic streaming TimeframeResampler for
+            # volatile unless a family-specific volatile fast path has been
+            # separately validated and explicitly enabled.
+            data.pop("htf_context_source", None)
+            data.pop("extra_column_prefixes", None)
+            data.pop("requires_htf_context", None)
     if (
         universe == "volatile"
         and isinstance(strategy, dict)

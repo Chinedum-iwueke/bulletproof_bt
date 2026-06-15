@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://invarianceresearch.xyz/schemas/hypothesis_spec_v1.schema.json",
+  "title": "Hypothesis Spec V1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "hypothesis_id",
+    "title",
+    "thesis",
+    "market_mechanism",
+    "observable_features",
+    "entry_condition_intent",
+    "exit_condition_intent",
+    "invalidation_criteria",
+    "required_datasets",
+    "cost_model_assumptions",
+    "benchmark_or_null",
+    "expected_failure_modes",
+    "safe_parameter_ranges",
+    "out_of_sample_plan",
+    "execution_semantics"
+  ],
+  "properties": {
+    "schema_version": { "const": "hypothesis_spec_v1" },
+    "hypothesis_id": { "type": "string", "minLength": 3 },
+    "title": { "type": "string", "minLength": 3 },
+    "thesis": { "type": "string", "minLength": 12 },
+    "market_mechanism": { "type": "string", "minLength": 12 },
+    "observable_features": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "entry_condition_intent": { "type": "string", "minLength": 8 },
+    "exit_condition_intent": { "type": "string", "minLength": 8 },
+    "invalidation_criteria": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "required_datasets": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "cost_model_assumptions": { "type": "string", "minLength": 6 },
+    "benchmark_or_null": { "type": "string", "minLength": 3 },
+    "expected_failure_modes": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "safe_parameter_ranges": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["min", "max", "default"],
+        "properties": {
+          "min": { "type": "number" },
+          "max": { "type": "number" },
+          "default": { "type": "number" }
+        }
+      }
+    },
+    "out_of_sample_plan": { "type": "string", "minLength": 8 },
+    "execution_semantics": {
+      "type": "object",
+      "required": ["signal_timeframe", "base_data_frequency_expected", "signal_bar_policy"],
+      "properties": {
+        "signal_timeframe": { "type": "string" },
+        "base_data_frequency_expected": { "type": "string" },
+        "signal_bar_policy": { "type": "string" }
+      }
+    }
+  }
+}

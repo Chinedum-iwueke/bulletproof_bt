@@ -1,0 +1,23 @@
+{
+  "schema_version": "research_brief_v1",
+  "program_id": "example-breakout-program",
+  "title": "FX London breakout continuation",
+  "thesis": "Major FX pairs may continue after a London session breakout when Asian range compression is unusually tight.",
+  "market_intuition": "Compressed Asian sessions can precede directional London breakouts if volatility expands with follow-through instead of immediate rejection.",
+  "asset_universe": "EURUSD, GBPUSD, USDJPY",
+  "timeframe": "15m",
+  "holding_period": "London session",
+  "entry_idea": "Enter in breakout direction after the first 15m close outside the Asian range.",
+  "exit_idea": "Exit at fixed multiple, trailing stop, or London close.",
+  "risk_assumption": "Risk 0.5R-1R per trade with stop on opposite side of the Asian range.",
+  "cost_slippage_assumption": "Use spread by pair and stress with wider London-open spread.",
+  "data_source": "Broker FX OHLCV with session timestamps in UTC.",
+  "disproof_condition": "Reject if profitability vanishes when breakout entries are delayed one bar.",
+  "missing_assumptions": [],
+  "clarification_answers": {
+    "q_range": "Define Asian range as 00:00-06:00 UTC.",
+    "q_filter": "No discretionary news filter in baseline."
+  },
+  "readiness": "ready_for_hypothesis_draft",
+  "created_at": "2026-06-12T00:00:00.000Z"
+}

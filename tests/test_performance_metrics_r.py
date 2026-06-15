@@ -202,3 +202,33 @@ def test_performance_validation_treats_slippage_and_spread_as_embedded_diagnosti
     assert validation["reconciliation"]["gross_minus_cash_costs"] == pytest.approx(-60.0)
     assert validation["reconciliation"]["diagnostic_slippage_total"] == pytest.approx(7.0)
     assert validation["reconciliation"]["diagnostic_spread_total"] == pytest.approx(3.0)
+
+
+def test_performance_validation_marks_negative_free_margin_invalid(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run_margin_breach"
+    run_dir.mkdir()
+
+    pd.DataFrame(
+        {
+            "ts": ["2024-01-01T00:00:00+00:00", "2024-01-01T00:01:00+00:00"],
+            "cash": [100000.0, 100000.0],
+            "equity": [100000.0, 90000.0],
+            "realized_pnl": [0.0, 0.0],
+            "unrealized_pnl": [0.0, -10000.0],
+            "used_margin": [10000.0, 95000.0],
+            "free_margin": [90000.0, -5000.0],
+        }
+    ).to_csv(run_dir / "equity.csv", index=False)
+    pd.DataFrame(columns=["pnl_net", "pnl_price", "fees_paid", "risk_amount", "r_net"]).to_csv(
+        run_dir / "trades.csv", index=False
+    )
+
+    report = compute_performance(run_dir)
+    write_performance_artifacts(report, run_dir)
+
+    perf = json.loads((run_dir / "performance.json").read_text(encoding="utf-8"))
+    validation = json.loads((run_dir / "performance_validation.json").read_text(encoding="utf-8"))
+    assert perf["metrics_valid"] is False
+    assert perf["margin"]["negative_free_margin_bars"] == 1
+    assert perf["margin"]["margin_breach"] is True
+    assert any("negative_free_margin_margin_call_breach" in error for error in validation["errors"])

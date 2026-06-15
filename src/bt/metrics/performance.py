@@ -235,7 +235,7 @@ def _safe_ratio(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
     return ratio
 
 
-def _compute_margin_summary(equity_df: pd.DataFrame) -> dict[str, float]:
+def _compute_margin_summary(equity_df: pd.DataFrame) -> dict[str, float | int | bool]:
     if equity_df.empty or "equity" not in equity_df.columns:
         return {
             "peak_used_margin": 0.0,
@@ -244,6 +244,9 @@ def _compute_margin_summary(equity_df: pd.DataFrame) -> dict[str, float]:
             "avg_utilization_pct": 0.0,
             "min_free_margin": 0.0,
             "min_free_margin_pct": 0.0,
+            "negative_free_margin_bars": 0,
+            "margin_breach": False,
+            "peak_margin_deficit": 0.0,
         }
 
     used_margin = _coerce_numeric(equity_df["used_margin"]) if "used_margin" in equity_df.columns else pd.Series(0.0, index=equity_df.index)
@@ -252,6 +255,9 @@ def _compute_margin_summary(equity_df: pd.DataFrame) -> dict[str, float]:
 
     utilization_pct = _safe_ratio(used_margin, equity)
     free_margin_pct = _safe_ratio(free_margin, equity)
+    negative_free_margin = free_margin < 0.0
+    negative_free_margin_bars = int(negative_free_margin.sum()) if not free_margin.empty else 0
+    peak_margin_deficit = float((-free_margin[negative_free_margin]).max()) if negative_free_margin_bars else 0.0
 
     return {
         "peak_used_margin": float(used_margin.max()) if not used_margin.empty else 0.0,
@@ -260,6 +266,9 @@ def _compute_margin_summary(equity_df: pd.DataFrame) -> dict[str, float]:
         "avg_utilization_pct": float(utilization_pct.mean()) if not utilization_pct.empty else 0.0,
         "min_free_margin": float(free_margin.min()) if not free_margin.empty else 0.0,
         "min_free_margin_pct": float(free_margin_pct.min()) if not free_margin_pct.empty else 0.0,
+        "negative_free_margin_bars": negative_free_margin_bars,
+        "margin_breach": bool(negative_free_margin_bars),
+        "peak_margin_deficit": peak_margin_deficit,
     }
 
 def _max_drawdown_duration(dd: pd.Series) -> int:
@@ -761,6 +770,23 @@ def _validate_performance_metrics(performance_payload: dict[str, Any], trades_df
         errors.append(f"net_pnl_mismatch_with_gross_minus_cash_costs: net_pnl={net_pnl} gross_minus_cash_costs={gross_pnl-cash_costs}")
     if slippage_total or spread_total:
         warnings.append("slippage_and_spread_are_diagnostic_when_execution_prices_embed_costs")
+
+    margin_payload = performance_payload.get("margin")
+    if isinstance(margin_payload, dict):
+        try:
+            negative_free_margin_bars = int(margin_payload.get("negative_free_margin_bars", 0) or 0)
+        except (TypeError, ValueError):
+            negative_free_margin_bars = 0
+        try:
+            min_free_margin = float(margin_payload.get("min_free_margin", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            min_free_margin = 0.0
+        if negative_free_margin_bars > 0 or min_free_margin < -1e-9:
+            errors.append(
+                "negative_free_margin_margin_call_breach: "
+                f"bars={negative_free_margin_bars} min_free_margin={min_free_margin} "
+                f"peak_margin_deficit={margin_payload.get('peak_margin_deficit')}"
+            )
 
     r_net = pd.to_numeric(trades_df.get("r_net", trades_df.get("r_multiple_net", pd.Series(index=trades_df.index))), errors="coerce")
     if "risk_amount" in trades_df.columns:

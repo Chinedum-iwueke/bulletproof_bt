@@ -52,6 +52,9 @@ def test_performance_includes_schema_costs_and_margin(tmp_path: Path) -> None:
         "avg_utilization_pct",
         "min_free_margin",
         "min_free_margin_pct",
+        "negative_free_margin_bars",
+        "margin_breach",
+        "peak_margin_deficit",
     }
     assert set(margin.keys()) == expected_margin_keys
     assert all(isinstance(margin[k], (float, int)) for k in margin)

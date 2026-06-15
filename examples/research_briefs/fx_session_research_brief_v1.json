@@ -1,0 +1,23 @@
+{
+  "schema_version": "research_brief_v1",
+  "program_id": "example-fx-session-program",
+  "title": "FX New York reversal after London trend exhaustion",
+  "thesis": "Some FX majors may reverse during New York after a one-way London trend if price rejects the London extension after US liquidity enters.",
+  "market_intuition": "London continuation that fails during the New York handoff may create a structured reversal when the move is extended and participation shifts.",
+  "asset_universe": "EURUSD, GBPUSD",
+  "timeframe": "15m",
+  "holding_period": "New York morning",
+  "entry_idea": "Enter reversal after New York open if price closes back inside the London extension zone.",
+  "exit_idea": "Exit at London midpoint, fixed target, or New York lunch cutoff.",
+  "risk_assumption": "Stop beyond London extreme with fixed fractional risk.",
+  "cost_slippage_assumption": "Use pair spread and slippage stress around session handoff.",
+  "data_source": "Broker FX OHLCV with explicit session calendar.",
+  "disproof_condition": "Reject if reversal only works in one pair or is erased by one spread-width extra cost.",
+  "missing_assumptions": [],
+  "clarification_answers": {
+    "q_london_window": "Use 07:00-12:00 UTC for London trend measurement.",
+    "q_ny_window": "Use 13:30-16:00 UTC for initial New York reversal entries."
+  },
+  "readiness": "ready_for_hypothesis_draft",
+  "created_at": "2026-06-12T00:00:00.000Z"
+}

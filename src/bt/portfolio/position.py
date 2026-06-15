@@ -12,6 +12,18 @@ from bt.portfolio.constants import QTY_EPSILON
 
 
 class PositionBook:
+    _FROZEN_ENTRY_PREFIXES = (
+        "entry_state_",
+        "entry_gate_",
+        "entry_decision_",
+        "identity_",
+    )
+    _FROZEN_ENTRY_KEYS = {
+        "decision_trace",
+        "entry_reason",
+        "parameter_set_id",
+        "signal_ts",
+    }
     _ENTRY_RISK_KEYS = {
         "risk_amount",
         "stop_distance",
@@ -281,9 +293,21 @@ class PositionBook:
         fill_metadata: dict[str, object],
     ) -> None:
         for key, value in fill_metadata.items():
-            if key in PositionBook._ENTRY_RISK_KEYS and key in trade_metadata:
+            # Close/reduce orders are created from the latest bar and may carry
+            # current state metadata. Trade research fields must describe the
+            # causal entry snapshot frozen when the position opened.
+            if PositionBook._is_frozen_entry_metadata_key(key) and key in trade_metadata:
                 continue
             trade_metadata[key] = value
+
+    @staticmethod
+    def _is_frozen_entry_metadata_key(key: str) -> bool:
+        return (
+            key in PositionBook._ENTRY_RISK_KEYS
+            or key in PositionBook._ENTRY_CONTEXT_KEYS
+            or key in PositionBook._FROZEN_ENTRY_KEYS
+            or key.startswith(PositionBook._FROZEN_ENTRY_PREFIXES)
+        )
 
     @staticmethod
     def _init_path_state(position: Position, ts: pd.Timestamp) -> dict[str, object]:

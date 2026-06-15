@@ -459,6 +459,7 @@ def resolve_config(cfg: dict[str, Any]) -> dict[str, Any]:
 
     risk_cfg = resolved.get("risk", {})
     risk_cfg.setdefault("mode", "equity_pct")
+    risk_cfg.setdefault("may_liquidate", True)
     fx_cfg = _ensure_mapping(risk_cfg.get("fx"), name="risk.fx")
     fx_cfg.setdefault("lot_step", None)
     fx_cfg.setdefault("pip_value_override", None)
@@ -495,6 +496,9 @@ def resolve_config(cfg: dict[str, Any]) -> dict[str, Any]:
 
     risk_cfg["stop_resolution"] = stop_resolution
     risk_cfg["allow_legacy_proxy"] = allow_legacy_proxy
+
+    if not isinstance(risk_cfg.get("may_liquidate"), bool):
+        raise ConfigError("Invalid risk.may_liquidate: expected boolean")
 
     try:
         margin_buffer_tier = int(risk_cfg.get("margin_buffer_tier"))

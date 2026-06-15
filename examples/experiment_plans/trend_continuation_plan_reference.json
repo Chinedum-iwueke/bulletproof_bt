@@ -1,0 +1,34 @@
+{
+  "schema_version": "experiment_plan_v1",
+  "plan_id": "PLAN-STRAT-REF-TREND-001",
+  "strategy_spec_id": "STRAT-REF-TREND-001",
+  "hypothesis_id": "HYP-REF-TREND-001",
+  "plan_title": "Falsification plan for STRAT-REF-TREND-001",
+  "status": "draft",
+  "items": [
+    {
+      "item_id": "baseline",
+      "experiment_type": "baseline",
+      "title": "Baseline approved strategy spec",
+      "priority": 100,
+      "enabled": true,
+      "required_datasets": ["ohlcv", "benchmark"],
+      "runtime_budget": { "max_minutes": 30, "max_variants": 1 },
+      "config_patch": {},
+      "falsification_question": "Does the approved strategy spec survive its declared base assumptions?"
+    },
+    {
+      "item_id": "cost_sensitivity_2x",
+      "experiment_type": "cost_sensitivity",
+      "title": "Cost sensitivity 2x",
+      "priority": 90,
+      "enabled": true,
+      "required_datasets": ["ohlcv", "benchmark"],
+      "runtime_budget": { "max_minutes": 30, "max_variants": 1 },
+      "config_patch": { "cost_model": { "kind": "bps", "round_trip_bps": 16 } },
+      "falsification_question": "Does the edge survive doubled explicit trading cost?"
+    }
+  ],
+  "limits": { "max_concurrent": 1, "max_queued_items": 2, "estimated_compute_units": 2 },
+  "approval_required": true
+}

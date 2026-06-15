@@ -1,0 +1,23 @@
+{
+  "schema_version": "research_brief_v1",
+  "program_id": "example-mean-reversion-program",
+  "title": "Index mean reversion after opening range extension",
+  "thesis": "Equity index futures may mean-revert after an opening range extension when volume fades and price fails to hold beyond the range.",
+  "market_intuition": "Failed opening range breakouts may create short-lived reversal opportunities when participation fades after the first hour.",
+  "asset_universe": "NQ, ES",
+  "timeframe": "5m",
+  "holding_period": "Intraday only",
+  "entry_idea": "Enter against the failed extension after a close back inside the opening range.",
+  "exit_idea": "Exit at midpoint, opposite range boundary, fixed stop, or end of day.",
+  "risk_assumption": "Stop beyond the failed extension high/low with fixed dollar risk.",
+  "cost_slippage_assumption": "Include futures commissions and at least one tick slippage per side.",
+  "data_source": "Futures OHLCV with regular session labels.",
+  "disproof_condition": "Reject if reversals only work on news days or fail after one tick extra slippage.",
+  "missing_assumptions": [],
+  "clarification_answers": {
+    "q_news": "Exclude scheduled FOMC and CPI releases in the first experiment.",
+    "q_session": "Use US regular trading hours."
+  },
+  "readiness": "ready_for_hypothesis_draft",
+  "created_at": "2026-06-12T00:00:00.000Z"
+}

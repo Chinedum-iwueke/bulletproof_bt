@@ -22,6 +22,7 @@ def _full_config() -> dict:
             "max_leverage": 2.0,
             "stop_resolution": "safe",
             "allow_legacy_proxy": False,
+            "may_liquidate": True,
             "margin_buffer_tier": 1,
             "slippage_k_proxy": 0.0,
             "min_stop_distance_pct": 0.001,

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://invarianceresearch.xyz/schemas/experiment_plan_v1.schema.json",
+  "title": "Experiment Plan V1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "plan_id", "strategy_spec_id", "hypothesis_id", "items", "limits", "approval_required"],
+  "properties": {
+    "schema_version": { "const": "experiment_plan_v1" },
+    "plan_id": { "type": "string", "minLength": 3 },
+    "strategy_spec_id": { "type": "string", "minLength": 3 },
+    "hypothesis_id": { "type": "string", "minLength": 3 },
+    "plan_title": { "type": "string" },
+    "status": { "enum": ["draft", "approved", "queued", "retired"] },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["item_id", "experiment_type", "title", "priority", "enabled", "required_datasets", "runtime_budget", "config_patch", "falsification_question"],
+        "properties": {
+          "item_id": { "type": "string" },
+          "experiment_type": {
+            "enum": ["baseline", "cost_sensitivity", "slippage_sensitivity", "parameter_grid", "holdout_split", "benchmark_null", "regime_state_split", "alternative_exit"]
+          },
+          "title": { "type": "string" },
+          "priority": { "type": "integer" },
+          "enabled": { "type": "boolean" },
+          "required_datasets": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+          "runtime_budget": {
+            "type": "object",
+            "required": ["max_minutes", "max_variants"],
+            "properties": {
+              "max_minutes": { "type": "integer", "minimum": 1 },
+              "max_variants": { "type": "integer", "minimum": 1 }
+            }
+          },
+          "config_patch": { "type": "object" },
+          "falsification_question": { "type": "string" }
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "required": ["max_concurrent", "max_queued_items", "estimated_compute_units"],
+      "properties": {
+        "max_concurrent": { "type": "integer", "minimum": 1 },
+        "max_queued_items": { "type": "integer", "minimum": 1 },
+        "estimated_compute_units": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "approval_required": { "type": "boolean" }
+  }
+}
