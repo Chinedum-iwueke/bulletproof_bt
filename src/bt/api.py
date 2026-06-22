@@ -270,6 +270,11 @@ def _build_engine(
             run_dir / "trades.csv",
             run_id=run_id,
             hypothesis_id=resolved_hypothesis_id,
+            parameter_set_id=(
+                str(identity_cfg["parameter_set_id"])
+                if identity_cfg.get("parameter_set_id") is not None
+                else None
+            ),
             tier=resolved_tier,
             flush_every=int(outputs_cfg.get("trade_flush_every", config.get("trade_flush_every", 100))),
         ),

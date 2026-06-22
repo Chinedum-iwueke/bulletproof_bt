@@ -82,3 +82,30 @@ def test_dataset_extraction_preserves_known_enrichment_prefixes(tmp_path: Path) 
     assert trades["identity_trade_id"].iloc[0] == trades["trade_id"].iloc[0]
     assert trades["identity_parameter_set_id"].iloc[0] == "params-abc"
     assert pd.Timestamp(trades["identity_ts_signal"].iloc[0]) == pd.Timestamp("2024-12-31T23:59:00Z")
+
+
+def test_extraction_reconciles_identical_duplicate_truth_columns_and_derives_cost_r(tmp_path: Path) -> None:
+    exp = tmp_path / "exp"
+    run = exp / "runs" / "run_1"
+    run.mkdir(parents=True)
+    (exp / "manifests").mkdir()
+    pd.DataFrame([{"row_id": "run_1", "config_hash": "params-abc"}]).to_csv(
+        exp / "manifests" / "grid.csv", index=False
+    )
+    (run / "config_used.yaml").write_text("strategy:\n  name: fixture\n", encoding="utf-8")
+    (run / "performance.json").write_text(json.dumps({"net_pnl": 8.0, "trade_count": 1}), encoding="utf-8")
+    (run / "run_status.json").write_text(json.dumps({"status": "PASS"}), encoding="utf-8")
+    (run / "trades.csv").write_text(
+        "entry_ts,signal_ts,exit_ts,symbol,side,entry_qty,entry_price,exit_price,pnl_price,pnl_net,fees_paid,slippage,r_multiple_net,risk_amount,risk_amount,intrabar_mode\n"
+        "2025-01-01T00:00:00Z,2024-12-31T23:59:00Z,2025-01-01T00:10:00Z,BTCUSDT,BUY,1,100,110,10,8,2,1,0.08,100,100,worst_case\n",
+        encoding="utf-8",
+    )
+
+    extract_experiment_dataset(experiment_root=exp, overwrite=True)
+    trades = pd.read_parquet(exp / "research_data" / "trades_dataset.parquet")
+
+    assert "risk_amount.1" not in trades.columns
+    assert trades["risk_amount"].iloc[0] == 100.0
+    assert trades["counterfactual_fee_drag_r"].iloc[0] == 0.02
+    assert trades["counterfactual_slippage_drag_r"].iloc[0] == 0.01
+    assert trades["execution_intrabar_assumption"].iloc[0] == "worst_case"

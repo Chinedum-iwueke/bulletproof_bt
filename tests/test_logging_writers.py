@@ -229,6 +229,51 @@ def test_trades_csv_writer_uses_contract_identity_and_tier_defaults(tmp_path: Pa
     assert row["identity_tier"] == "Tier2"
 
 
+def test_trades_writer_emits_unique_identity_and_single_risk_truth_column(tmp_path: Path) -> None:
+    path = tmp_path / "trades.csv"
+    writer = TradesCsvWriter(
+        path,
+        run_id="run_1",
+        hypothesis_id="L1-H1C",
+        parameter_set_id="params-abc",
+        tier="Tier2",
+    )
+    for minute in range(2):
+        writer.write_trade(
+            Trade(
+                symbol="BTCUSDT",
+                side=Side.BUY,
+                entry_ts=pd.Timestamp("2024-01-01T00:00:00Z") + pd.Timedelta(minutes=minute),
+                exit_ts=pd.Timestamp("2024-01-01T01:00:00Z") + pd.Timedelta(minutes=minute),
+                entry_price=100.0,
+                exit_price=101.0,
+                qty=1.0,
+                pnl=1.0,
+                fees=0.1,
+                slippage=0.05,
+                mae_price=99.0,
+                mfe_price=102.0,
+                metadata={
+                    "risk_amount": 2.0,
+                    "entry_stop_distance": 2.0,
+                    "intrabar_mode": "worst_case",
+                },
+            )
+        )
+    writer.close()
+
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        rows = list(reader)
+        assert reader.fieldnames is not None
+        assert reader.fieldnames.count("risk_amount") == 1
+    assert [row["identity_trade_id"] for row in rows] == ["run_1_t00001", "run_1_t00002"]
+    assert {row["identity_parameter_set_id"] for row in rows} == {"params-abc"}
+    assert {row["execution_intrabar_assumption"] for row in rows} == {"worst_case"}
+    assert {float(row["counterfactual_fee_drag_r"]) for row in rows} == {0.05}
+    assert {float(row["counterfactual_slippage_drag_r"]) for row in rows} == {0.025}
+
+
 def test_trades_csv_writer_derives_exit_reason_for_close_only_signal(tmp_path: Path) -> None:
     path = tmp_path / "trades.csv"
     writer = TradesCsvWriter(path)

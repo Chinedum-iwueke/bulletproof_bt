@@ -32,8 +32,17 @@ def enrich_trade_row(row: dict[str, Any]) -> dict[str, Any]:
     cost_drag = (r_gross - r_net) if (r_gross is not None and r_net is not None) else None
     out["cost_drag_r"] = cost_drag
     out["counterfactual_cost_drag_r"] = cost_drag
-    out["counterfactual_fee_drag_r"] = _f(out.get("fee_drag_r"))
-    out["counterfactual_slippage_drag_r"] = _f(out.get("slippage_drag_r"))
+    risk_amount = _f(out.get("risk_amount"))
+    fee_drag = _f(out.get("fee_drag_r"))
+    if fee_drag is None and risk_amount not in (None, 0.0):
+        fees_paid = _f(out.get("fees_paid", out.get("execution_fees_paid")))
+        fee_drag = fees_paid / risk_amount if fees_paid is not None else None
+    slippage_drag = _f(out.get("slippage_drag_r"))
+    if slippage_drag is None and risk_amount not in (None, 0.0):
+        slippage_paid = _f(out.get("slippage", out.get("execution_slippage_paid")))
+        slippage_drag = slippage_paid / risk_amount if slippage_paid is not None else None
+    out["counterfactual_fee_drag_r"] = fee_drag
+    out["counterfactual_slippage_drag_r"] = slippage_drag
     out["counterfactual_spread_drag_r"] = _f(out.get("spread_drag_r"))
 
     out["label_reached_3r"] = bool(mfe_r is not None and mfe_r >= 3.0)

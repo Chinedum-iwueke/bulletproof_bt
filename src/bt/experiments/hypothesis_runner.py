@@ -171,6 +171,7 @@ def build_runtime_override(contract: HypothesisContract, spec: dict[str, Any], t
         "identity": {
             "hypothesis_id": str(spec["hypothesis_id"]),
             "grid_id": str(spec["grid_id"]),
+            "parameter_set_id": str(spec["config_hash"]),
             "tier": tier,
             "strategy_id": strategy_name,
         },

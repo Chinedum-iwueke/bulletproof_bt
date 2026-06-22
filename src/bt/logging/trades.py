@@ -299,7 +299,6 @@ class TradesCsvWriter:
         "execution_fees_paid",
         "execution_partial_fill_flag",
         "execution_intrabar_assumption",
-        "risk_amount",
         "risk_stop_distance",
         "risk_qty",
         "risk_initial_stop_r",
@@ -349,6 +348,7 @@ class TradesCsvWriter:
         *,
         run_id: str | None = None,
         hypothesis_id: str | None = None,
+        parameter_set_id: str | None = None,
         tier: str | None = None,
         flush_every: int = 100,
     ):
@@ -356,11 +356,16 @@ class TradesCsvWriter:
         self._path = path
         self._run_id = run_id
         self._hypothesis_id = hypothesis_id
+        self._parameter_set_id = parameter_set_id
         self._tier = tier
         self._flush_every = max(int(flush_every), 1)
         self._pending_rows = 0
         self._columns = list(type(self)._columns)
         file_exists = path.exists()
+        self._trade_sequence = 0
+        if file_exists and path.stat().st_size:
+            with path.open("r", encoding="utf-8", newline="") as existing:
+                self._trade_sequence = max(sum(1 for _ in existing) - 1, 0)
         self._file = path.open("a", encoding="utf-8", newline="")
         self._writer = csv.writer(self._file)
         if not file_exists or path.stat().st_size == 0:
@@ -451,6 +456,7 @@ class TradesCsvWriter:
 
     def write_trade(self, trade: Trade) -> None:
         """Append one trade row."""
+        self._trade_sequence += 1
         metadata = trade.metadata if isinstance(trade.metadata, dict) else {}
         risk_amount = self._coerce_float(metadata.get("risk_amount"))
         stop_distance = self._coerce_float(metadata.get("stop_distance"))
@@ -499,10 +505,11 @@ class TradesCsvWriter:
 
         computed_values: dict[str, Any] = {
             "identity_run_id": self._run_id,
-            "identity_trade_id": metadata.get("trade_id"),
+            "identity_trade_id": metadata.get("trade_id")
+            or f"{self._run_id or 'run'}_t{self._trade_sequence:05d}",
             "identity_hypothesis_id": self._hypothesis_id,
             "identity_strategy_id": metadata.get("strategy_id", metadata.get("strategy")),
-            "identity_parameter_set_id": metadata.get("parameter_set_id"),
+            "identity_parameter_set_id": metadata.get("parameter_set_id", self._parameter_set_id),
             "identity_symbol": trade.symbol,
             "identity_dataset_id": metadata.get("dataset_id"),
             "identity_tier": metadata.get("tier", self._tier),
@@ -575,7 +582,9 @@ class TradesCsvWriter:
             "execution_slippage_paid": trade.slippage,
             "execution_fees_paid": trade.fees,
             "execution_partial_fill_flag": metadata.get("partial_fill_flag"),
-            "execution_intrabar_assumption": metadata.get("intrabar_assumption"),
+            "execution_intrabar_assumption": metadata.get(
+                "intrabar_assumption", metadata.get("intrabar_mode")
+            ),
             "risk_stop_distance": entry_stop_distance,
             "risk_qty": entry_qty,
             "risk_initial_stop_r": 1.0 if entry_stop_distance else None,

@@ -29,6 +29,10 @@ Approach B is now the product center:
 
 > A continuous research pipeline that turns raw trading intuition into testable hypotheses, queues experiments, runs them through `bulletproof_bt`, interprets results, remembers the lineage, and recommends the next falsification step.
 
+The June 2026 product boundary is now crypto-first and extends the research pipeline through governed execution:
+
+> Invariance Research Desk is a crypto research companion from intuition to backtest to Bybit demo, bounded live deployment, portfolio monitoring, and memory-backed next decisions. Binance execution follows only after connector parity; current Binance support is research data, not order execution.
+
 The product should still grow from the existing app, not around it. The difference is that the app should now be reorganized around Research Programs, Hypotheses, Experiment Queues, Runs, Verdicts, and Research Memory instead of only uploaded analyses.
 
 ## June 2026 Demand Learning: Approach A Is Infrastructure, Not The Company
@@ -6022,3 +6026,517 @@ Eventually:
 > Become the claim-first strategy research OS.
 
 The sequence matters. The existing app is not a throwaway prototype. It is the right SaaS shell. The job now is to productize the process inside `bulletproof_bt`: disciplined hypothesis formation, safe strategy spec generation, continuous experiment execution, hostile interpretation, and persistent research memory.
+
+## June 2026 Product Evolution: Crypto Research Companion
+
+This section is the authoritative product-direction addendum. Where earlier sections conflict on market scope, homepage structure, product naming, exchange support, or the role of Approach A, this section supersedes them.
+
+### Product Decision
+
+Approach B should evolve into a crypto-only research companion that owns the full decision loop:
+
+> Start with a market intuition. Turn it into an explicit strategy. Backtest it. Challenge it. Prove it in a demo account. Promote it cautiously to live trading. Learn from every decision and trade.
+
+The product is **Invariance Research Desk**. It is not a consultation funnel, a generic backtest uploader, or a collection of loosely related labs. The Strategy Robustness Lab remains useful as an evidence-import and hostile-audit capability inside Research Desk, but it should no longer define the primary navigation or homepage.
+
+Crypto is the initial market boundary. This is strategically useful rather than limiting:
+
+- market data, funding, open interest, mark/index prices, liquidations, and 24/7 execution can share one domain model;
+- Bybit and Binance cover enough serious retail and independent-quant demand to validate the full research-to-deployment loop;
+- exchange behavior, symbol metadata, fees, leverage, margin, liquidation, and API failure modes can be modeled deeply instead of spread thinly across asset classes;
+- a crypto-only memory can accumulate comparable state features faster than a cross-asset memory with weak normalization.
+
+Do not market this as an AI that finds alpha or guarantees winning trades. The honest promise is:
+
+> A disciplined crypto research and deployment workspace that helps you turn ideas into governed experiments, move only qualified strategies into demo and live execution, and retain what every run and trade taught you.
+
+### Office-Hours Demand Reality
+
+The strongest demand thesis is not “traders need another backtester.” Serious crypto researchers already combine notebooks, exchange data scripts, TradingView, exchange testnets, spreadsheets, bots, and private notes. The expensive failure is that the reasoning chain breaks between those tools:
+
+- intuition is separated from the final strategy code;
+- backtest assumptions are separated from demo fills;
+- demo behavior is separated from live incidents;
+- winning and losing trades are separated from the market state that produced them;
+- lessons remain in a researcher's head instead of changing the next experiment or deployment policy.
+
+The product should replace that broken chain with one durable object:
+
+```text
+Research Program
+  -> Research Brief
+  -> Hypothesis Spec
+  -> Strategy Spec
+  -> Experiment Plan
+  -> Backtest Runs
+  -> Qualification Decision
+  -> Demo Deployment
+  -> Live Canary
+  -> Live Deployment
+  -> Unified Trade Memory
+  -> Next Experiment
+```
+
+The narrowest credible wedge inside this ambition is:
+
+> English intuition to governed crypto backtest, with an auditable result and a one-click path into Bybit demo after qualification.
+
+That is small enough to explain and large enough to produce a real behavioral loop. Live execution, Binance parity, portfolio command, and memory-assisted trade policy expand from that proven path.
+
+### Current Repo Reality And Connector Audit
+
+The existing repos support meaningful parts of this direction, but they do not yet support the complete product claim.
+
+#### `bulletproof_bt` already has
+
+- deterministic backtest and experiment execution contracts;
+- hypothesis, strategy-spec, experiment-plan, verdict-card, and research-memory foundations;
+- crypto research data adapters for Binance and Bybit;
+- Binance and Bybit public market-data websocket collectors;
+- a Bybit broker adapter with REST order create/amend/cancel, private order/execution/position/wallet streams, instrument metadata, reconciliation, durable execution state, health reporting, demo mode, and live canary controls;
+- Bybit startup reconciliation, mutation gating, symbol/notional/quantity/open-position/open-order limits, freeze controls, and demo/live runbooks.
+
+#### Important gaps and corrections
+
+1. **Binance execution is not implemented.** Binance currently exists as a research-data source and public websocket source. There is no production Binance broker adapter with authenticated order submission, private user streams, fill/order/position reconciliation, demo/testnet contract, or live mutation gate. Public copy must not claim Binance deployment until this reaches Bybit parity.
+2. **Bybit execution is engine-local, not a multi-tenant SaaS capability.** The CLI/runtime exists, but the web product does not yet provision connector credentials, create deployments, schedule persistent execution sessions, or expose their state safely.
+3. **Bybit live safety is first-pass, not institutional finality.** The engine explicitly does not claim exactly-once behavior across every failure mode. External alerting is absent, global rate-limit coordination is basic, and reduce-only behavior during freezes needs a dedicated path.
+4. **The current execution runtime is not yet the product's always-on real-time portfolio plane.** It writes operational artifacts and state, but `invariance_research` does not project a tenant-safe live portfolio, order, fill, incident, or risk stream into the dashboard.
+5. **Research memory is not yet a canonical backtest-to-demo-to-live trade ledger.** Existing memory and experiment cards are strong foundations, but stage-normalized trade identity, market-state snapshots, deployment lineage, and closed-loop outcome labeling are still required.
+6. **There is no safe memory-based pre-trade policy engine.** Historical similarity and prior outcomes must be converted into calibrated evidence with uncertainty, not a naive win-rate lookup.
+
+### Product State Machine
+
+Every strategy should move through an explicit state machine. Promotion is deliberate; rollback is always available.
+
+```text
+intuition
+  -> clarifying
+  -> brief_accepted
+  -> hypothesis_draft
+  -> hypothesis_approved
+  -> strategy_spec_draft
+  -> strategy_spec_approved
+  -> backtest_queued
+  -> backtest_running
+  -> backtest_interpreted
+  -> qualification_blocked | qualified_for_demo
+  -> demo_pending_credentials
+  -> demo_active
+  -> demo_frozen | demo_failed | demo_qualified
+  -> live_canary_pending_approval
+  -> live_canary_active
+  -> live_frozen | live_canary_failed | live_qualified
+  -> live_active
+  -> live_paused | live_retired
+```
+
+No state transition should happen only because an assistant generated text. Required promotions must record:
+
+- actor and timestamp;
+- source strategy-spec and code/data hashes;
+- experiment/report snapshot used for the decision;
+- qualification rules and observed values;
+- unresolved limitations;
+- exchange, environment, account reference, symbols, and risk profile;
+- rollback/freeze policy;
+- user approval where capital can be affected.
+
+### Qualification Contract: Backtest To Demo To Live
+
+The product should not present deployment as the next decorative button after a favorable chart.
+
+#### Backtest to demo
+
+Minimum qualification should require:
+
+- reproducible strategy spec and data snapshot;
+- no blocking experiment-contract errors;
+- explicit fees, slippage, spread, latency/bar-timing, leverage, and liquidation assumptions;
+- minimum sample and coverage thresholds appropriate to strategy frequency;
+- holdout or walk-forward evidence where the strategy contract supports it;
+- cost and slippage survival;
+- risk and ruin limits below user-approved thresholds;
+- declared supported symbols and exchange product type;
+- no unresolved critical verdict cards;
+- user approval of the exact strategy version and demo risk profile.
+
+Demo may proceed with evidence limitations if they are explicit. The purpose of demo is to resolve execution and operational uncertainty.
+
+#### Demo to live canary
+
+Minimum qualification should require:
+
+- minimum demo duration and minimum closed-trade count;
+- reconciliation health with no unresolved material position/order/fill divergence;
+- observed fees, spread, slippage, rejects, latency, and partial fills compared with backtest assumptions;
+- no unresolved critical incidents;
+- strategy behavior within declared drift tolerances;
+- live canary symbol allowlist, notional cap, quantity cap, open-order cap, position cap, and daily/session loss cap;
+- fresh exchange credential and permission check;
+- explicit user approval and a tested kill switch.
+
+#### Live canary to live active
+
+Promotion should require a second decision snapshot. Live active must remain bounded by the approved policy and automatically fall back to frozen/read-only when connector health, reconciliation, risk, or memory evidence becomes unsafe.
+
+### Unified Research And Trade Memory
+
+Research memory should be the connective tissue across research and execution, but it must preserve causality and uncertainty.
+
+#### Canonical objects
+
+- `ResearchProgram`
+- `HypothesisVersion`
+- `StrategySpecVersion`
+- `ExperimentRun`
+- `DeploymentQualification`
+- `Deployment`
+- `SignalDecision`
+- `OrderIntent`
+- `BrokerOrder`
+- `Fill`
+- `PositionSnapshot`
+- `PortfolioSnapshot`
+- `TradeEpisode`
+- `MarketStateSnapshot`
+- `Incident`
+- `MemoryAssessment`
+- `PromotionDecision`
+
+Every trade episode, whether simulated, demo, or live, should carry:
+
+- tenant, program, hypothesis, strategy-spec, experiment/deployment, and connector lineage;
+- stage: `backtest`, `demo`, `live_canary`, or `live`;
+- exchange, account reference, market type, symbol, side, timestamps, size, leverage, and risk budget;
+- signal features known at decision time;
+- market-state features known at decision time, never future-enriched values;
+- expected and realized fees, spread, slippage, latency, funding, and PnL;
+- MAE/MFE and path information when observable;
+- rejection, cancellation, partial-fill, liquidation, or manual-intervention outcomes;
+- data-quality and feature-availability flags;
+- immutable source-event references and schema version.
+
+#### Memory assessment, not “percentage chance of winning”
+
+Do **not** let memory approve trades using a raw historical win percentage. That would create false confidence from selection bias, regime drift, sparse neighbors, strategy leakage, and non-independent observations.
+
+The safer product is a **Memory Assessment** emitted before an order intent can pass policy:
+
+- comparable-trade support count;
+- feature-distance / state-similarity score;
+- strategy-specific and cross-strategy evidence shown separately;
+- recency weighting and detected drift;
+- expected return and downside distribution after costs;
+- uncertainty interval and calibration history;
+- loss-cluster and portfolio-correlation warnings;
+- evidence quality and missing state features;
+- assessment: `supportive`, `neutral`, `caution`, `block`, or `insufficient_evidence`;
+- reason codes and the historical episodes used.
+
+The assistant may explain this assessment. It must not sit in the deterministic order hot path. The order policy should combine:
+
+```text
+valid strategy signal
++ approved deployment version
++ connector/reconciliation health
++ hard portfolio and account risk checks
++ memory policy threshold
++ current data freshness
+= submit or reject order intent
+```
+
+Memory may automatically **block** under an approved deterministic policy. It should not automatically expand risk or override strategy/risk controls. Users can approve the policy, not improvise around it trade by trade.
+
+### Real-Time Portfolio Command Surface
+
+Once demo execution exists, Research Desk should gain a real-time operational surface. It should show the decision state of the system, not imitate an exchange terminal.
+
+#### Portfolio overview
+
+- total equity, available balance, margin used, realized/unrealized PnL;
+- exposure by symbol, direction, strategy, and exchange;
+- leverage, liquidation distance, drawdown, concentration, and correlation clusters;
+- active deployments and their health;
+- data freshness and connector status;
+- current risk budget consumed versus approved.
+
+#### Active trades
+
+- signal time and reason;
+- memory assessment at decision time;
+- expected versus observed entry, fees, spread, and slippage;
+- stop, target, invalidation, liquidation, and time-exit levels;
+- live MAE/MFE and strategy-state drift;
+- order/fill lifecycle with partial fills and rejects;
+- manual action audit trail.
+
+#### Deployment operations
+
+- start, pause, freeze, resume, and retire;
+- demo/live environment clearly separated in language and color;
+- read-only status when mutation is blocked;
+- kill switch always visible during active deployment;
+- incident timeline and reconciliation differences;
+- current strategy/data/code/config hashes;
+- promotion and rollback history.
+
+Real-time updates should use a durable event stream from dedicated execution workers. Vercel request handlers must not own persistent exchange connections or trading loops.
+
+### Exchange Connector And Credential Model
+
+Users should connect exchanges from `Settings -> Exchanges`.
+
+Required controls:
+
+- separate demo and live connectors;
+- API key validation before storage or activation;
+- require trading permission and prohibit withdrawal permission;
+- encrypt credentials using a managed KMS or secret vault, never plaintext application tables or Vercel environment variables;
+- store only an opaque credential reference in product records;
+- tenant-scoped access with audited decrypt/use events;
+- rotation, revocation, expiry, and last-used metadata;
+- IP allowlisting guidance where the exchange supports it;
+- exchange-specific permission and account-mode checks;
+- connector doctor showing REST, public stream, private stream, time sync, instrument metadata, rate limits, balance, and reconciliation readiness;
+- no secret values in logs, reports, memory, support packets, or browser responses.
+
+### Exchange Rollout Order
+
+1. **Bybit demo productization.** Wrap the existing engine adapter in a tenant-safe persistent execution worker and expose connector onboarding, deployment controls, events, and portfolio projections.
+2. **Bybit live canary hardening.** Close reduce-only, alerting, rate-limit coordination, restart/recovery, incident response, and reconciliation gaps before inviting real capital.
+3. **Binance demo/testnet adapter parity.** Implement authenticated REST, private user streams, order/fill/position/balance mapping, instrument filters, time sync, reconciliation, idempotent client order IDs, and demo/testnet doctor.
+4. **Binance live canary parity.** Do not expose live activation until the same safety and recovery contract passes for Binance.
+5. **Multi-exchange portfolio policy.** Aggregate exposures only after single-exchange identity, fills, funding, margin, and reconciliation are stable.
+
+Public copy should say **Bybit demo first** until step 1 is product-ready. It may say Binance is planned. It must not say “deploy to Binance and Bybit” based only on data collectors.
+
+### Cross-Repo Ownership
+
+#### `bulletproof_bt`
+
+- canonical crypto strategy, experiment, execution, and memory event schemas;
+- Bybit adapter hardening and Binance broker adapter implementation;
+- exchange-specific instrument/account/order/fill/position normalization;
+- deterministic signal, risk, order-policy, reconciliation, checkpoint, and recovery engine;
+- demo/live execution runtime and connector doctor contracts;
+- state-feature snapshots without lookahead;
+- memory-assessment feature extraction and offline calibration artifacts;
+- execution artifacts, incidents, verdict cards, and promotion evidence.
+
+#### `invariance_research`
+
+- app-first Research Desk interface;
+- Research Program workflow and approvals;
+- exchange connector onboarding and opaque secret references;
+- deployment, portfolio, trade, incident, and memory projections in Postgres;
+- persistent `execution-worker` orchestration around `bulletproof_bt`;
+- real-time event delivery to authenticated dashboards;
+- tenant isolation, plans, usage, billing, admin operations, alerts, and audit log;
+- qualification UI, deployment state machine, human approvals, reports, and notifications.
+
+#### Cross-repo rollout contract
+
+- version every strategy, experiment, deployment, event, and memory schema;
+- `bulletproof_bt` emits immutable engine/execution events; `invariance_research` consumes them without reinterpreting trading semantics;
+- use an inbox/idempotency key for every ingested event;
+- use an outbox or durable queue for deployment commands;
+- commands and events include tenant, program, deployment, strategy version, connector, correlation, causation, and idempotency IDs;
+- contract tests run in both repos against shared fixtures;
+- backward compatibility is required for at least one deployed schema version;
+- a web deploy cannot silently require an unavailable worker/engine contract.
+
+### App-First Website And Information Architecture
+
+The current public website was designed as a consultation funnel. That is no longer the right first experience. The root page should become the product's fastest useful action.
+
+#### Root experience
+
+`/` should feel closer to ChatGPT than a financial-services marketing homepage:
+
+- centered prompt: **“What crypto strategy are you trying to test?”**
+- compact examples below it, such as “Test a funding reversal idea” or “Audit my breakout rules”;
+- optional attachment for existing trades, config, or research evidence;
+- a plain mode choice only when needed: `Start from an idea` or `Import existing evidence`;
+- signed-in users see recent Research Programs and a resume action below the composer;
+- signed-out users can type first, then authenticate before the program is created so intent is not lost;
+- no hero manifesto, staged lab snapshot, evidence docket, or long product explanation before the first action.
+
+The initial response should create a Research Program draft and ask the smallest set of clarification questions needed to make the idea testable. The conversational surface is an intake and command layer over structured objects, not an unbounded chatbot.
+
+#### Primary authenticated navigation
+
+Keep the top-level navigation small:
+
+1. **New Research** - prompt/composer and imports.
+2. **Programs** - hypotheses, specs, experiments, runs, decisions, and reports.
+3. **Deployments** - demo/live strategy instances and qualification state.
+4. **Portfolio** - real-time positions, orders, risk, and incidents.
+5. **Memory** - findings, comparable states, trade episodes, drift, and recommendations.
+
+Secondary destinations belong under the account/help menu:
+
+- Reports
+- Exchange Connections
+- Billing
+- Upload Guide
+- Methodology
+- Security and privacy
+- Admin Ops for admins
+
+#### Public pages
+
+Retain only pages that answer a trust, purchase, or support question:
+
+- `/pricing`
+- `/methodology`
+- `/security` or a clear security section
+- `/docs`
+- `/research` for published work and authority
+- `/about`
+- legal pages
+
+These pages should remain indexable and accessible from a restrained footer/help menu, but they should not interrupt the first-use product path.
+
+#### Product naming and old surfaces
+
+- **Invariance Research Desk** is the product.
+- **Research Program** is the primary workspace object.
+- **Strategy Robustness Lab** becomes `Import & Audit` inside a program or New Research flow.
+- remove `IR Labs` as a primary menu category; it describes company structure, not a user task.
+- keep Research Desk human review as `Request Expert Review` within a program/report, distinct from the Research Desk software product name.
+- avoid internal labels such as Approach A/B, B1-B12, “full ambition,” “lab wedge,” or “launch” in user-facing copy.
+
+### Recommended Product Flow
+
+```text
+Open app
+  -> type intuition or attach evidence
+  -> clarify only missing test conditions
+  -> review and approve hypothesis
+  -> review and approve strategy spec
+  -> choose data/universe and experiment budget
+  -> run baseline and falsification plan
+  -> receive verdict plus next experiment
+  -> qualify for Bybit demo or remain blocked with reasons
+  -> connect Bybit demo and approve risk policy
+  -> monitor demo portfolio and incidents
+  -> receive demo-to-live qualification decision
+  -> approve bounded live canary
+  -> monitor live portfolio
+  -> every event updates program memory
+  -> memory changes the next experiment and can block unsafe order intents
+```
+
+### Implementation Phases
+
+#### C0: Product and domain contraction
+
+- make crypto the explicit supported market;
+- make Research Desk the product and Research Program the primary object;
+- move Audit Import under New Research/program evidence;
+- replace public-home-first navigation with app-first entry;
+- remove unsupported Binance deployment claims.
+
+Owner: `invariance_research`, with contract language shared in `bulletproof_bt` docs.
+
+#### C1: Canonical lifecycle and event contracts
+
+- define deployment, connector, signal decision, order, fill, position, portfolio, trade episode, state snapshot, incident, memory assessment, and promotion schemas;
+- define stage identity across backtest/demo/live;
+- add shared fixtures and cross-repo contract tests.
+
+Owner: `bulletproof_bt` contracts; `invariance_research` projections and migrations.
+
+#### C2: Backtest-to-demo qualification
+
+- convert verdicts and experiment evidence into a deterministic qualification snapshot;
+- expose blocking reasons and required next tests;
+- require approval of exact strategy/risk/config hashes.
+
+Owner: shared. Engine evidence in `bulletproof_bt`; workflow/UI in `invariance_research`.
+
+#### C3: Bybit demo productization
+
+- secure connector onboarding;
+- dedicated execution-worker lifecycle;
+- demo deployment commands and event ingestion;
+- real-time orders, fills, positions, balances, risk, health, and incidents;
+- stop/freeze/reconcile controls;
+- demo run report and memory ingestion.
+
+Owner: Bybit/runtime in `bulletproof_bt`; orchestration/UI/security in `invariance_research`.
+
+#### C4: Unified trade memory
+
+- normalize backtest, demo, and live trade episodes;
+- snapshot decision-time state features;
+- add comparable-state retrieval, drift, support count, calibration, and uncertainty;
+- emit advisory Memory Assessments;
+- prohibit cross-tenant retrieval and future-enriched features.
+
+Owner: shared, with models/calibration in `bulletproof_bt` and tenant-safe storage/UI in `invariance_research`.
+
+#### C5: Bybit live canary
+
+- close known live-hardening gaps;
+- implement user approval, strict canary policy, external alerts, tested kill switch, recovery drills, and incident runbooks;
+- require demo qualification before live activation.
+
+Owner: shared execution and production operations.
+
+#### C6: Real-time portfolio command
+
+- portfolio, active-trade, deployment, order, fill, risk, reconciliation, and incident views;
+- durable event streaming and reconnect behavior;
+- mobile read-only monitoring and emergency freeze;
+- immutable decision snapshots and audit timeline.
+
+Owner: `invariance_research`, consuming `bulletproof_bt` events.
+
+#### C7: Memory policy gate
+
+- offline calibrated Memory Assessment model;
+- deterministic policy thresholds;
+- shadow mode before any blocking;
+- false-block and missed-risk monitoring;
+- allow automatic block/freeze only after explicit user policy approval;
+- never allow memory to increase risk automatically.
+
+Owner: models/evaluation in `bulletproof_bt`; policy configuration/audit in `invariance_research`.
+
+#### C8: Binance parity
+
+- Binance testnet/demo broker adapter and doctor;
+- private stream, order/fill/position/balance reconciliation;
+- Binance demo product flow;
+- live canary only after safety parity and fault-injection tests.
+
+Owner: `bulletproof_bt` adapter/runtime first, then `invariance_research` connector/product integration.
+
+### Success Criteria
+
+- a new user can start a crypto research program from the root composer without reading a marketing page;
+- a valid intuition can become an approved strategy spec and completed baseline backtest with traceable inputs;
+- the product can explain why a strategy is blocked from demo;
+- an approved strategy can run on Bybit demo from the web product with no CLI intervention;
+- every backtest/demo/live trade uses one canonical lineage and decision-time state schema;
+- the portfolio surface agrees with exchange state after restart and reconciliation;
+- a live canary cannot place orders outside approved symbols, sizes, notional, position, order, and loss limits;
+- connector failure freezes safely and produces a user-visible incident;
+- memory assessments show support, uncertainty, drift, and source episodes rather than an unsupported win probability;
+- no exchange credential, private event, trade history, or memory item crosses tenant boundaries;
+- Binance is not called supported until its execution adapter passes the same demo/live contract as Bybit.
+
+### Open Product Questions To Validate Before Live Capital
+
+- Which exact crypto researcher persona completes this full loop weekly: discretionary-systematic trader, independent quant, small prop team, or strategy seller?
+- Will users trust hosted exchange keys, or should the first execution worker run in a user-controlled container that receives signed deployment commands?
+- What minimum demo duration/trade count earns a live-canary recommendation for low-, medium-, and high-frequency strategies?
+- Which state features are available consistently enough across Binance and Bybit to support comparable-state memory without hidden missingness?
+- Is memory most valuable as next-experiment ranking, deployment drift detection, or pre-trade blocking? Start with one measured behavior before combining all three.
+- What is the acceptable false-block rate for the Memory Policy Gate, and how will users inspect and appeal a block without bypassing hard risk controls?
+
+### Immediate Assignment
+
+Dogfood one strategy through the complete proposed path on Bybit demo: intuition, approved spec, backtest, qualification, demo execution, restart/reconciliation, closed trades, state snapshots, incident review, and memory ingestion. Record every manual step and every point where the user must leave the app. The next implementation plan should remove those breaks in order of user risk, not visual appeal.

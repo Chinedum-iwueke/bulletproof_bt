@@ -550,6 +550,33 @@ def _build_trade_rows(
     if "exit_reason" in trades_df.columns and "exit_reason" not in out.columns:
         out["exit_reason"] = trades_df["exit_reason"]
 
+    # Older trade writers emitted the effective intrabar policy under
+    # ``intrabar_mode``. Preserve that auditable source value when the newer
+    # contract column is present but empty.
+    if "intrabar_mode" in trades_df.columns:
+        fallback = trades_df["intrabar_mode"]
+        if "execution_intrabar_assumption" not in out.columns:
+            out["execution_intrabar_assumption"] = fallback
+        else:
+            populated = out["execution_intrabar_assumption"].notna() & out[
+                "execution_intrabar_assumption"
+            ].astype(str).str.strip().ne("")
+            out["execution_intrabar_assumption"] = out[
+                "execution_intrabar_assumption"
+            ].where(populated, fallback)
+
+    # Cost components are derived from source-of-truth dollar amounts and the
+    # frozen actual stop risk. Slippage is already embedded in fill-price PnL;
+    # this diagnostic does not alter realized returns.
+    if "risk_amount" in out.columns:
+        actual_risk = pd.to_numeric(out["risk_amount"], errors="coerce").replace(0.0, pd.NA)
+        out["counterfactual_fee_drag_r"] = pd.to_numeric(
+            out.get("fees_paid"), errors="coerce"
+        ) / actual_risk
+        out["counterfactual_slippage_drag_r"] = pd.to_numeric(
+            out.get("slippage_cost"), errors="coerce"
+        ) / actual_risk
+
     for key, value in run_provenance.items():
         out[key] = value
 
@@ -581,6 +608,42 @@ def _build_trade_rows(
     return out
 
 
+def _reconcile_mangled_duplicate_columns(
+    trades_df: pd.DataFrame,
+    *,
+    run_id: str,
+    log: ExtractionLog,
+) -> pd.DataFrame:
+    """Reconcile duplicate CSV headers only when their values provably agree."""
+    out = trades_df
+    for duplicate in [column for column in out.columns if column.endswith(".1")]:
+        original = duplicate[:-2]
+        if original not in out.columns:
+            continue
+        left = out[original]
+        right = out[duplicate]
+        left_num = pd.to_numeric(left, errors="coerce")
+        right_num = pd.to_numeric(right, errors="coerce")
+        numeric = left_num.notna() | right_num.notna()
+        numeric_equal = (left_num - right_num).abs().le(
+            pd.concat([left_num.abs(), right_num.abs()], axis=1).max(axis=1).mul(1e-12).clip(lower=1e-12)
+        )
+        text_equal = left.fillna("").astype(str).eq(right.fillna("").astype(str))
+        equal = (numeric & numeric_equal.fillna(False)) | (~numeric & text_equal)
+        if not bool(equal.all()):
+            raise ValueError(
+                f"run={run_id}: duplicate columns {original!r} and {duplicate!r} diverge "
+                f"on {int((~equal).sum())} rows"
+            )
+        if out is trades_df:
+            out = trades_df.copy()
+        out = out.drop(columns=[duplicate])
+        log.fallback_derivations.append(
+            f"run={run_id}: reconciled identical duplicate column {duplicate} into {original}"
+        )
+    return out
+
+
 def _parse_run(
     run_dir: Path,
     *,
@@ -605,6 +668,7 @@ def _parse_run(
 
     try:
         trades_df = pd.read_csv(run_dir / "trades.csv") if (run_dir / "trades.csv").exists() else pd.DataFrame()
+        trades_df = _reconcile_mangled_duplicate_columns(trades_df, run_id=run_id, log=log)
     except Exception as exc:
         return RunParseResult(
             include=False,

@@ -96,3 +96,15 @@ def test_truth_validation_writes_reports(tmp_path: Path) -> None:
 
     assert json.loads(json_path.read_text(encoding="utf-8"))["status"] == "PASS"
     assert "Truth Validation Report" in md_path.read_text(encoding="utf-8")
+
+
+def test_truth_validation_fails_divergent_duplicate_risk_column(tmp_path: Path) -> None:
+    run_dir = _write_run(tmp_path)
+    trades = pd.read_csv(run_dir / "trades.csv")
+    trades["risk_amount.1"] = trades["risk_amount"] + 1.0
+    trades.to_csv(run_dir / "trades.csv", index=False)
+
+    report = validate_experiment_root(tmp_path)
+
+    assert report.status == "FAIL"
+    assert any(issue.check == "duplicate_truth_column" for issue in report.issues)

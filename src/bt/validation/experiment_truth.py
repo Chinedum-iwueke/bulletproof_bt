@@ -267,6 +267,28 @@ def _check_schema(df: pd.DataFrame, *, run_id: str, issues: list[TruthIssue]) ->
         if not sources:
             _add(issues, "warning", run_id, "csi_source", "entry_state_csi_source exists but is empty")
 
+    # pandas suffixes repeated CSV headers with .1. Identical legacy aliases
+    # are harmless, but divergent truth fields must stop downstream ingestion.
+    for duplicate in [column for column in df.columns if column.endswith(".1")]:
+        original = duplicate[:-2]
+        if original not in df.columns:
+            continue
+        left = pd.to_numeric(df[original], errors="coerce")
+        right = pd.to_numeric(df[duplicate], errors="coerce")
+        comparable = left.notna() | right.notna()
+        tolerance = pd.concat([left.abs(), right.abs()], axis=1).max(axis=1).mul(1e-12).clip(lower=1e-12)
+        mismatch = comparable & ((left - right).abs() > tolerance)
+        mismatch |= left.notna() ^ right.notna()
+        if mismatch.any():
+            _add(
+                issues,
+                "error",
+                run_id,
+                "duplicate_truth_column",
+                f"Duplicate columns {original} and {duplicate} diverge",
+                {"rows": int(mismatch.sum())},
+            )
+
 
 def _check_extracted_dataset(experiment_root: Path, issues: list[TruthIssue]) -> None:
     dataset_path = experiment_root / "research_data" / "trades_dataset.parquet"
