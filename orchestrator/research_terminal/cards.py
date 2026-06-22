@@ -304,7 +304,10 @@ def _latest_verdict_payload(
     candidates = []
     if verdict_bundle_dir:
         candidates.extend(sorted(verdict_bundle_dir.glob("*.json")))
-    candidates.extend(sorted((project_root / "research" / "verdicts").glob(f"{name}*.json")) if (project_root / "research" / "verdicts").exists() else [])
+    verdict_root = project_root / "research" / "verdicts"
+    if verdict_root.exists():
+        candidates.extend(sorted((verdict_root / phase).glob(f"{name}*.json")) if (verdict_root / phase).exists() else [])
+        candidates.extend(sorted(verdict_root.glob(f"{name}*.json")))
     latest = None
     for candidate in candidates:
         if candidate.name == "manifest.json":
@@ -544,19 +547,21 @@ def _execution_drag_data(stable_root: Path, volatile_root: Path, warnings: list[
     out: dict[str, Any] = {}
     for label, root in (("stable", stable_root), ("volatile", volatile_root)):
         trades_path = root / "research_data" / "trades_dataset.parquet"
-        cols = ["pnl", "gross_pnl", "fees", "slippage", "r_multiple_net", "r_multiple_gross"]
+        cols = ["net_pnl", "gross_pnl", "fees_paid", "slippage_cost", "pnl_r", "r_multiple_gross"]
         trades = _read_parquet_columns(trades_path, warnings, columns=cols)
         if trades.empty:
             out[label] = {"available": False, "trades_dataset": _path_str(trades_path)}
             continue
         data: dict[str, Any] = {"available": True, "trades_dataset": _path_str(trades_path), "rows": int(len(trades))}
-        if {"gross_pnl", "pnl"}.issubset(trades.columns):
-            data["gross_to_net_drag"] = _safe_float(pd.to_numeric(trades["gross_pnl"], errors="coerce").sum() - pd.to_numeric(trades["pnl"], errors="coerce").sum())
-        if "fees" in trades.columns:
-            data["fees_total"] = _safe_float(pd.to_numeric(trades["fees"], errors="coerce").sum())
-        if {"r_multiple_gross", "r_multiple_net"}.issubset(trades.columns):
+        if {"gross_pnl", "net_pnl"}.issubset(trades.columns):
+            data["gross_to_net_drag"] = _safe_float(pd.to_numeric(trades["gross_pnl"], errors="coerce").sum() - pd.to_numeric(trades["net_pnl"], errors="coerce").sum())
+        if "fees_paid" in trades.columns:
+            data["fees_total"] = _safe_float(pd.to_numeric(trades["fees_paid"], errors="coerce").sum())
+        if "slippage_cost" in trades.columns:
+            data["slippage_total"] = _safe_float(pd.to_numeric(trades["slippage_cost"], errors="coerce").sum())
+        if {"r_multiple_gross", "pnl_r"}.issubset(trades.columns):
             data["mean_r_drag"] = _safe_float(
-                (pd.to_numeric(trades["r_multiple_gross"], errors="coerce") - pd.to_numeric(trades["r_multiple_net"], errors="coerce")).mean()
+                (pd.to_numeric(trades["r_multiple_gross"], errors="coerce") - pd.to_numeric(trades["pnl_r"], errors="coerce")).mean()
             )
         out[label] = data
     return out

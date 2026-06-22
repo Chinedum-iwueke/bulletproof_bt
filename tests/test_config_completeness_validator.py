@@ -27,6 +27,7 @@ def _full_config() -> dict:
             "slippage_k_proxy": 0.0,
             "min_stop_distance_pct": 0.001,
             "max_notional_pct_equity": 1.0,
+            "max_gross_notional_pct_equity": None,
             "maintenance_free_margin_pct": 0.01,
         },
     }

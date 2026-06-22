@@ -25,12 +25,47 @@ class PositionBook:
         "signal_ts",
     }
     _ENTRY_RISK_KEYS = {
+        "risk_budget",
         "risk_amount",
+        "risk_utilization_pct",
+        "risk_value_per_price_unit",
         "stop_distance",
         "entry_stop_distance",
         "entry_stop_price",
         "stop_price",
         "entry_qty",
+        "desired_qty",
+        "qty_base",
+        "qty_adj",
+        "sizing_notional",
+        "sizing_margin_required",
+        "notional_est",
+        "cap_applied",
+        "cap_reason",
+        "max_notional",
+        "effective_max_notional",
+        "entry_notional_cap_buffer_pct",
+        "cap_reference_price",
+        "max_gross_notional",
+        "current_gross_notional",
+        "remaining_gross_notional",
+        "gross_cap_applied",
+        "gross_cap_reason",
+        "margin_required",
+        "margin_fee_buffer",
+        "margin_slippage_buffer",
+        "margin_adverse_move_buffer",
+        "free_margin",
+        "free_margin_post",
+        "max_leverage",
+        "margin_leverage_used",
+        "maintenance_free_margin_pct",
+        "maintenance_required",
+        "max_total_required",
+        "total_required",
+        "mark_price_used_for_margin",
+        "equity_used",
+        "scaled_by_margin",
     }
     _ENTRY_CONTEXT_KEYS = {
         "atr_entry",
@@ -108,6 +143,7 @@ class PositionBook:
                 self._position_metadata[fill.symbol] = self._extract_risk_metadata(
                     fill.metadata,
                     entry_qty=position.qty,
+                    entry_price=position.avg_entry_price,
                 )
                 state = self._init_path_state(position, fill.ts)
                 state["entry_stop_distance"] = self._position_metadata[fill.symbol].get("entry_stop_distance")
@@ -179,6 +215,7 @@ class PositionBook:
                 self._position_metadata[fill.symbol] = self._extract_risk_metadata(
                     fill.metadata,
                     entry_qty=position.qty,
+                    entry_price=position.avg_entry_price,
                 )
                 state = self._init_path_state(position, fill.ts)
                 state["entry_stop_distance"] = self._position_metadata[fill.symbol].get("entry_stop_distance")
@@ -389,6 +426,7 @@ class PositionBook:
         metadata: object,
         *,
         entry_qty: float,
+        entry_price: float,
     ) -> dict[str, object]:
         if not isinstance(metadata, dict):
             return {}
@@ -449,29 +487,50 @@ class PositionBook:
         extracted["entry_qty"] = normalized_entry_qty
         extracted["entry_stop_distance"] = extracted.get("entry_stop_distance", extracted.get("stop_distance"))
 
+        stop_price_raw = extracted.get("entry_stop_price", extracted.get("stop_price"))
+        try:
+            stop_price = float(stop_price_raw) if stop_price_raw is not None else None
+        except (TypeError, ValueError):
+            stop_price = None
+        if stop_price is not None and stop_price > 0 and entry_price > 0:
+            extracted["entry_stop_price"] = stop_price
+            extracted["entry_stop_distance"] = abs(float(entry_price) - stop_price)
+
         stop_distance_raw = extracted.get("entry_stop_distance")
         try:
             stop_distance = float(stop_distance_raw) if stop_distance_raw is not None else None
         except (TypeError, ValueError):
             stop_distance = None
 
-        existing_risk_amount = extracted.get("risk_amount")
-        resolved_risk_amount: float | None = None
+        budget_raw = extracted.get("risk_budget", extracted.get("risk_amount"))
+        risk_budget: float | None = None
         try:
-            if existing_risk_amount is not None:
-                parsed_risk = float(existing_risk_amount)
-                if parsed_risk > 0:
-                    resolved_risk_amount = parsed_risk
+            if budget_raw is not None:
+                parsed_budget = float(budget_raw)
+                if parsed_budget > 0:
+                    risk_budget = parsed_budget
         except (TypeError, ValueError):
-            resolved_risk_amount = None
+            risk_budget = None
 
+        try:
+            risk_value_per_price_unit = float(extracted.get("risk_value_per_price_unit", 1.0))
+        except (TypeError, ValueError):
+            risk_value_per_price_unit = 1.0
+        if risk_value_per_price_unit <= 0:
+            risk_value_per_price_unit = 1.0
+        extracted["risk_value_per_price_unit"] = risk_value_per_price_unit
+
+        resolved_risk_amount: float | None = None
         if stop_distance is not None and stop_distance > 0 and normalized_entry_qty > 0:
             extracted["entry_stop_distance"] = stop_distance
-            if resolved_risk_amount is None:
-                resolved_risk_amount = normalized_entry_qty * stop_distance
+            resolved_risk_amount = normalized_entry_qty * stop_distance * risk_value_per_price_unit
 
         if resolved_risk_amount is not None:
             extracted["risk_amount"] = resolved_risk_amount
+        if risk_budget is not None:
+            extracted["risk_budget"] = risk_budget
+            if resolved_risk_amount is not None:
+                extracted["risk_utilization_pct"] = resolved_risk_amount / risk_budget
         if "entry_stop_price" not in extracted and "stop_price" in extracted:
             extracted["entry_stop_price"] = extracted.get("stop_price")
 

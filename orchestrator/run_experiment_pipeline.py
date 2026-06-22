@@ -101,6 +101,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--retain-worst", type=int, default=1)
 
     parser.add_argument("--skip-run", action="store_true", default=False)
+    parser.add_argument("--skip-truth-validation", action="store_true", default=False)
     parser.add_argument("--skip-analysis", action="store_true", default=False)
     parser.add_argument("--skip-extract", action="store_true", default=False)
     parser.add_argument("--skip-cleanup", action="store_true", default=False)
@@ -289,6 +290,27 @@ def run_backtest(
             cmd.extend(["--stable-manifest", stable_manifest])
         if universe == "volatile" and membership_path:
             cmd.extend(["--membership-path", membership_path])
+    run_command(cmd, step=step, dry_run=dry_run, log_path=log_path, commands_log=commands_log, command_log_dir=command_log_dir, failure_tail_lines=failure_tail_lines, capture_logs=capture_logs)
+
+
+def run_truth_validation(
+    *,
+    experiment_root: Path,
+    project_root: Path,
+    dry_run: bool,
+    log_path: Path,
+    commands_log: list[dict[str, Any]],
+    step: str,
+    command_log_dir: Path | None,
+    failure_tail_lines: int,
+    capture_logs: bool,
+) -> None:
+    cmd = [
+        sys.executable,
+        str(project_root / "scripts" / "validate_experiment_truth.py"),
+        "--experiment-root",
+        str(experiment_root),
+    ]
     run_command(cmd, step=step, dry_run=dry_run, log_path=log_path, commands_log=commands_log, command_log_dir=command_log_dir, failure_tail_lines=failure_tail_lines, capture_logs=capture_logs)
 
 
@@ -898,6 +920,53 @@ def main() -> int:
             print("[3/8] Running stable backtest (skipped)")
             print("[4/8] Running volatile backtest (skipped)")
 
+        db_status_update(db, pipeline_run_id, "TRUTH_VALIDATION", commands_log)
+        if not args.skip_truth_validation:
+            print("[4.5/8] Validating experiment truth invariants")
+            run_truth_validation(
+                experiment_root=stable_root,
+                project_root=project_root,
+                dry_run=args.dry_run,
+                log_path=log_path,
+                commands_log=commands_log,
+                step="truth_validation_stable",
+                command_log_dir=command_log_dir,
+                failure_tail_lines=args.failure_tail_lines,
+                capture_logs=capture_command_logs,
+            )
+            run_truth_validation(
+                experiment_root=volatile_root,
+                project_root=project_root,
+                dry_run=args.dry_run,
+                log_path=log_path,
+                commands_log=commands_log,
+                step="truth_validation_volatile",
+                command_log_dir=command_log_dir,
+                failure_tail_lines=args.failure_tail_lines,
+                capture_logs=capture_command_logs,
+            )
+            if db is not None:
+                if stable_experiment_id:
+                    db_register_artifact(
+                        db,
+                        artifact_type="truth_validation_report_json",
+                        path=stable_root / "summaries" / "truth_validation_report.json",
+                        hypothesis_id=hypothesis_id,
+                        experiment_id=stable_experiment_id,
+                        pipeline_run_id=pipeline_run_id,
+                    )
+                if volatile_experiment_id:
+                    db_register_artifact(
+                        db,
+                        artifact_type="truth_validation_report_json",
+                        path=volatile_root / "summaries" / "truth_validation_report.json",
+                        hypothesis_id=hypothesis_id,
+                        experiment_id=volatile_experiment_id,
+                        pipeline_run_id=pipeline_run_id,
+                    )
+        else:
+            print("[4.5/8] Validating experiment truth invariants (skipped)")
+
         db_status_update(db, pipeline_run_id, "POST_ANALYSIS", commands_log)
         if not args.skip_analysis:
             print("[5/8] Running post-run analysis")
@@ -1007,6 +1076,31 @@ def main() -> int:
                     )
         else:
             print("[6/8] Extracting experiment datasets (skipped)")
+
+        if not args.skip_truth_validation and not args.skip_extract:
+            print("[6.5/8] Validating extracted research datasets")
+            run_truth_validation(
+                experiment_root=stable_root,
+                project_root=project_root,
+                dry_run=args.dry_run,
+                log_path=log_path,
+                commands_log=commands_log,
+                step="truth_validation_extracted_stable",
+                command_log_dir=command_log_dir,
+                failure_tail_lines=args.failure_tail_lines,
+                capture_logs=capture_command_logs,
+            )
+            run_truth_validation(
+                experiment_root=volatile_root,
+                project_root=project_root,
+                dry_run=args.dry_run,
+                log_path=log_path,
+                commands_log=commands_log,
+                step="truth_validation_extracted_volatile",
+                command_log_dir=command_log_dir,
+                failure_tail_lines=args.failure_tail_lines,
+                capture_logs=capture_command_logs,
+            )
 
         cleanup_ran = False
         db_status_update(db, pipeline_run_id, "CLEANING", commands_log)

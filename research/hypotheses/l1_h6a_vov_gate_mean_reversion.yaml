@@ -36,12 +36,12 @@ indicator_defaults:
   quantile_method: "deterministic_linear_interpolation_past_only"
 
 parameter_grid:
-  signal_timeframe: ["15m", "1h"]
+  signal_timeframe: ["5m", "15m"]
   Wvov_hours: [24, 72]
   q_vov: [0.6, 0.7]
   z0: [0.8, 1.0]
   k_atr: [1.5, 2.0]
-  T_hold: [12, 24]
+  T_hold: [24]
   size_adjustment_enabled: [false]
   vov_ref: [0.005]
   cap_multiplier: [1.5]

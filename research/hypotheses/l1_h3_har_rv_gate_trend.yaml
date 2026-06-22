@@ -26,7 +26,7 @@ parameter_grid:
   fit_window_days: [180, 365]
   gate_quantile: [0.3, 0.7]
   k: [1.5, 2.0]
-  T_hold: [24, 48]
+  T_hold: [24]
 
 gates:
   - field: "rvhat_pct_t"

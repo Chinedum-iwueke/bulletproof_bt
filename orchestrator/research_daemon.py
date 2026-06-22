@@ -39,8 +39,11 @@ from bt.experiments.resource_controls import memory_snapshot
 from bt.paths import (
     resolve_daemon_command_log_dir,
     resolve_existing_experiment_root,
+    resolve_pipeline_log_path,
     resolve_phase_artifact_dir,
+    resolve_verdict_bundle_root,
 )
+from orchestrator.research_terminal.cards import build_and_write_intelligence_cards
 
 REQUIRED_PAYLOAD_KEYS = {"hypothesis", "name"}
 
@@ -437,13 +440,15 @@ def build_state_discovery_command(
 
 def build_research_memory_command(db_path: Path, merged_payload: dict[str, Any], config: dict[str, Any]) -> list[str]:
     phase = str(merged_payload.get("phase", "tier2"))
-    return [
+    outputs_root = Path(str(merged_payload.get("outputs_root", config.get("outputs_root", "outputs"))))
+    name = str(merged_payload.get("name", "")).strip()
+    cmd = [
         sys.executable,
         str(PROJECT_ROOT / "orchestrator" / "research_memory.py"),
         "--db",
         str(db_path),
         "--outputs-root",
-        str(merged_payload.get("outputs_root", config.get("outputs_root", "outputs"))),
+        str(outputs_root),
         "--verdicts-dir",
         str(resolve_phase_artifact_dir(artifact_root=config.get("verdict_output_dir", "research/verdicts"), phase=phase)),
         "--state-findings-dir",
@@ -454,6 +459,45 @@ def build_research_memory_command(db_path: Path, merged_payload: dict[str, Any],
         str(resolve_phase_artifact_dir(artifact_root=config.get("research_memory_output_dir", "research/memory"), phase=phase)),
         "--write-db",
     ]
+    if name:
+        for variant in ("stable", "vol"):
+            path = resolve_existing_experiment_root(outputs_root=outputs_root, phase=phase, experiment_name=name, variant=variant)
+            if path.exists():
+                cmd.extend(["--experiment-root", str(path)])
+    return cmd
+
+
+def refresh_terminal_cards(
+    *,
+    db: ResearchDB,
+    merged_payload: dict[str, Any],
+    command_log_dir: Path,
+) -> Path:
+    outputs_root = Path(str(merged_payload.get("outputs_root", "outputs")))
+    phase = str(merged_payload.get("phase", "tier2"))
+    name = str(merged_payload["name"])
+    result = build_and_write_intelligence_cards(
+        name=name,
+        phase=phase,
+        hypothesis_path=Path(str(merged_payload["hypothesis"])),
+        stable_root=resolve_existing_experiment_root(
+            outputs_root=outputs_root, phase=phase, experiment_name=name, variant="stable"
+        ),
+        volatile_root=resolve_existing_experiment_root(
+            outputs_root=outputs_root, phase=phase, experiment_name=name, variant="vol"
+        ),
+        output_dir=outputs_root / phase / f"{name}_strategy_terminal_cards",
+        project_root=PROJECT_ROOT,
+        verdict_bundle_dir=resolve_verdict_bundle_root(
+            outputs_root=outputs_root, phase=phase, experiment_name=name
+        ),
+        command_log_dir=command_log_dir,
+        pipeline_log_path=resolve_pipeline_log_path(
+            outputs_root=outputs_root, phase=phase, experiment_name=name
+        ),
+        db=db,
+    )
+    return result.bundle_json
 
 
 def main() -> int:
@@ -564,17 +608,14 @@ def main() -> int:
                 artifact_types=("daemon_pipeline_stdout_log", "daemon_pipeline_stderr_log"),
             )
             if return_code == 0:
-                db.mark_queue_done(current_queue_id)
-                logger.info("Queue item DONE id=%s name=%s", current_queue_id, current_job_name)
                 run_state_discovery = bool(config.get("run_state_discovery_after_pipeline", True))
                 if run_state_discovery:
                     sd_cmd = build_state_discovery_command(Path(args.db), merged_payload, config, mode="combined")
                     sd_code, sd_art = _run_daemon_stage(cmd=sd_cmd, stage="002_state_discovery", logger=logger, queue_id=current_queue_id, name=current_job_name, command_log_dir=command_log_dir, db=db, artifact_types=("daemon_state_discovery_stdout_log", "daemon_state_discovery_stderr_log"))
                     if sd_code != 0:
-                        warning = {"stage": "state_discovery", "returncode": sd_code, **(sd_art or {})}
-                        post_agent_warnings.append(warning)
                         if sd_art:
                             db.register_artifact(artifact_type="state_discovery_error", path=Path(sd_art.get("stderr") or sd_art.get("stdout") or "logs/research_daemon.log"), description="state discovery error", metadata={"queue_id": current_queue_id, "name": current_job_name, "returncode": sd_code, "root_cause_hint": sd_art.get("root_cause_hint"), "stdout_log": sd_art.get("stdout"), "stderr_log": sd_art.get("stderr")})
+                        raise RuntimeError(f"required state discovery stage failed with return code {sd_code}")
 
                 run_interp = bool(config.get("run_interpretation_after_pipeline", True))
                 interp_after_sd = bool(config.get("interpretation_after_state_discovery", True))
@@ -583,23 +624,29 @@ def main() -> int:
                         interp_cmd = build_interpret_command(Path(args.db), merged_payload, config)
                         interp_code, interp_art = _run_daemon_stage(cmd=interp_cmd, stage="003_interpreter", logger=logger, queue_id=current_queue_id, name=current_job_name, command_log_dir=command_log_dir, db=db, artifact_types=("daemon_interpreter_stdout_log", "daemon_interpreter_stderr_log"))
                         if interp_code != 0:
-                            warning = {"stage": "interpreter", "returncode": interp_code, **(interp_art or {})}
-                            post_agent_warnings.append(warning)
                             if interp_art:
                                 db.register_artifact(artifact_type="interpreter_error", path=Path(interp_art.get("stderr") or interp_art.get("stdout") or "logs/research_daemon.log"), description="interpreter error", metadata={"queue_id": current_queue_id, "name": current_job_name, "returncode": interp_code, "root_cause_hint": interp_art.get("root_cause_hint"), "stdout_log": interp_art.get("stdout"), "stderr_log": interp_art.get("stderr")})
+                            raise RuntimeError(f"required interpreter stage failed with return code {interp_code}")
                     except Exception as interp_exc:
                         logger.exception("Interpreter exception for name=%s: %s", current_job_name, interp_exc)
+                        raise
                 run_memory = bool(config.get("run_research_memory_after_pipeline", True))
                 if run_memory:
                     mem_cmd = build_research_memory_command(Path(args.db), merged_payload, config)
                     mem_code, mem_art = _run_daemon_stage(cmd=mem_cmd, stage="004_research_memory", logger=logger, queue_id=current_queue_id, name=current_job_name, command_log_dir=command_log_dir, db=db, artifact_types=("daemon_research_memory_stdout_log", "daemon_research_memory_stderr_log"))
                     if mem_code != 0:
-                        warning = {"stage": "research_memory", "returncode": mem_code, **(mem_art or {})}
-                        post_agent_warnings.append(warning)
                         if mem_art:
                             db.register_artifact(artifact_type="research_memory_error", path=Path(mem_art.get("stderr") or mem_art.get("stdout") or "logs/research_daemon.log"), description="research memory error", metadata={"queue_id": current_queue_id, "name": current_job_name, "returncode": mem_code, "root_cause_hint": mem_art.get("root_cause_hint"), "stdout_log": mem_art.get("stdout"), "stderr_log": mem_art.get("stderr")})
-                if post_agent_warnings:
-                    db.register_artifact(artifact_type="post_agent_warnings", path=log_path, description="post pipeline agent warnings", metadata={"queue_id": current_queue_id, "name": current_job_name, "post_agent_warnings": post_agent_warnings})
+                        raise RuntimeError(f"required research memory stage failed with return code {mem_code}")
+
+                cards_path = refresh_terminal_cards(
+                    db=db,
+                    merged_payload=merged_payload,
+                    command_log_dir=command_log_dir,
+                )
+                logger.info("Refreshed final Strategy Research Terminal cards: %s", cards_path)
+                db.mark_queue_done(current_queue_id)
+                logger.info("Queue item DONE id=%s name=%s after all required research stages", current_queue_id, current_job_name)
             else:
                 failure_info = fetch_latest_pipeline_failure(db, name=current_job_name or "")
                 compact = failure_info["error_message"] if failure_info and failure_info.get("error_message") else f"pipeline failed with return code {return_code}"

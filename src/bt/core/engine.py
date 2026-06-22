@@ -474,6 +474,7 @@ class BacktestEngine:
 
                 reserved_open_positions = self._portfolio.position_book.open_positions_count()
                 reserved_free_margin = self._portfolio.free_margin
+                reserved_gross_notional = self._portfolio.gross_notional()
 
                 for signal in signals:
                     signal = self._enrich_signal_metadata(signal=signal, ts=ts)
@@ -504,6 +505,7 @@ class BacktestEngine:
                         open_positions=reserved_open_positions,
                         max_leverage=self._portfolio.max_leverage,
                         current_qty=current_qty,
+                        current_gross_notional=reserved_gross_notional,
                     )
 
                     if order_intent is None:
@@ -554,6 +556,10 @@ class BacktestEngine:
                     reserved_free_margin = max(reserved_free_margin - total_required, 0.0)
                     if current_qty == 0:
                         reserved_open_positions += 1
+                        try:
+                            reserved_gross_notional += abs(float(order_intent.metadata.get("notional_est", 0.0) or 0.0))
+                        except (TypeError, ValueError):
+                            reserved_gross_notional = self._portfolio.gross_notional()
 
                     self._emit_decision_record(
                         {

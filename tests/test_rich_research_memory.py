@@ -13,9 +13,11 @@ def test_research_memory_ingests_and_queries_rich_state_fields() -> None:
     ensure_research_memory_schema(conn)
     rec = normalize_trade(
         {
-            "trade_id": "t1",
-            "symbol": "BTCUSDT",
-            "r_net": 0.5,
+                "trade_id": "t1",
+                "symbol": "BTCUSDT",
+                "identity_ts_signal": "2025-01-01T00:00:00Z",
+                "net_pnl": 50.0,
+                "r_net": 0.5,
             "entry_state_csi_pctile": 0.82,
             "entry_state_funding_pctile": 0.91,
             "entry_state_oi_accel_pctile": 0.88,

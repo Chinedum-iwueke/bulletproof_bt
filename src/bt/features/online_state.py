@@ -15,7 +15,9 @@ def _pctile(window: deque[float], value: float | None) -> float | None:
     vals = [v for v in window if v is not None]
     if len(vals) < 5:
         return None
-    return sum(1 for v in vals if v <= value) / len(vals)
+    less = sum(1 for v in vals if v < value)
+    equal = sum(1 for v in vals if v == value)
+    return (less + 0.5 * equal) / len(vals)
 
 
 def _num(value: Any) -> float | None:

@@ -27,7 +27,7 @@ def _fill(*, ts: str, side: Side, qty: float, price: float, risk_amount: float |
     )
 
 
-def test_round_trip_trade_metadata_preserves_explicit_risk_amount() -> None:
+def test_round_trip_trade_metadata_separates_budget_from_actual_stop_risk() -> None:
     book = PositionBook()
     book.apply_fill(_fill(ts="2024-01-01T00:00:00Z", side=Side.BUY, qty=2.0, price=100.0, risk_amount=500.0, stop_distance=25.0))
     _, trade = book.apply_fill(_fill(ts="2024-01-01T01:00:00Z", side=Side.SELL, qty=2.0, price=105.0))
@@ -35,7 +35,9 @@ def test_round_trip_trade_metadata_preserves_explicit_risk_amount() -> None:
     assert trade is not None
     assert float(trade.metadata["entry_qty"]) == pytest.approx(2.0)
     assert float(trade.metadata["entry_stop_distance"]) == pytest.approx(25.0)
-    assert float(trade.metadata["risk_amount"]) == pytest.approx(500.0)
+    assert float(trade.metadata["risk_budget"]) == pytest.approx(500.0)
+    assert float(trade.metadata["risk_amount"]) == pytest.approx(50.0)
+    assert float(trade.metadata["risk_utilization_pct"]) == pytest.approx(0.1)
 
 
 def test_partial_close_trade_keeps_full_entry_risk_context() -> None:
@@ -49,7 +51,8 @@ def test_partial_close_trade_keeps_full_entry_risk_context() -> None:
     _, trade2 = book.apply_fill(_fill(ts="2024-01-01T01:00:00Z", side=Side.SELL, qty=0.6, price=106.0))
     assert trade2 is not None
     assert float(trade2.metadata["entry_qty"]) == pytest.approx(1.0)
-    assert float(trade2.metadata["risk_amount"]) == pytest.approx(500.0)
+    assert float(trade2.metadata["risk_budget"]) == pytest.approx(500.0)
+    assert float(trade2.metadata["risk_amount"]) == pytest.approx(50.0)
 
 
 def test_flip_trade_preserves_old_entry_risk_and_new_leg_gets_new_context() -> None:
@@ -61,7 +64,8 @@ def test_flip_trade_preserves_old_entry_risk_and_new_leg_gets_new_context() -> N
 
     assert closed_trade is not None
     assert float(closed_trade.metadata["entry_qty"]) == pytest.approx(1.0)
-    assert float(closed_trade.metadata["risk_amount"]) == pytest.approx(500.0)
+    assert float(closed_trade.metadata["risk_budget"]) == pytest.approx(500.0)
+    assert float(closed_trade.metadata["risk_amount"]) == pytest.approx(50.0)
 
     assert new_pos.side == Side.SELL
     assert new_pos.qty == pytest.approx(0.5)
@@ -69,7 +73,8 @@ def test_flip_trade_preserves_old_entry_risk_and_new_leg_gets_new_context() -> N
     assert close_new is not None
     assert float(close_new.metadata["entry_qty"]) == pytest.approx(0.5)
     assert float(close_new.metadata["entry_stop_distance"]) == pytest.approx(20.0)
-    assert float(close_new.metadata["risk_amount"]) == pytest.approx(999.0)
+    assert float(close_new.metadata["risk_budget"]) == pytest.approx(999.0)
+    assert float(close_new.metadata["risk_amount"]) == pytest.approx(10.0)
 
 
 def test_risk_amount_falls_back_to_entry_qty_times_stop_distance_when_missing() -> None:
@@ -101,7 +106,8 @@ def test_entry_stop_distance_is_preserved_when_stop_distance_key_missing() -> No
 
     assert trade is not None
     assert float(trade.metadata["entry_stop_distance"]) == pytest.approx(12.5)
-    assert float(trade.metadata["risk_amount"]) == pytest.approx(125.0)
+    assert float(trade.metadata["risk_budget"]) == pytest.approx(125.0)
+    assert float(trade.metadata["risk_amount"]) == pytest.approx(12.5)
 
 
 def test_entry_context_metadata_survives_until_trade_close() -> None:
@@ -173,6 +179,8 @@ def test_exit_metadata_cannot_overwrite_frozen_entry_research_state() -> None:
                 "entry_state_funding_raw": 0.0003,
                 "entry_decision_setup_class": "trend",
                 "entry_gate_values_json": '{"csi":0.82}',
+                "notional_est": 100.0,
+                "cap_reason": "max_notional_pct_equity",
             },
         )
     )
@@ -198,6 +206,8 @@ def test_exit_metadata_cannot_overwrite_frozen_entry_research_state() -> None:
                 "entry_decision_setup_class": "exit",
                 "entry_gate_values_json": '{"csi":0.10}',
                 "exit_reason": "trend_failure",
+                "notional_est": 9999.0,
+                "cap_reason": "exit_should_not_replace_entry",
             },
         )
     )
@@ -212,4 +222,26 @@ def test_exit_metadata_cannot_overwrite_frozen_entry_research_state() -> None:
     assert trade.metadata["entry_state_funding_raw"] == pytest.approx(0.0003)
     assert trade.metadata["entry_decision_setup_class"] == "trend"
     assert trade.metadata["entry_gate_values_json"] == '{"csi":0.82}'
+    assert trade.metadata["notional_est"] == pytest.approx(100.0)
+    assert trade.metadata["cap_reason"] == "max_notional_pct_equity"
     assert trade.metadata["exit_reason"] == "trend_failure"
+
+
+def test_actual_stop_risk_uses_fill_price_and_frozen_stop_price() -> None:
+    book = PositionBook()
+    entry = _fill(
+        ts="2024-01-01T00:00:00Z",
+        side=Side.BUY,
+        qty=2.0,
+        price=102.0,
+        risk_amount=500.0,
+        stop_distance=5.0,
+    )
+    entry.metadata["stop_price"] = 95.0
+    book.apply_fill(entry)
+    _, trade = book.apply_fill(_fill(ts="2024-01-01T01:00:00Z", side=Side.SELL, qty=2.0, price=105.0))
+
+    assert trade is not None
+    assert float(trade.metadata["entry_stop_distance"]) == pytest.approx(7.0)
+    assert float(trade.metadata["risk_amount"]) == pytest.approx(14.0)
+    assert float(trade.metadata["risk_budget"]) == pytest.approx(500.0)

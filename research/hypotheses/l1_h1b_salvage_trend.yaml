@@ -30,7 +30,7 @@ gates:
 parameter_grid:
   signal_timeframe: ["15m", "1h"]
   theta_vol: [0.70, 0.80, 0.85]
-  k_atr_entry_stop: [2.5, 3.0]
+  k_atr_entry_stop: [3.0]
   T_hold: [72]
   tp_enabled: [false]
   chandelier_lookback: [12]

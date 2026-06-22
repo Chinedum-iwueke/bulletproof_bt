@@ -451,6 +451,12 @@ def resolve_config(cfg: dict[str, Any]) -> dict[str, Any]:
     )
     _resolve_risk_value(
         resolved=resolved,
+        top_key="max_gross_notional_pct_equity",
+        nested_key="max_gross_notional_pct_equity",
+        default=None,
+    )
+    _resolve_risk_value(
+        resolved=resolved,
         top_key="maintenance_free_margin_pct",
         nested_key="maintenance_free_margin_pct",
         default=0.01,
@@ -559,6 +565,25 @@ def resolve_config(cfg: dict[str, Any]) -> dict[str, Any]:
             "Set it to 1.0 for a 100% of equity cap or increase up to 5.0 when needed."
         )
     risk_cfg["max_notional_pct_equity"] = max_notional_pct_equity
+
+    raw_max_gross_notional_pct_equity = risk_cfg.get("max_gross_notional_pct_equity")
+    if raw_max_gross_notional_pct_equity is None:
+        max_gross_notional_pct_equity = None
+    else:
+        try:
+            max_gross_notional_pct_equity = float(raw_max_gross_notional_pct_equity)
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(
+                "Invalid risk.max_gross_notional_pct_equity: expected null or a float in (0.0, 5.0]; "
+                f"got {raw_max_gross_notional_pct_equity!r}."
+            ) from exc
+        if not (0.0 < max_gross_notional_pct_equity <= 5.0):
+            raise ConfigError(
+                "Invalid risk.max_gross_notional_pct_equity: expected null or a float in (0.0, 5.0] "
+                f"got {max_gross_notional_pct_equity!r}. "
+                "Set it to null to disable or to max_positions * max_notional_pct_equity for a tight gross cap."
+            )
+    risk_cfg["max_gross_notional_pct_equity"] = max_gross_notional_pct_equity
 
     try:
         maintenance_free_margin_pct = float(risk_cfg.get("maintenance_free_margin_pct"))

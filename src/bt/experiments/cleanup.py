@@ -33,7 +33,7 @@ class CleanupConfig:
     ranking_metric: str = "net_pnl"
     delete_logs: bool = False
     delete_nonretained_runs: bool = False
-    keep_equity_for_retained: bool = False
+    keep_equity_for_retained: bool = True
     skip_existing_extraction: bool = False
     overwrite_extraction: bool = False
     dry_run: bool = False

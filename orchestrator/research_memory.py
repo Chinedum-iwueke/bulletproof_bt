@@ -29,6 +29,7 @@ def main() -> int:
         manifest = ingest_research_memory(
             conn,
             outputs_root=Path(args.outputs_root),
+            experiment_roots=[Path(path) for path in args.experiment_root],
             verdicts_dir=Path(args.verdicts_dir),
             state_findings_dir=Path(args.state_findings_dir),
             alpha_zoo_dir=Path(args.alpha_zoo_dir),
@@ -52,6 +53,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build and query deterministic research memory.")
     parser.add_argument("--db", required=True)
     parser.add_argument("--outputs-root", default="outputs")
+    parser.add_argument("--experiment-root", action="append", default=[])
     parser.add_argument("--verdicts-dir", default="research/verdicts")
     parser.add_argument("--state-findings-dir", default="research/state_findings")
     parser.add_argument("--alpha-zoo-dir", default="research/alpha_zoo")

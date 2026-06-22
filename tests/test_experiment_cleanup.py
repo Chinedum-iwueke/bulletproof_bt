@@ -130,6 +130,7 @@ def test_cleanup_deletes_nonretained_run_folders_and_logs(tmp_path: Path) -> Non
 
     assert (exp / "runs" / "run_01").exists()
     assert not (exp / "runs" / "run_01" / "decisions.jsonl").exists()
+    assert (exp / "runs" / "run_01" / "equity.csv").exists()
     assert not (exp / "runs" / "run_02").exists()
 
     deleted_df = pd.read_csv(out_dir / "deleted_runs.csv")

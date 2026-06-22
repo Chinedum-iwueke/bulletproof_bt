@@ -32,7 +32,7 @@ parameter_grid:
   gate_quantile_low: [0.3, 0.7]
   z0: [0.8, 1.0]
   k: [1.5, 2.0]
-  T_hold: [12, 24]
+  T_hold: [24]
 
 gates:
   - field: "rvhat_pct_t"

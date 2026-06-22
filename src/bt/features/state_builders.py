@@ -16,7 +16,10 @@ def _rolling_percentile(series: pd.Series, window: int) -> pd.Series:
         valid = arr[~np.isnan(arr)]
         if valid.size == 0:
             return np.nan
-        return float((valid <= valid[-1]).mean())
+        current = valid[-1]
+        # Mid-rank ties keep a constant causal series neutral (0.5) instead
+        # of falsely classifying every repeated observation as an extreme.
+        return float(((valid < current).sum() + 0.5 * (valid == current).sum()) / valid.size)
 
     return values.rolling(window=window, min_periods=5).apply(_pct, raw=True)
 

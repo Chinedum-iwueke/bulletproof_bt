@@ -34,6 +34,7 @@ def test_default_engine_config_contains_supported_keys_and_smoke_runs(tmp_path: 
         "slippage_k_proxy",
         "min_stop_distance_pct",
         "max_notional_pct_equity",
+        "max_gross_notional_pct_equity",
         "maintenance_free_margin_pct",
         "stop",
     ):

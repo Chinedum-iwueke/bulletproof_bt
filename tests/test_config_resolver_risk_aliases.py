@@ -62,6 +62,7 @@ def test_resolve_config_injects_risk_guardrail_defaults() -> None:
 
     assert resolved["risk"]["min_stop_distance_pct"] == 0.001
     assert resolved["risk"]["max_notional_pct_equity"] == 1.0
+    assert resolved["risk"]["max_gross_notional_pct_equity"] is None
     assert resolved["risk"]["maintenance_free_margin_pct"] == 0.01
 
 
@@ -71,6 +72,9 @@ def test_resolve_config_rejects_invalid_risk_guardrail_values() -> None:
 
     with pytest.raises(ValueError, match=r"Invalid risk\.max_notional_pct_equity"):
         resolve_config({"risk": {"mode": "r_fixed", "r_per_trade": 0.01, "max_notional_pct_equity": 0.0}})
+
+    with pytest.raises(ValueError, match=r"Invalid risk\.max_gross_notional_pct_equity"):
+        resolve_config({"risk": {"mode": "r_fixed", "r_per_trade": 0.01, "max_gross_notional_pct_equity": 0.0}})
 
     with pytest.raises(ValueError, match=r"Invalid risk\.maintenance_free_margin_pct"):
         resolve_config({"risk": {"mode": "r_fixed", "r_per_trade": 0.01, "maintenance_free_margin_pct": 0.5}})
@@ -87,4 +91,5 @@ def test_config_used_yaml_contains_injected_risk_guardrail_defaults(tmp_path) ->
     payload = yaml.safe_load((tmp_path / "config_used.yaml").read_text(encoding="utf-8"))
     assert payload["risk"]["min_stop_distance_pct"] == 0.001
     assert payload["risk"]["max_notional_pct_equity"] == 1.0
+    assert payload["risk"]["max_gross_notional_pct_equity"] is None
     assert payload["risk"]["maintenance_free_margin_pct"] == 0.01

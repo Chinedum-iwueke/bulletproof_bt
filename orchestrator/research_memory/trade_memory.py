@@ -95,12 +95,12 @@ def normalize_trade(row: dict[str, Any], *, context: dict[str, Any], row_index: 
         "dataset_type": _first(row, ["dataset_type", "identity_dataset_type"]) or context.get("dataset_type"),
         "phase": _first(row, ["phase", "identity_phase"]) or context.get("phase"),
         "experiment_root": experiment_root,
-        "ts_signal": _first(row, ["ts_signal", "signal_ts", "timestamp", "ts"]),
+        "ts_signal": _first(row, ["identity_ts_signal", "ts_signal", "signal_ts", "timestamp", "ts"]),
         "ts_entry_fill": _first(row, ["ts_entry_fill", "entry_time", "entry_ts"]),
         "ts_exit_fill": _first(row, ["ts_exit_fill", "exit_time", "exit_ts"]),
         "r_net": _num(_first(row, ["r_net", "final_r_net", "realized_r_net", "pnl_r"])),
         "r_gross": _num(_first(row, ["r_gross", "final_r_gross", "realized_r_gross"])),
-        "pnl_net": _num(_first(row, ["pnl_net", "net_pnl", "realized_pnl"])),
+        "pnl_net": _num(_first(row, ["net_pnl", "pnl_net", "realized_pnl"])),
         "pnl_gross": _num(_first(row, ["pnl_gross", "gross_pnl"])),
         "mfe_r": _num(_first(row, ["path_mfe_r", "mfe_r"])),
         "mae_r": _num(_first(row, ["path_mae_r", "mae_r"])),
@@ -158,6 +158,11 @@ def normalize_trade(row: dict[str, Any], *, context: dict[str, Any], row_index: 
         rec["label_tail_trade_ge_10r"] = rec["label_tail_trade_ge_10r"] if rec["label_tail_trade_ge_10r"] is not None else (1 if rec["r_net"] >= 10 else 0)
     if rec["cost_drag_r"] is not None:
         rec["label_high_cost_trade"] = 1 if rec["cost_drag_r"] >= 0.5 else 0
+    missing_truth = [field for field in ("source_trade_id", "run_id", "ts_signal", "pnl_net", "r_net") if rec.get(field) is None]
+    if missing_truth:
+        rec["metrics_valid"] = 0
+        reason = f"missing required research-memory truth fields: {', '.join(missing_truth)}"
+        rec["invalid_reason"] = "; ".join(part for part in (rec.get("invalid_reason"), reason) if part)
     return rec
 
 

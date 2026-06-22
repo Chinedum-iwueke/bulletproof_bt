@@ -15,6 +15,7 @@ from bt.risk.reject_codes import (
     INSUFFICIENT_FREE_MARGIN,
     INVALID_FLIP,
     INVALID_SIDE,
+    MAX_GROSS_NOTIONAL_PCT_EQUITY_EXCEEDED,
     MAX_POSITIONS_REACHED,
     MIN_STOP_DISTANCE_VIOLATION,
     NO_EQUITY,
@@ -166,6 +167,7 @@ class RiskEngine:
 
         risk_amount = equity * self._risk_spec.r_per_trade
         risk_meta: dict[str, object] = {
+            "risk_budget": risk_amount,
             "risk_amount": risk_amount,
             "stop_distance": None,
             "stop_price": None,
@@ -289,6 +291,7 @@ class RiskEngine:
                     "instrument_type": "crypto" if instrument is None else instrument.type,
                     "notional": abs(qty) * entry_price,
                     "margin_required": None,
+                    "risk_value_per_price_unit": 1.0,
                 }
             )
             return qty, risk_meta
@@ -308,6 +311,11 @@ class RiskEngine:
                 "instrument_type": instrument.type,
                 "notional": sizing.notional,
                 "margin_required": sizing.margin_required,
+                "risk_value_per_price_unit": (
+                    float(instrument.contract_size)
+                    if instrument.type == "forex" and instrument.contract_size is not None
+                    else 1.0
+                ),
             }
         )
         return sizing.qty_rounded, risk_meta
@@ -323,6 +331,28 @@ class RiskEngine:
         if not isinstance(risk_cfg, dict):
             return 1.0
         return float(risk_cfg.get("max_notional_pct_equity", 1.0))
+
+    def _entry_notional_cap_buffer_pct(self) -> float:
+        risk_cfg = self._config.get("risk", {}) if isinstance(self._config, dict) else {}
+        if not isinstance(risk_cfg, dict):
+            return 0.0
+        raw = float(risk_cfg.get("entry_notional_cap_buffer_pct", 0.0))
+        return max(0.0, raw)
+
+    def _effective_entry_notional_cap(self, cap: float) -> float:
+        # The conservative reference price already incorporates the configured
+        # delay/intrabar buffer. Applying the percentage to the cap as well
+        # would discount exposure twice.
+        return float(cap)
+
+    def _max_gross_notional_pct_equity(self) -> float | None:
+        risk_cfg = self._config.get("risk", {}) if isinstance(self._config, dict) else {}
+        if not isinstance(risk_cfg, dict):
+            return None
+        raw = risk_cfg.get("max_gross_notional_pct_equity")
+        if raw is None:
+            return None
+        return float(raw)
 
     @staticmethod
     def _is_exit_signal(signal: Signal) -> bool:
@@ -477,6 +507,7 @@ class RiskEngine:
         open_positions: int,
         max_leverage: float,
         current_qty: float,
+        current_gross_notional: float = 0.0,
     ) -> tuple[OrderIntent | None, str]:
         """
         Returns (order_intent_or_none, reason_string).
@@ -532,6 +563,7 @@ class RiskEngine:
                     "margin_adverse_move_buffer": 0.0,
                     "free_margin": free_margin,
                     "max_leverage": max_leverage,
+                    "current_gross_notional": current_gross_notional,
                     "scaled_by_margin": False,
                     "reason": reason,
                     "stop_resolution_skipped": is_exit_signal,
@@ -628,22 +660,54 @@ class RiskEngine:
         cap_applied = False
         cap_reason: str | None = None
         max_notional: float | None = None
+        entry_notional_cap_buffer_pct = self._entry_notional_cap_buffer_pct()
+        effective_max_notional: float | None = None
+        cap_reference_price = max(float(bar.close), float(bar.high), float(bar.close) * (1.0 + entry_notional_cap_buffer_pct))
+        cap_unit_notional = max(self._entry_notional_for_qty(qty=1.0, price=cap_reference_price, symbol=signal.symbol), self.eps)
 
-        if self.max_notional_per_symbol is not None and desired_notional > self.max_notional_per_symbol:
-            scale = self.max_notional_per_symbol / desired_notional
-            desired_qty *= scale
+        def _cap_qty(cap: float) -> float:
+            return math.copysign(cap / cap_unit_notional, desired_qty)
+
+        if self.max_notional_per_symbol is not None and abs(desired_qty) * cap_unit_notional > float(self.max_notional_per_symbol):
+            effective_cap = self._effective_entry_notional_cap(float(self.max_notional_per_symbol))
+            desired_qty = _cap_qty(effective_cap)
             desired_notional = self._entry_notional_for_qty(qty=desired_qty, price=bar.close, symbol=signal.symbol)
             cap_applied = True
             cap_reason = "max_notional_per_symbol"
             max_notional = float(self.max_notional_per_symbol)
+            effective_max_notional = effective_cap
 
         max_notional_equity = equity * self._max_notional_pct_equity()
-        if desired_notional > max_notional_equity:
-            desired_qty = math.copysign(max_notional_equity / max(self._entry_notional_for_qty(qty=1.0, price=bar.close, symbol=signal.symbol), self.eps), desired_qty)
+        if abs(desired_qty) * cap_unit_notional > max_notional_equity:
+            effective_cap = self._effective_entry_notional_cap(max_notional_equity)
+            desired_qty = _cap_qty(effective_cap)
             desired_notional = self._entry_notional_for_qty(qty=desired_qty, price=bar.close, symbol=signal.symbol)
             cap_applied = True
             cap_reason = "max_notional_pct_equity"
             max_notional = max_notional_equity
+            effective_max_notional = effective_cap
+
+        max_gross_notional: float | None = None
+        remaining_gross_notional: float | None = None
+        gross_cap_applied = False
+        gross_cap_reason: str | None = None
+        max_gross_pct = self._max_gross_notional_pct_equity()
+        if max_gross_pct is not None and cur_qty == 0:
+            max_gross_notional = equity * max_gross_pct
+            current_gross = max(float(current_gross_notional), 0.0)
+            remaining_gross_notional = max_gross_notional - current_gross
+            if remaining_gross_notional <= self.eps:
+                return None, MAX_GROSS_NOTIONAL_PCT_EQUITY_EXCEEDED
+            if abs(desired_qty) * cap_unit_notional > remaining_gross_notional:
+                effective_cap = self._effective_entry_notional_cap(remaining_gross_notional)
+                desired_qty = _cap_qty(effective_cap)
+                desired_notional = self._entry_notional_for_qty(qty=desired_qty, price=bar.close, symbol=signal.symbol)
+                cap_applied = True
+                cap_reason = "max_gross_notional_pct_equity"
+                max_notional = remaining_gross_notional
+                effective_max_notional = effective_cap
+                gross_cap_applied = True
+                gross_cap_reason = "max_gross_notional_pct_equity"
 
         flip = cur_qty != 0 and signal.side != cur_side
         if flip:
@@ -748,6 +812,7 @@ class RiskEngine:
                 "risk_budget": risk_budget,
                 "stop_dist": stop_dist,
                 "risk_amount": risk_meta["risk_amount"],
+                "risk_value_per_price_unit": risk_meta.get("risk_value_per_price_unit", 1.0),
                 "stop_distance": risk_meta["stop_distance"],
                 "qty_rounding_unit": risk_meta.get("qty_rounding_unit"),
                 "instrument_type": risk_meta.get("instrument_type"),
@@ -773,6 +838,9 @@ class RiskEngine:
                 "cap_applied": cap_applied,
                 "cap_reason": cap_reason,
                 "max_notional": max_notional,
+                "entry_notional_cap_buffer_pct": entry_notional_cap_buffer_pct,
+                "effective_max_notional": effective_max_notional,
+                "cap_reference_price": cap_reference_price,
                 "margin_required": margin_required,
                 "margin_fee_buffer": fee_buffer,
                 "margin_slippage_buffer": slippage_buffer,
@@ -781,6 +849,11 @@ class RiskEngine:
                 "max_leverage": max_leverage,
                 "margin_leverage_used": margin_leverage_used,
                 "scaled_by_margin": scaled_by_margin,
+                "max_gross_notional": max_gross_notional,
+                "current_gross_notional": current_gross_notional,
+                "remaining_gross_notional": remaining_gross_notional,
+                "gross_cap_applied": gross_cap_applied,
+                "gross_cap_reason": gross_cap_reason,
                 "maintenance_free_margin_pct": maintenance_free_margin_pct,
                 "max_total_required": max_total_required,
                 "total_required": total_required,

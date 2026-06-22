@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from collections import deque
 
 import pandas as pd
 import pytest
 
 from bt.core.errors import DataError
 from bt.data.research_panel_loader import _row_to_bar
-from bt.features.online_state import OnlineStateFeatureLayer
+from bt.features.online_state import OnlineStateFeatureLayer, _pctile
+from bt.features.state_builders import _rolling_percentile
 from orchestrator.validate_rich_state_integration import main as validate_rich_state_main
 
 
@@ -34,6 +36,12 @@ def test_ohlcv_only_state_uses_proxy_csi() -> None:
 
     assert snap["entry_state_csi_source"] == "ohlcv_proxy"
     assert snap["entry_state_funding_raw"] is None
+
+
+def test_constant_values_have_neutral_causal_percentiles() -> None:
+    rolled = _rolling_percentile(pd.Series([0.0] * 8), window=8)
+    assert rolled.iloc[-1] == pytest.approx(0.5)
+    assert _pctile(deque([0.0] * 8), 0.0) == pytest.approx(0.5)
 
 
 def test_enriched_state_emits_funding_oi_basis_and_enriched_csi() -> None:

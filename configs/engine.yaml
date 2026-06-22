@@ -33,7 +33,7 @@ risk:
   mode: equity_pct
   r_per_trade: 0.005
   max_positions: 5
-  max_leverage: 1.5
+  max_leverage: 1.0
   stop_resolution: safe         # safe | strict
   allow_legacy_proxy: false     # safe default: no silent fallback/proxy sizing
   hybrid_policy: wider          # wider | tighter
@@ -41,7 +41,13 @@ risk:
   slippage_k_proxy: 0.0
   min_stop_distance_pct: 0.001
   min_stop_distance: null
-  max_notional_pct_equity: 1.0
+  # Research deployment profile: actual entry notional is capped to the same
+  # fraction as R-at-stop so a tight stop cannot quietly create large exposure.
+  # Sized orders use a causal pre-fill buffer because Tier2/Tier3 execution may
+  # fill after a delay and at a conservative intrabar price.
+  max_notional_pct_equity: 0.005
+  entry_notional_cap_buffer_pct: 0.20
+  max_gross_notional_pct_equity: 0.025
   maintenance_free_margin_pct: 0.01
   qty_rounding: none            # none | floor | round
   # Perpetual-futures research must not continue through impossible margin

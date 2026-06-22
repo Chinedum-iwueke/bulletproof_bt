@@ -36,7 +36,7 @@ parameter_grid:
   cap_multiplier: [0.5, 0.75]
   z0: [0.8, 1.0]
   k_atr: [1.5, 2.0]
-  T_hold: [12, 24]
+  T_hold: [24]
 
 gates:
   - field: "liq_gate_t"

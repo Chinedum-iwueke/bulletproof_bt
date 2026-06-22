@@ -94,3 +94,15 @@ class Portfolio:
             notional = abs(position.qty) * mark_price
             total_margin += notional / self.max_leverage
         return total_margin
+
+    def gross_notional(self) -> float:
+        """Return current absolute open-position notional using latest marks."""
+        total_notional = 0.0
+        for symbol, position in self._position_book.all_positions().items():
+            if position.state in {PositionState.FLAT, PositionState.CLOSED}:
+                continue
+            mark_price = self._mark_prices.get(symbol)
+            if mark_price is None:
+                continue
+            total_notional += abs(position.qty) * mark_price
+        return total_notional

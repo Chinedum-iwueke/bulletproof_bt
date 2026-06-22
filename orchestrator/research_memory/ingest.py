@@ -16,6 +16,7 @@ def ingest_research_memory(
     conn,
     *,
     outputs_root: Path,
+    experiment_roots: list[Path] | None = None,
     verdicts_dir: Path,
     state_findings_dir: Path,
     alpha_zoo_dir: Path,
@@ -33,7 +34,11 @@ def ingest_research_memory(
     }
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    for exp_root in discover_experiment_roots(outputs_root):
+    roots = [path for path in (experiment_roots or []) if path.exists()]
+    if not roots:
+        roots = discover_experiment_roots(outputs_root)
+
+    for exp_root in roots:
         manifest["experiments_scanned"] += 1
         try:
             counts = _ingest_experiment(conn, exp_root, outputs_root)

@@ -56,6 +56,42 @@ PHASE9_PREFIXES = (
     "label_",
 )
 
+TRADE_SIZING_CONTEXT_COLUMNS = [
+    "risk_budget",
+    "risk_amount",
+    "risk_utilization_pct",
+    "risk_value_per_price_unit",
+    "entry_qty",
+    "stop_dist",
+    "stop_distance",
+    "sizing_notional",
+    "sizing_margin_required",
+    "notional_est",
+    "cap_applied",
+    "cap_reason",
+    "max_notional",
+    "max_gross_notional",
+    "current_gross_notional",
+    "remaining_gross_notional",
+    "gross_cap_applied",
+    "gross_cap_reason",
+    "margin_required",
+    "margin_fee_buffer",
+    "margin_slippage_buffer",
+    "margin_adverse_move_buffer",
+    "free_margin",
+    "free_margin_post",
+    "max_leverage",
+    "margin_leverage_used",
+    "maintenance_free_margin_pct",
+    "maintenance_required",
+    "max_total_required",
+    "total_required",
+    "mark_price_used_for_margin",
+    "equity_used",
+    "scaled_by_margin",
+]
+
 RUN_DATASET_COLUMNS_V1 = [
     "experiment_id",
     "experiment_root",
@@ -477,7 +513,9 @@ def _build_trade_rows(
     out["fees_paid"] = pd.to_numeric(trades_df.get("fees_paid", trades_df.get("fees", 0.0)), errors="coerce")
     out["slippage_cost"] = pd.to_numeric(trades_df.get("slippage", trades_df.get("slippage_total", 0.0)), errors="coerce")
 
-    entry_notional = pd.to_numeric(trades_df.get("entry_price"), errors="coerce") * pd.to_numeric(trades_df.get("qty"), errors="coerce").abs()
+    entry_qty = _numeric_series_from_candidates(trades_df, "entry_qty", "qty").abs()
+    entry_notional = pd.to_numeric(trades_df.get("entry_price"), errors="coerce") * entry_qty
+    out["actual_entry_notional"] = entry_notional
     out["pnl_pct"] = out["net_pnl"] / entry_notional.replace(0.0, pd.NA)
     out["pnl_r"] = pd.to_numeric(trades_df.get("r_multiple_net", trades_df.get("realized_r_net")), errors="coerce")
 
@@ -497,6 +535,15 @@ def _build_trade_rows(
     for column in TRADE_OPTIONAL_CONTEXT_COLUMNS:
         if column in trades_df.columns:
             out[column] = trades_df[column]
+    for column in TRADE_SIZING_CONTEXT_COLUMNS:
+        if column in trades_df.columns and column not in out.columns:
+            out[column] = trades_df[column]
+    if "equity_used" in out.columns:
+        out["actual_notional_pct_equity"] = pd.to_numeric(out["actual_entry_notional"], errors="coerce") / pd.to_numeric(out["equity_used"], errors="coerce").replace(0.0, pd.NA)
+    if "sizing_notional" in out.columns and "equity_used" in out.columns:
+        out["requested_notional_pct_equity"] = pd.to_numeric(out["sizing_notional"], errors="coerce") / pd.to_numeric(out["equity_used"], errors="coerce").replace(0.0, pd.NA)
+    if "margin_required" in out.columns and "equity_used" in out.columns:
+        out["margin_pct_equity"] = pd.to_numeric(out["margin_required"], errors="coerce") / pd.to_numeric(out["equity_used"], errors="coerce").replace(0.0, pd.NA)
     for column in trades_df.columns:
         if any(column.startswith(prefix) for prefix in PHASE9_PREFIXES) and column not in out.columns:
             out[column] = trades_df[column]
@@ -505,6 +552,31 @@ def _build_trade_rows(
 
     for key, value in run_provenance.items():
         out[key] = value
+
+    if "identity_trade_id" not in out.columns:
+        out["identity_trade_id"] = out["trade_id"]
+    else:
+        out["identity_trade_id"] = out["identity_trade_id"].where(
+            out["identity_trade_id"].notna() & out["identity_trade_id"].astype(str).str.strip().ne(""),
+            out["trade_id"],
+        )
+    if "identity_parameter_set_id" not in out.columns:
+        out["identity_parameter_set_id"] = out["parameter_set_id"]
+    else:
+        out["identity_parameter_set_id"] = out["identity_parameter_set_id"].where(
+            out["identity_parameter_set_id"].notna()
+            & out["identity_parameter_set_id"].astype(str).str.strip().ne(""),
+            out["parameter_set_id"],
+        )
+    signal_ts = _series_from_candidates(trades_df, "signal_ts", "ts_signal", default=None)
+    if "identity_ts_signal" not in out.columns:
+        out["identity_ts_signal"] = signal_ts
+    else:
+        out["identity_ts_signal"] = out["identity_ts_signal"].where(
+            out["identity_ts_signal"].notna()
+            & out["identity_ts_signal"].astype(str).str.strip().ne(""),
+            signal_ts,
+        )
 
     return out
 
@@ -664,8 +736,7 @@ def _enrich_trade_labels(
     if trades_df.empty:
         return trades_df
 
-    enriched = trades_df.merge(
-        runs_df[
+    run_labels = runs_df[
             [
                 "run_id",
                 "net_pnl",
@@ -675,18 +746,18 @@ def _enrich_trade_labels(
                 "run_rank_by_net_pnl",
                 "run_is_top_decile",
             ]
-        ],
+        ].rename(
+            columns={
+                "net_pnl": "run_net_pnl",
+                "sharpe": "run_sharpe",
+                "max_drawdown": "run_max_drawdown",
+                "trade_count": "run_trade_count",
+            }
+        )
+    enriched = trades_df.merge(
+        run_labels,
         on="run_id",
         how="left",
-        suffixes=("", "_run"),
-    )
-    enriched = enriched.rename(
-        columns={
-            "net_pnl": "run_net_pnl",
-            "sharpe": "run_sharpe",
-            "max_drawdown": "run_max_drawdown",
-            "trade_count": "run_trade_count",
-        }
     )
     enriched = enriched.assign(
         run_passes_min_trade_count=(enriched["run_trade_count"].fillna(0) >= min_trades_per_run)
@@ -771,7 +842,12 @@ def _enforce_contract_column_order(
         runs_df = pd.concat([runs_df, pd.DataFrame({col: [None] * len(runs_df) for col in missing_run_cols}, index=runs_df.index)], axis=1)
     runs_df = runs_df[run_cols]
 
-    trade_cols = TRADES_DATASET_COLUMNS_V1 + TRADE_OPTIONAL_CONTEXT_COLUMNS + sorted(
+    trade_cols = TRADES_DATASET_COLUMNS_V1 + TRADE_OPTIONAL_CONTEXT_COLUMNS + TRADE_SIZING_CONTEXT_COLUMNS + [
+        "actual_entry_notional",
+        "actual_notional_pct_equity",
+        "requested_notional_pct_equity",
+        "margin_pct_equity",
+    ] + sorted(
         col for col in trades_df.columns if col.startswith("param_") and col not in TRADES_DATASET_COLUMNS_V1
     )
     trade_cols += [col for col in trades_df.columns if col not in trade_cols]

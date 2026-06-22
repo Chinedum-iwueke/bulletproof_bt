@@ -27,7 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ranking-metric", default="net_pnl")
     parser.add_argument("--delete-logs", action="store_true", default=False)
     parser.add_argument("--delete-nonretained-runs", action="store_true", default=False)
-    parser.add_argument("--keep-equity-for-retained", action="store_true", default=False)
+    parser.add_argument("--keep-equity-for-retained", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--skip-existing-extraction", action="store_true", default=False)
     parser.add_argument("--overwrite-extraction", action="store_true", default=False)
     parser.add_argument("--dry-run", action="store_true", default=False)

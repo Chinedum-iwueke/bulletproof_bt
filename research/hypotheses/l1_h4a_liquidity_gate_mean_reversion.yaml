@@ -34,7 +34,7 @@ parameter_grid:
   q_liq: [0.6, 0.7]
   z0: [0.8, 1.0]
   k_atr: [1.5, 2.0]
-  T_hold: [12, 24]
+  T_hold: [24]
   size_adjustment_enabled: [false]
   cap_multiplier: [0.5, 0.75]
 

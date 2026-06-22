@@ -31,7 +31,7 @@ parameter_grid:
   theta_vol: [0.70, 0.80, 0.85]
   k_atr: [2.0, 2.5]
   T_hold: [24, 48]
-  tp_enabled: [true, false]
+  tp_enabled: [true]
   m_atr: [2.0]
 
 entry:

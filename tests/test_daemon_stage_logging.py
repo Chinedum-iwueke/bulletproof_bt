@@ -10,10 +10,9 @@ def test_daemon_uses_output_scoped_log_dir() -> None:
     assert str(p).endswith("outputs/tier2/myjob_daemon_command_logs")
 
 
-def test_post_agent_failure_not_main_queue_failure_semantics() -> None:
-    # Pipeline failure handling is isolated from post-agent failures in daemon flow:
-    # only non-zero pipeline stage triggers mark_queue_failed.
-    # Post-agent stages append warnings while allowing completed queue state.
+def test_post_agent_stages_are_part_of_queue_completion_contract() -> None:
+    # Enabled post-pipeline agents are required research stages. The daemon
+    # marks DONE only after discovery, verdict, memory, and card refresh.
     config = {
         "run_state_discovery_after_pipeline": True,
         "run_interpretation_after_pipeline": True,

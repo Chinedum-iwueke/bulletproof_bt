@@ -43,6 +43,7 @@ def validate_resolved_config_completeness(config: dict[str, Any]) -> None:
         "risk.slippage_k_proxy",
         "risk.min_stop_distance_pct",
         "risk.max_notional_pct_equity",
+        "risk.max_gross_notional_pct_equity",
         "risk.maintenance_free_margin_pct",
     ]
     for path in required_paths:

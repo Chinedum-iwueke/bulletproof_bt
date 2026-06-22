@@ -1,0 +1,30 @@
+{
+  "date": "2026-06-21",
+  "status": "repaired_reset_and_daemon_restarted",
+  "strategy_behavior_changed": false,
+  "execution_semantics_changed": false,
+  "focused_tests_passed": 78,
+  "engine_integration_tests_passed": 15,
+  "compile_check": "pass",
+  "diff_check": "pass",
+  "invalidated_outputs": [
+    "outputs/tier2",
+    "research/state_findings",
+    "research/verdicts",
+    "research/memory",
+    "research/alpha_zoo"
+  ],
+  "repairs": [
+    "requested risk budget separated from actual filled stop risk",
+    "single conservative notional cap buffer",
+    "entry sizing metadata frozen",
+    "trade and run PnL extraction separated",
+    "research identities and signal timestamps populated",
+    "memory validity requires populated truth fields",
+    "causal percentile ties use mid-rank",
+    "pre-analysis and post-extraction truth gates",
+    "retained equity truth preserved",
+    "queue completion requires all downstream research stages",
+    "terminal cards refreshed after verdict and memory"
+  ]
+}

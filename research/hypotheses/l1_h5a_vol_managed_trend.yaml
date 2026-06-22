@@ -25,7 +25,7 @@ parameter_grid:
   s_max: [1.0, 1.5]
   s_min: [0.25, 0.5]
   k_atr: [2.0, 2.5]
-  T_hold: [24, 48]
+  T_hold: [24]
 
 entry:
   strategy: "l1_h5a_vol_managed_trend"

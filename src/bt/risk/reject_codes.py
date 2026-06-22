@@ -20,6 +20,7 @@ INSUFFICIENT_FREE_MARGIN = "risk_rejected:insufficient_free_margin"
 MAX_POSITIONS_REACHED = "risk_rejected:max_positions_reached"
 MAX_NOTIONAL_EXCEEDED = "risk_rejected:max_notional_exceeded"
 MAX_NOTIONAL_PCT_EQUITY_EXCEEDED = "risk_rejected:max_notional_pct_equity_exceeded"
+MAX_GROSS_NOTIONAL_PCT_EQUITY_EXCEEDED = "risk_rejected:max_gross_notional_pct_equity_exceeded"
 
 # Additional stable reject codes used by RiskEngine
 NO_SIDE = "risk_rejected:no_side"
@@ -50,6 +51,7 @@ _ALL_CODES = {
     MAX_POSITIONS_REACHED,
     MAX_NOTIONAL_EXCEEDED,
     MAX_NOTIONAL_PCT_EQUITY_EXCEEDED,
+    MAX_GROSS_NOTIONAL_PCT_EQUITY_EXCEEDED,
     NO_SIDE,
     SYMBOL_MISMATCH,
     NO_EQUITY,

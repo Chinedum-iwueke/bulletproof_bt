@@ -1,0 +1,232 @@
+{
+  "memory": {
+    "invalid_trades": 0,
+    "recommendations": 69,
+    "state_buckets": 57,
+    "trades_by_root": [
+      [
+        "outputs/kernel_comparison/all_stable_fast_paths/l1_h11a",
+        36
+      ],
+      [
+        "outputs/kernel_comparison/stable_all_hypotheses/l1_h11a",
+        36
+      ],
+      [
+        "outputs/kernel_comparison/stable_family_parity/l1_h11a",
+        36
+      ],
+      [
+        "outputs/tier2/l1_h11a_parallel_stable",
+        152284
+      ],
+      [
+        "outputs/tier2/l1_h11a_parallel_vol",
+        31538
+      ]
+    ]
+  },
+  "pipeline": {
+    "pipeline_log": "Pipeline start: 2026-06-14T09:40:36+00:00\nPipeline end: 2026-06-16T03:57:06+00:00\nFINAL_STATUS: SUCCESS\nVERDICT_BUNDLE: /home/omenka/Projects/bulletproof_bt/outputs/tier2/l1_h11a_verdict_bundle",
+    "terminal_cards_count": 7,
+    "verdict": {
+      "confidence": 0.8,
+      "dominant_failure_mode": "cost_drag",
+      "evidence": {
+        "best_dataset": "volatile",
+        "best_ev_r_net": 0.708062509221,
+        "median_ev_r_net": 0.16330903636900002,
+        "notes": [
+          "Positive EV in volatile conditions but poor exit efficiency resulting in negative gross-to-net returns."
+        ],
+        "positive_runs": 17
+      },
+      "human_approval_required": true,
+      "llm_model": "qwen2.5:7b",
+      "llm_parse_error": false,
+      "llm_provider": "ollama",
+      "llm_used": true,
+      "primary_reason": "Positive EV in volatile conditions but poor exit efficiency resulting in negative gross-to-net returns.",
+      "promote_runs": [],
+      "raw_llm_output": "{\n  \"verdict\": \"REFINE_EXIT\",\n  \"confidence\": 0.8,\n  \"summary\": \"The hypothesis shows positive EV in volatile conditions but suffers from significant cost drag, leading to negative overall performance. The robustness score is weak across the board, and there are no clear positive states identified.\",\n  \"primary_reason\": \"Positive EV in volatile conditions but poor exit efficiency resulting in negative gross-to-net returns.\",\n  \"promote_runs\": [],\n  \"refine_from_runs\": [\n    {\n      \"run_id\": \"row_00012__g00011__adx_min-20_family_variant-L1-H11A_impulse_min_atr_fixed-1p0_pull_entry_atr_high-1p0_pull_entry_atr_low-0p65_signal_timeframe-1h_stop_atr_mult-2p0__tier2\"\n    },\n    {\n      \"run_id\": \"row_00010__g00009__adx_min-20_family_variant-L1-H11A_impulse_min_atr_fixed-1p0_pull_entry_atr_high-1p0_pull_entry_atr_low-0p5_signal_timeframe-1h_stop_atr_mult-2p0__tier2\"\n    },\n    {\n      \"run_id\": \"row_00006__g00005__adx_min-20_family_variant-L1-H11A_impulse_min_atr_fixed-1p0_pull_entry_atr_high-0p8_pull_entry_atr_low-0p65_signal_timeframe-1h_stop_atr_mult-2p0__tier2\"\n    }\n  ],\n  \"scrap_reason\": null,\n  \"dominant_failure_mode\": \"cost_drag\",\n  \"evidence\": {\n    \"best_ev_r_net\": 0.708062509221,\n    \"median_ev_r_net\": 0.16330903636900002,\n    \"positive_runs\": 17,\n    \"best_dataset\": \"volatile\",\n    \"notes\": [\n      \"Positive EV in volatile conditions but poor exit efficiency resulting in negative gross-to-net returns.\"\n    ]\n  },\n  \"recommended_next_tests\": [\n    {\n      \"type\": \"exit_efficiency\",\n      \"description\": \"Optimize the exit strategy to improve cost drag and overall performance.\",\n      \"grid_size\": 24,\n      \"parent_runs\": []\n    }\n  ],\n  \"human_approval_required\": true\n}",
+      "recommended_next_tests": [
+        {
+          "description": "Optimize the exit strategy to improve cost drag and overall performance.",
+          "grid_size": 24,
+          "parent_runs": [],
+          "type": "exit_efficiency"
+        }
+      ],
+      "refine_from_runs": [
+        {
+          "run_id": "row_00012__g00011__adx_min-20_family_variant-L1-H11A_impulse_min_atr_fixed-1p0_pull_entry_atr_high-1p0_pull_entry_atr_low-0p65_signal_timeframe-1h_stop_atr_mult-2p0__tier2"
+        },
+        {
+          "run_id": "row_00010__g00009__adx_min-20_family_variant-L1-H11A_impulse_min_atr_fixed-1p0_pull_entry_atr_high-1p0_pull_entry_atr_low-0p5_signal_timeframe-1h_stop_atr_mult-2p0__tier2"
+        },
+        {
+          "run_id": "row_00006__g00005__adx_min-20_family_variant-L1-H11A_impulse_min_atr_fixed-1p0_pull_entry_atr_high-0p8_pull_entry_atr_low-0p65_signal_timeframe-1h_stop_atr_mult-2p0__tier2"
+        }
+      ],
+      "scrap_reason": null,
+      "summary": "The hypothesis shows positive EV in volatile conditions but suffers from significant cost drag, leading to negative overall performance. The robustness score is weak across the board, and there are no clear positive states identified.",
+      "verdict": "REFINE_EXIT",
+      "verdict_source": "llm"
+    }
+  },
+  "stable": {
+    "dataset_manifest": {
+      "created_at_utc": "2026-06-16T03:56:44+00:00",
+      "experiment_root": "outputs/tier2/l1_h11a_parallel_stable",
+      "hypothesis_id": "L1-H11A",
+      "manifest_source": "outputs/tier2/l1_h11a_parallel_stable/manifests/l1_h11a_tier2_grid.csv",
+      "output_files": {
+        "dataset_manifest": "/home/omenka/Projects/bulletproof_bt/outputs/tier2/l1_h11a_parallel_stable/research_data/dataset_manifest.json",
+        "dropped_runs": "/home/omenka/Projects/bulletproof_bt/outputs/tier2/l1_h11a_parallel_stable/research_data/dropped_runs.csv",
+        "experiment_summary": "/home/omenka/Projects/bulletproof_bt/outputs/tier2/l1_h11a_parallel_stable/research_data/experiment_summary.json",
+        "extraction_log": "/home/omenka/Projects/bulletproof_bt/outputs/tier2/l1_h11a_parallel_stable/research_data/extraction_log.json",
+        "feature_dictionary": "/home/omenka/Projects/bulletproof_bt/outputs/tier2/l1_h11a_parallel_stable/research_data/feature_dictionary.json",
+        "runs_dataset": "/home/omenka/Projects/bulletproof_bt/outputs/tier2/l1_h11a_parallel_stable/research_data/runs_dataset.parquet",
+        "trades_dataset": "/home/omenka/Projects/bulletproof_bt/outputs/tier2/l1_h11a_parallel_stable/research_data/trades_dataset.parquet"
+      },
+      "run_rows": 24,
+      "runs_dropped": 0,
+      "runs_parsed": 24,
+      "runs_scanned": 24,
+      "schema_version": "v1",
+      "script_version": "1.0.0",
+      "trade_rows": 152284
+    },
+    "extracted_consistency_max_abs": {
+      "mean_pnl_r_diff": 8.326672684688674e-17,
+      "trade_count_diff": 0.0
+    },
+    "extracted_runs": 24,
+    "extracted_trades": 152284,
+    "manifest_rows": 24,
+    "manifest_status_counts": {
+      "COMPLETED": 24
+    },
+    "retained_exposure": {
+      "actual_notional_pct_max": 1.0347660476016745,
+      "actual_notional_pct_median": 0.3490665262358621,
+      "actual_notional_pct_over_100pct_rows": 22,
+      "actual_notional_pct_over_20pct_rows": 17599,
+      "actual_notional_pct_p95": 0.8483836290506709,
+      "rows": 25350,
+      "scaled_by_margin_rows": 10310
+    },
+    "retained_raw_pnl_arithmetic_bad_rows": 23749,
+    "retained_raw_pnl_arithmetic_max_diff": 75.66835012791097,
+    "retained_raw_runs": 4,
+    "rich_columns_present": [
+      "entry_state_funding_raw",
+      "entry_state_funding_pctile",
+      "entry_state_oi_level",
+      "entry_state_oi_accel_pctile",
+      "entry_state_mark_price",
+      "entry_state_index_price",
+      "entry_state_basis_pctile",
+      "entry_state_csi_source"
+    ],
+    "rich_entry_state_column_count": 72,
+    "run_summary_metric_snapshot": {
+      "ev_r_net_max": -0.20078626629,
+      "ev_r_net_median": -0.218477400031,
+      "ev_r_net_min": -0.304060417584,
+      "num_trades_sum": 152284,
+      "positive_ev_runs": 0
+    },
+    "source_ts_lookahead_violations": {
+      "entry_state_funding_source_ts": 0,
+      "entry_state_oi_source_ts": 0
+    },
+    "summary_rows": 24
+  },
+  "state_findings": {
+    "datasets": {},
+    "finding_types": {
+      "BASIS_PREMIUM_EDGE_STATE": 7,
+      "CONSTRAINT_STRESS_TAIL_STATE": 5,
+      "COST_KILLED_DERIVATIVE_STRESS_STATE": 6,
+      "COST_KILLED_STATE": 6,
+      "EXIT_FAILURE_STATE": 118,
+      "FRAGILE_STATE": 9,
+      "FUNDING_EXTREME_AVOID_STATE": 109,
+      "FUNDING_EXTREME_EDGE_STATE": 30,
+      "OI_BUILDUP_AVOID_STATE": 86,
+      "OI_BUILDUP_EDGE_STATE": 6,
+      "STRUCTURELESS": 51
+    },
+    "rows": 433
+  },
+  "vol": {
+    "dataset_manifest": {
+      "created_at_utc": "2026-06-16T03:56:54+00:00",
+      "experiment_root": "outputs/tier2/l1_h11a_parallel_vol",
+      "hypothesis_id": "L1-H11A",
+      "manifest_source": "outputs/tier2/l1_h11a_parallel_vol/manifests/l1_h11a_tier2_grid.csv",
+      "output_files": {
+        "dataset_manifest": "/home/omenka/Projects/bulletproof_bt/outputs/tier2/l1_h11a_parallel_vol/research_data/dataset_manifest.json",
+        "dropped_runs": "/home/omenka/Projects/bulletproof_bt/outputs/tier2/l1_h11a_parallel_vol/research_data/dropped_runs.csv",
+        "experiment_summary": "/home/omenka/Projects/bulletproof_bt/outputs/tier2/l1_h11a_parallel_vol/research_data/experiment_summary.json",
+        "extraction_log": "/home/omenka/Projects/bulletproof_bt/outputs/tier2/l1_h11a_parallel_vol/research_data/extraction_log.json",
+        "feature_dictionary": "/home/omenka/Projects/bulletproof_bt/outputs/tier2/l1_h11a_parallel_vol/research_data/feature_dictionary.json",
+        "runs_dataset": "/home/omenka/Projects/bulletproof_bt/outputs/tier2/l1_h11a_parallel_vol/research_data/runs_dataset.parquet",
+        "trades_dataset": "/home/omenka/Projects/bulletproof_bt/outputs/tier2/l1_h11a_parallel_vol/research_data/trades_dataset.parquet"
+      },
+      "run_rows": 24,
+      "runs_dropped": 0,
+      "runs_parsed": 24,
+      "runs_scanned": 24,
+      "schema_version": "v1",
+      "script_version": "1.0.0",
+      "trade_rows": 31538
+    },
+    "extracted_consistency_max_abs": {
+      "mean_pnl_r_diff": 1.6653345369377348e-16,
+      "trade_count_diff": 0.0
+    },
+    "extracted_runs": 24,
+    "extracted_trades": 31538,
+    "manifest_rows": 24,
+    "manifest_status_counts": {
+      "COMPLETED": 24
+    },
+    "retained_exposure": {
+      "actual_notional_pct_max": 3.3657702062000263,
+      "actual_notional_pct_median": 0.1268008854495181,
+      "actual_notional_pct_over_100pct_rows": 5,
+      "actual_notional_pct_over_20pct_rows": 1071,
+      "actual_notional_pct_p95": 0.29972738235404023,
+      "rows": 5207,
+      "scaled_by_margin_rows": 33
+    },
+    "retained_raw_pnl_arithmetic_bad_rows": 5207,
+    "retained_raw_pnl_arithmetic_max_diff": 113.26138073335801,
+    "retained_raw_runs": 4,
+    "rich_columns_present": [
+      "entry_state_funding_raw",
+      "entry_state_funding_pctile",
+      "entry_state_oi_level",
+      "entry_state_oi_accel_pctile",
+      "entry_state_mark_price",
+      "entry_state_index_price",
+      "entry_state_basis_pctile",
+      "entry_state_csi_source"
+    ],
+    "rich_entry_state_column_count": 72,
+    "run_summary_metric_snapshot": {
+      "ev_r_net_max": 0.708062509221,
+      "ev_r_net_median": 0.16330903636900002,
+      "ev_r_net_min": -0.200966798393,
+      "num_trades_sum": 31538,
+      "positive_ev_runs": 17
+    },
+    "source_ts_lookahead_violations": {
+      "entry_state_funding_source_ts": 0,
+      "entry_state_oi_source_ts": 0
+    },
+    "summary_rows": 24
+  }
+}
