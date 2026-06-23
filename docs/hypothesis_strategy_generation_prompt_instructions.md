@@ -40,8 +40,13 @@ must clarify:
   stops reject entries.
 - Exact risk contract: `risk.r_per_trade`, maximum positions, maximum entry
   notional, maximum gross notional, and whether pyramiding/flips are allowed.
-- Whether the strategy is expected to be deployable under
-  `risk.max_notional_pct_equity: 0.005` and `risk.max_leverage: 1.0`.
+- Whether the strategy is expected to be deployable under the production
+  guardrails: `risk.r_per_trade: 0.005`,
+  `risk.max_notional_pct_equity: 0.5`,
+  `risk.max_gross_notional_pct_equity: 1.0`, and
+  `risk.max_leverage: 1.0`. Risk-at-stop is the sizing target; notional,
+  aggregate exposure, margin, liquidity, and minimum-stop rules remain
+  independent safety constraints.
 - Expected run artifact fields needed for post-run learning.
 - Falsification conditions that should scrap or refine the hypothesis.
 
@@ -93,6 +98,30 @@ The YAML must define:
 Use `dataset_kind: research_panel` through daemon/run configs, not legacy
 external curated folders. New research runs should use:
 
+Every generated YAML must also contain this exact machine-enforced block:
+
+```yaml
+truth_contract:
+  version: "1.0"
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  parity_required_for_fast_path: true
+  research_memory_requires_certification: true
+```
+
+Do not reinterpret these values. A hypothesis requiring different semantics is
+a separate non-production research profile and must not enter the normal SaaS
+or daemon queue.
+
 ```bash
 PYTHONPATH=src python3 scripts/run_parallel_hypothesis_grid.py \
   --experiment-root outputs/tier2/<hypothesis>_parallel_stable \
@@ -104,7 +133,9 @@ PYTHONPATH=src python3 scripts/run_parallel_hypothesis_grid.py \
   --exchange binance \
   --universe stable \
   --timeframe 1m \
-  --max-workers 8 \
+  --max-workers 12 \
+  --max-workers-auto \
+  --max-ram-per-worker-gb 4 \
   --skip-completed
 ```
 
@@ -122,7 +153,9 @@ PYTHONPATH=src python3 scripts/run_parallel_hypothesis_grid.py \
   --universe volatile \
   --membership-path research_data/manifests/volatile_universe_membership.parquet \
   --timeframe 1m \
-  --max-workers 8 \
+  --max-workers 12 \
+  --max-workers-auto \
+  --max-ram-per-worker-gb 4 \
   --skip-completed
 ```
 
@@ -300,6 +333,18 @@ Add tests that prove:
 
 Before queueing a new hypothesis:
 
+- Run the mandatory admission gate:
+
+  ```bash
+  PYTHONPATH=src python3 scripts/validate_hypothesis_admission.py \
+    --hypothesis research/hypotheses/<hypothesis>.yaml \
+    --output research/audits/<hypothesis>_strategy_admission.json
+  ```
+
+- Admission must report `PASS`. Do not queue around a failed check, suppress a
+  check, or relabel a warning. The daemon runs the same gate again before it
+  builds manifests.
+
 - `PYTHONPATH=src pytest -q <focused tests>` passes.
 - `python scripts/build_hypothesis_grid.py ...` writes the expected manifest.
 - Stable preflight passes.
@@ -336,3 +381,42 @@ Strategies should be generated so this gate is expected to pass. If a
 hypothesis intentionally tests forced liquidation, leverage, or margin stress,
 that must be isolated in a dedicated research profile and not mixed into normal
 production-deployable hypothesis grids.
+
+## Definition Of A Certified Result
+
+A completed process is not automatically a trustworthy result. Results may be
+shown as engine-certified in the SaaS, used by verdict agents, or ingested into
+research memory only when all of these are true:
+
+1. Strategy admission passed for the exact hypothesis and strategy source
+   hashes.
+2. Every requested manifest row has a terminal `PASS` run status.
+3. Required decisions, fills, trades, equity, configuration, and performance
+   artifacts existed before extraction/cleanup.
+4. Stable and volatile experiment truth reports both say `PASS` with zero hard
+   failures.
+5. Canonical extraction completed with zero dropped runs and unique trade and
+   parameter-set identities.
+6. The extracted dataset passed the second truth validation.
+7. Cleanup occurred only after extraction and certification.
+8. Research memory ingested only rows marked `metrics_valid=true`.
+
+The stable SaaS enforcement seam is
+`bt.saas.truth_certification.require_truth_certification`. Engine-generated
+results without a passing report and canonical datasets must be presented as
+`UNVERIFIED` or rejected, never as a valid backtest.
+
+## Required Generator Completion Response
+
+When Codex generates a strategy family from this document, it must not claim
+completion after merely writing code. Its final response must report:
+
+- hypothesis admission result and report path
+- focused test count and result
+- classic-versus-fast parity result, or `classic_only`
+- OHLCV-only and enriched-data smoke results
+- stable and volatile membership smoke results
+- exact risk, notional, gross-exposure, leverage, stop, and execution contract
+- any unavailable rich-data fields and fallback behavior
+
+Any failed item means the package is not queue-ready.

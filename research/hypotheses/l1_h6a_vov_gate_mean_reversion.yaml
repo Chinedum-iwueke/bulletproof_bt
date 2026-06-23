@@ -141,3 +141,19 @@ notes:
   failure_modes:
     - "The vov gate may be partially redundant with simpler volatility gates."
     - "The gate may miss sudden jump regimes that emerge before vov history updates."
+
+truth_contract:
+  version: "1.0"
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  parity_required_for_fast_path: true
+  research_memory_requires_certification: true

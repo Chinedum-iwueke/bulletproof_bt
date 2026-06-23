@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://invarianceresearch.xyz/schemas/research_copilot_turn_v1.schema.json",
+  "title": "Research Copilot Turn V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "mode", "response", "candidates", "research_state", "warnings"],
+  "properties": {
+    "schema_version": { "const": "research_copilot_turn_v1" },
+    "mode": { "enum": ["exploratory", "direct_instruction", "source_analysis", "artifact_analysis"] },
+    "response": { "type": "string", "minLength": 1 },
+    "next_question": { "type": "string" },
+    "candidates": {
+      "type": "array",
+      "maxItems": 5,
+      "items": { "$ref": "#/$defs/candidate" }
+    },
+    "research_state": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/researchStateField" }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "message"],
+        "properties": { "code": { "type": "string" }, "message": { "type": "string" } }
+      }
+    }
+  },
+  "$defs": {
+    "researchStateField": {
+      "type": "object",
+      "required": ["value", "provenance", "confidence"],
+      "properties": {
+        "value": { "type": "string" },
+        "provenance": { "enum": ["stated", "extracted", "inferred", "recommended", "confirmed", "unresolved", "unsupported"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "rationale": { "type": "string" }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "required": ["schema_version", "claim", "mechanism", "observable_proxy", "expected_direction", "horizon", "entry_idea", "exit_idea", "required_datasets", "falsification_test", "failure_modes", "implementation_readiness", "rationale", "source_citations"],
+      "properties": {
+        "schema_version": { "const": "candidate_hypothesis_v1" },
+        "claim": { "type": "string" },
+        "mechanism": { "type": "string" },
+        "observable_proxy": { "type": "string" },
+        "expected_direction": { "type": "string" },
+        "horizon": { "type": "string" },
+        "entry_idea": { "type": "string" },
+        "exit_idea": { "type": "string" },
+        "required_datasets": { "type": "array", "items": { "type": "string" } },
+        "falsification_test": { "type": "string" },
+        "failure_modes": { "type": "array", "items": { "type": "string" } },
+        "implementation_readiness": { "enum": ["likely_supported", "needs_capability_check", "data_blocked"] },
+        "rationale": { "type": "string" },
+        "source_citations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["source_id", "chunk_id"],
+            "properties": { "source_id": { "type": "string" }, "chunk_id": { "type": "string" }, "quote": { "type": "string" } }
+          }
+        }
+      }
+    }
+  }
+}

@@ -108,3 +108,41 @@ def test_truth_validation_fails_divergent_duplicate_risk_column(tmp_path: Path) 
 
     assert report.status == "FAIL"
     assert any(issue.check == "duplicate_truth_column" for issue in report.issues)
+
+
+def test_truth_validation_accepts_logs_explicitly_removed_after_extraction(tmp_path: Path) -> None:
+    run_dir = _write_run(tmp_path)
+    deleted = []
+    for name in ("decisions.jsonl", "fills.jsonl"):
+        path = run_dir / name
+        deleted.append(str(path.resolve()))
+        path.unlink()
+    research_dir = tmp_path / "research_data"
+    research_dir.mkdir()
+    pd.DataFrame(
+        [{
+            "trade_id": "t1",
+            "identity_trade_id": "t1",
+            "parameter_set_id": "p1",
+            "identity_parameter_set_id": "p1",
+            "identity_ts_signal": "2025-01-01T00:00:00Z",
+            "net_pnl": 4.0,
+            "pnl_r": 0.04,
+        }]
+    ).to_parquet(research_dir / "trades_dataset.parquet", index=False)
+    pd.DataFrame([{"run_id": run_dir.name}]).to_parquet(
+        research_dir / "runs_dataset.parquet", index=False
+    )
+    (research_dir / "cleanup_log.json").write_text(
+        json.dumps({
+            "delete_logs": True,
+            "files_deleted": deleted,
+            "extraction": {"status": "ok"},
+        }),
+        encoding="utf-8",
+    )
+
+    report = validate_experiment_root(tmp_path)
+
+    assert report.status == "PASS"
+    assert report.hard_failures == 0

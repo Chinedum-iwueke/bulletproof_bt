@@ -2,8 +2,8 @@ poll_interval_seconds: 60
 queue_name: approved_backtests
 locked_by_prefix: research-daemon
 default_phase: tier2
-default_max_workers: 8
-volatile_max_workers: 8
+default_max_workers: 12
+volatile_max_workers: 12
 default_config: configs/engine.yaml
 default_local_config: configs/local/engine.lab.yaml
 data_mode: research_panel
@@ -19,10 +19,10 @@ retain_median: 1
 retain_worst: 1
 cleanup_delete_logs: true
 cleanup_delete_nonretained_runs: true
-runner_max_workers_auto: false
+runner_max_workers_auto: true
 runner_reserve_ram_gb: 8
-runner_max_ram_per_worker_gb: null
-runner_min_free_ram_gb: 6
+runner_max_ram_per_worker_gb: 4
+runner_min_free_ram_gb: 8
 runner_run_timeout_seconds: null
 runner_fail_fast: false
 runner_resume_strict: true

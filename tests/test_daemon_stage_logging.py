@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from orchestrator import research_daemon as rd
+from orchestrator.db import PIPELINE_RUN_STATUSES
 
 
 def test_daemon_uses_output_scoped_log_dir() -> None:
@@ -28,3 +29,7 @@ def test_stage_names_are_ordered_prefixes(tmp_path: Path) -> None:
     command_log_dir = rd._daemon_command_log_dir("1", payload["name"], payload["outputs_root"], "tier3")
     assert command_log_dir.name == "demo_daemon_command_logs"
     assert command_log_dir.parent.name == "tier3"
+
+
+def test_strategy_admission_is_a_registered_pipeline_status() -> None:
+    assert "STRATEGY_ADMISSION" in PIPELINE_RUN_STATUSES

@@ -122,3 +122,19 @@ notes:
     - "q=0.7 is retained as a broader/negative-control threshold and is not a strict compression gate."
   falsification_criteria:
     - "Reject if EV_r_net and drawdown-duration do not improve versus L1-H2 across Tier2/Tier3 and fit windows."
+
+truth_contract:
+  version: "1.0"
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  parity_required_for_fast_path: true
+  research_memory_requires_certification: true

@@ -74,3 +74,19 @@ execution_semantics:
 logging:
   schema_version: "1.0"
   required_fields: [ev_r_gross, ev_r_net, fail_fast_bars, signal_timeframe, exit_monitoring_timeframe, family_variant]
+
+truth_contract:
+  version: "1.0"
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  parity_required_for_fast_path: true
+  research_memory_requires_certification: true

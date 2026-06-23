@@ -19,6 +19,7 @@ from bt.saas.models import (
     STRATEGY_TRUTH_ROOM_VERDICTS,
 )
 from bt.saas.service import IngestionError, StrategyRobustnessLabService, run_analysis_from_parsed_artifact
+from bt.saas.truth_certification import TruthCertificationError, require_truth_certification
 
 __all__ = [
     "AnalysisCapabilityProfile",
@@ -39,5 +40,7 @@ __all__ = [
     "STRATEGY_TRUTH_ROOM_EVIDENCE_STATES",
     "STRATEGY_TRUTH_ROOM_VERDICTS",
     "StrategyRobustnessLabService",
+    "TruthCertificationError",
+    "require_truth_certification",
     "run_analysis_from_parsed_artifact",
 ]

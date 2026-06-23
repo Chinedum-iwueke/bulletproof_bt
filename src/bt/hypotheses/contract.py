@@ -54,7 +54,9 @@ class HypothesisContract:
             evaluation=EvaluationSpec(required_tiers=tuple(evaluation_raw.get("required_tiers", ["Tier2", "Tier3"]))),
             logging=LoggingSpec(
                 schema_version=str(logging_raw.get("schema_version", "1.0")),
-                required_fields=tuple(logging_raw.get("required_fields", REQUIRED_LOG_FIELDS)),
+                required_fields=tuple(dict.fromkeys(
+                    (*REQUIRED_LOG_FIELDS, *tuple(logging_raw.get("required_fields") or ()))
+                )),
             ),
             runtime=RuntimeControls(
                 enabled=bool(runtime_raw.get("enabled", True)),

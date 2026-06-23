@@ -7,9 +7,9 @@ from bt.hypotheses.contract import HypothesisContract
 
 def test_l1_h11_contracts_load_and_have_exact_24_grids() -> None:
     for path in [
-        "research/hypotheses/l1_h11a_quality_filtered_continuation.yaml",
-        "research/hypotheses/l1_h11b_pullback_geometry_impulse.yaml",
-        "research/hypotheses/l1_h11c_protection_discipline.yaml",
+        "research/hypotheses/l1_h11a.yaml",
+        "research/hypotheses/l1_h11b.yaml",
+        "research/hypotheses/l1_h11c.yaml",
     ]:
         contract = HypothesisContract.from_yaml(path)
         rows = contract.materialize_grid()
@@ -20,14 +20,14 @@ def test_l1_h11_contracts_load_and_have_exact_24_grids() -> None:
 
 
 def test_l1_h11_runner_compatibility_runtime_override_and_manifest(tmp_path: Path) -> None:
-    contract = HypothesisContract.from_yaml("research/hypotheses/l1_h11a_quality_filtered_continuation.yaml")
+    contract = HypothesisContract.from_yaml("research/hypotheses/l1_h11a.yaml")
     spec = next(row for row in contract.to_run_specs() if row["params"]["signal_timeframe"] == "1h")
     override = build_runtime_override(contract, spec, "Tier2")
     assert override["strategy"]["name"] == "l1_h11_quality_filtered_continuation"
     assert override["strategy"]["timeframe"] == "1h"
 
     manifest = build_hypothesis_manifest(
-        hypothesis_path=Path("research/hypotheses/l1_h11c_protection_discipline.yaml"),
+        hypothesis_path=Path("research/hypotheses/l1_h11c.yaml"),
         experiment_root=tmp_path / "exp",
         phase="tier2",
     )

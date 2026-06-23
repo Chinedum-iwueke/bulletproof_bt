@@ -48,6 +48,10 @@ from bt.paths import (
     resolve_pipeline_log_path,
     resolve_verdict_bundle_root,
 )
+from bt.validation.strategy_admission import (
+    validate_hypothesis_admission,
+    write_strategy_admission_report,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -702,6 +706,22 @@ def main() -> int:
         )
 
     try:
+        db_status_update(db, pipeline_run_id, "STRATEGY_ADMISSION", commands_log)
+        admission_path = phase_root / f"{args.name}_strategy_admission.json"
+        admission = validate_hypothesis_admission(hypothesis, require_truth_contract=True)
+        write_strategy_admission_report(admission, admission_path)
+        db_register_artifact(
+            db,
+            artifact_type="strategy_admission_report",
+            path=admission_path,
+            hypothesis_id=hypothesis_id,
+            pipeline_run_id=pipeline_run_id,
+        )
+        if admission.status != "PASS":
+            details = "; ".join(f"{issue.check}: {issue.message}" for issue in admission.issues)
+            raise RuntimeError(f"Strategy admission failed before grid execution: {details}")
+        print(f"[admission] PASS: {admission_path}")
+
         db_status_update(db, pipeline_run_id, "BUILDING_MANIFESTS", commands_log)
         print("[1/8] Building stable manifest")
         build_manifest(

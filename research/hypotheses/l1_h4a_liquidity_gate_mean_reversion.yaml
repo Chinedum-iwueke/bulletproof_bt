@@ -123,3 +123,19 @@ notes:
   failure_modes:
     - "Spread proxy can partly track volatility rather than true spread."
     - "Liquidity gate may collapse into a generic volatility gate if not validated with cost diagnostics."
+
+truth_contract:
+  version: "1.0"
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  parity_required_for_fast_path: true
+  research_memory_requires_certification: true

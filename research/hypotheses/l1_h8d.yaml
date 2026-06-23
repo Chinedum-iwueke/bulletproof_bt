@@ -24,3 +24,19 @@ exit: {stop_model: "fixed_atr_multiple", stop_update_policy: "frozen_at_entry", 
 execution_semantics: {signal_timeframe: "15m", base_execution_timeframe: "1m", exit_monitoring_timeframe: "1m", base_data_frequency_expected: "1m", strategy_family: "trend_continuation", family_pattern: "shallow_pullback_reclaim", parent_family: "L1-H8", stop_model: "fixed_atr_multiple", stop_update_policy: "frozen_at_entry", tp_update_policy: "tp1_then_protected_runner", hold_time_unit: "base_bars", atr_source_timeframe: "signal_timeframe", risk_accounting: "engine_canonical_R", no_pyramiding: true}
 evaluation: {required_tiers: ["Tier2", "Tier3"]}
 runtime_controls: {enabled: true}
+
+truth_contract:
+  version: "1.0"
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  parity_required_for_fast_path: true
+  research_memory_requires_certification: true

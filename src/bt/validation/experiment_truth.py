@@ -312,6 +312,35 @@ def _check_extracted_dataset(experiment_root: Path, issues: list[TruthIssue]) ->
     _check_source_ts(trades, run_id="<extracted_dataset>", issues=issues)
 
 
+def _intentional_cleanup_deletions(experiment_root: Path) -> set[Path]:
+    """Return only truth logs proven deleted after successful extraction.
+
+    Cleanup is allowed to remove decisions/fills once canonical datasets exist.
+    An absent file is waived only when the cleanup manifest names that exact
+    path; unrelated missing artifacts remain hard failures.
+    """
+    cleanup_path = experiment_root / "research_data" / "cleanup_log.json"
+    trades_dataset = experiment_root / "research_data" / "trades_dataset.parquet"
+    runs_dataset = experiment_root / "research_data" / "runs_dataset.parquet"
+    if not cleanup_path.exists() or not trades_dataset.exists() or not runs_dataset.exists():
+        return set()
+    try:
+        cleanup = _read_json(cleanup_path)
+    except Exception:
+        return set()
+    extraction = cleanup.get("extraction") if isinstance(cleanup.get("extraction"), dict) else {}
+    if not cleanup.get("delete_logs") or extraction.get("status") != "ok":
+        return set()
+    allowed_names = {"decisions.jsonl", "fills.jsonl"}
+    deleted: set[Path] = set()
+    for raw_path in cleanup.get("files_deleted", []):
+        path = Path(str(raw_path))
+        if path.name not in allowed_names:
+            continue
+        deleted.add((path if path.is_absolute() else Path.cwd() / path).resolve())
+    return deleted
+
+
 def validate_experiment_root(
     experiment_root: Path,
     *,
@@ -322,6 +351,7 @@ def validate_experiment_root(
     runs_dir = experiment_root / "runs"
     run_dirs = sorted(path for path in runs_dir.glob("row_*") if path.is_dir()) if runs_dir.exists() else []
     runs_checked = 0
+    intentional_deletions = _intentional_cleanup_deletions(experiment_root)
 
     if not run_dirs:
         _add(issues, "error", "<experiment>", "runs_dir", f"No run directories found under {runs_dir}")
@@ -346,6 +376,8 @@ def validate_experiment_root(
         for artifact_name in RUN_TRUTH_ARTIFACTS:
             artifact = run_dir / artifact_name
             if not artifact.exists():
+                if artifact.resolve() in intentional_deletions:
+                    continue
                 _add(issues, "error", run_id, "required_artifact", f"Missing required artifact: {artifact.name}")
         if not perf_path.exists() or not trades_path.exists():
             continue

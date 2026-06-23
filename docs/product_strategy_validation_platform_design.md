@@ -6083,6 +6083,615 @@ The narrowest credible wedge inside this ambition is:
 
 That is small enough to explain and large enough to produce a real behavioral loop. Live execution, Binance parity, portfolio command, and memory-assisted trade policy expand from that proven path.
 
+### Conversational Research Copilot
+
+The primary entry point should be a genuine program-scoped research conversation, not a conversational-looking form.
+
+The current implementation is useful infrastructure but the wrong interaction model:
+
+- it asks users to complete market intuition, universe, timeframe, holding period, entry, exit, risk, costs, data source, and disproof fields manually;
+- the LLM performs a single structured call that returns missing questions and assumptions;
+- the user answers those questions in parallel textareas;
+- the accepted brief then feeds deterministic hypothesis and Strategy Spec templates;
+- post-run artifacts are displayed in workbenches, but there is no general program conversation that can retrieve and explain them.
+
+That flow assumes the user already knows the research design. Many valuable users have only an observation, a transcript, a chart pattern, a paper, an existing hypothesis card, or a vague suspicion worth exploring.
+
+The product should instead promise:
+
+> Bring an intuition, a transcript, a paper, a hypothesis card, or a completed run. Research Desk helps you decide what is actually testable, recommends the missing research choices, records what you approve, and carries the reasoning through specification, backtest, interpretation, and the next experiment.
+
+#### Office Hours decision
+
+Three approaches were considered:
+
+1. **Keep the form and add better assistant autofill.** Smallest implementation, but the user still has to understand the research schema before receiving value.
+2. **Build a conversational copilot over explicit research objects and approval gates.** The thread feels open-ended, while every consequential output becomes a typed, versioned, cited object.
+3. **Build an autonomous research agent that chooses hypotheses, writes strategies, runs experiments, and promotes results.** Impressive in a demo, but it collapses the distinction between suggestion, evidence, approval, and execution.
+
+Choose approach 2. The assistant should be generous in exploration and conservative in mutation. Reject approach 3 as the default product behavior.
+
+#### Core interaction principle
+
+The user should never need to understand the internal schema before starting. They can say:
+
+- “I think large BTC moves continue after a liquidation spike.”
+- “I do not know the exit yet. Show me sensible ways to test this.”
+- “Here is a transcript of a trader explaining their setup.”
+- “Read this paper and identify crypto hypotheses we can actually test.”
+- “Use this exact hypothesis card and generate the engine artifacts.”
+- “Attach the latest Tier2 verdict. Does this strategy show enough promise to continue?”
+
+The assistant responds conversationally, but it also maintains a visible structured research state behind the thread.
+
+Every proposed field carries one provenance state:
+
+- **stated**: explicitly supplied by the user or source;
+- **extracted**: directly supported by a cited source passage;
+- **inferred**: likely meaning derived from context, but not directly stated;
+- **recommended**: the assistant's proposed research choice and rationale;
+- **confirmed**: explicitly accepted by the user;
+- **unresolved**: required information or conflict remains open;
+- **unsupported**: the available source cannot justify the field.
+
+The assistant must never silently convert `inferred` or `recommended` into `confirmed`.
+
+#### Conversation modes
+
+The system infers the mode from the user's turn rather than forcing a setup screen.
+
+##### Exploratory mode
+
+For vague intuitions, the assistant should:
+
+1. restate the possible market mechanism;
+2. suggest two or three meaningfully different testable interpretations;
+3. explain what each interpretation would imply for data, timeframe, entry, exit, and falsification;
+4. ask one high-information question at a time;
+5. allow “I do not know” and respond with a recommendation rather than returning the user to a form;
+6. maintain candidate hypotheses until the user chooses or combines them.
+
+It should not interrogate the user for every optional assumption. It should recommend defaults where the choice is reversible and make blocking uncertainty visible where it is not.
+
+##### Direct-instruction mode
+
+For a detailed hypothesis card or firm instructions, the assistant should:
+
+1. preserve the original source as an immutable program artifact;
+2. extract all supplied fields with source spans;
+3. detect internal contradictions and engine incompatibilities;
+4. avoid asking questions already answered by the source;
+5. present only blocking conflicts, inferred mappings, and defaults requiring approval;
+6. generate the Hypothesis Card immediately when the mapping is complete;
+7. generate hypothesis YAML and Strategy Spec drafts after card confirmation.
+
+The supplied `CSI-Gated Displacement Trend` card and the existing `research/hypotheses/l7_h1_csi_gated_displacement_trend.yaml` should become a golden end-to-end fixture for this mode.
+
+##### Source-analysis mode
+
+For a transcript, video captions, paper, note, or document, the assistant should separate:
+
+- what the source explicitly claims;
+- what mechanism the source proposes;
+- what is merely anecdotal or descriptive;
+- which claims can be converted into observable variables;
+- which data Invariance currently has;
+- what would require unavailable or private data;
+- candidate hypotheses, each with citations and a falsification path.
+
+The assistant may propose multiple hypotheses. It should rank them by:
+
+- testability;
+- data availability and provenance;
+- implementation readiness;
+- lookahead/leakage risk;
+- expected experiment cost;
+- distinctness from other candidates;
+- value of a negative result.
+
+##### Artifact-analysis mode
+
+After experiments, the same conversation should answer questions using program artifacts:
+
+- does this show promise and why;
+- which assumptions are carrying the result;
+- what failed first;
+- whether costs, slippage, holdout, null, or Tier2/Tier3 evidence survived;
+- whether performance depends on rare trades or one state bucket;
+- how this run differs from a prior run;
+- what the next decisive experiment should be;
+- whether the current evidence supports demo qualification.
+
+The answer must cite the exact artifact, card, run, metric, table row, or source chunk used. “The assistant thinks” is never evidence.
+
+#### Program conversation model
+
+Each Research Program has one default thread and may have focused subthreads. A thread is a durable research record, not disposable chat history.
+
+Required objects:
+
+- `ResearchConversation`;
+- `ResearchMessage`;
+- `ResearchMessagePart` for text, source citation, artifact citation, proposal, approval request, tool result, warning, and error;
+- `ResearchTurn` with provider/model/prompt/tool versions, token use, latency, and status;
+- `ResearchToolCall` with typed input/output, authorization decision, idempotency key, and audit event;
+- `ResearchSource` and immutable source version;
+- `ResearchSourceChunk` with page/timestamp/section anchors;
+- `CandidateHypothesis` and candidate versions;
+- `HypothesisCard` and card versions;
+- `ResearchDecision` recording field-level and object-level user confirmation;
+- `ConversationContextSnapshot` recording exactly what the model was allowed to see for a turn.
+
+Messages are append-only. Corrections create new versions or explicit retractions. Deleting a thread may hide it from the user, but regulatory/security retention behavior must follow account policy rather than rewriting historical approvals.
+
+#### Hypothesis Card as a first-class object
+
+Every executable Research Program must have at least one confirmed `hypothesis_card_v1` before a hypothesis spec or engine YAML can be approved.
+
+`hypothesis_card_v1` should include:
+
+- card ID, program ID, version, status, title, and owner;
+- one-sentence claim;
+- intuition and causal market mechanism;
+- crypto market-structure rationale;
+- observable features and exact formulas where supplied;
+- data source and fallback hierarchy per feature;
+- regime/context gates;
+- long and short entry logic;
+- exit, stop, target, trailing, exhaustion, and time-exit logic;
+- position sizing and risk controls;
+- parameter defaults, safe ranges, and proposed grids;
+- required artifacts and fields to log;
+- evaluation tiers and metrics;
+- falsification criteria;
+- expected failure modes and leakage risks;
+- Tier2/Tier3 survivability expectation;
+- implementation assumptions;
+- unresolved questions;
+- source citations;
+- field-level provenance and confidence;
+- created-by assistant/user identity, prompt/model version, and timestamps;
+- user confirmation actor/time and content hash.
+
+Card states:
+
+```text
+candidate
+  -> draft
+  -> needs_confirmation
+  -> confirmed
+  -> superseded | rejected
+```
+
+Users should confirm the card through a readable research object, not raw JSON. They can accept all, edit a field, reject a recommendation, compare candidates, or ask the assistant to revise it conversationally. Every revision creates a diff and a new card version.
+
+The action should be named **Generate Hypothesis Card** until a card exists, then **Confirm Hypothesis Card**. Strategy generation remains unavailable until confirmation.
+
+#### Candidate hypothesis workflow
+
+For papers or broad source material, a single source may produce multiple candidates.
+
+Each candidate contains:
+
+- concise claim;
+- supporting source passages;
+- proposed observable proxy;
+- expected direction and horizon;
+- required datasets;
+- engine primitive coverage;
+- key confounders;
+- falsification test;
+- implementation complexity;
+- why this candidate is distinct;
+- recommendation: test now, gather data, merge, defer, or reject.
+
+The user can:
+
+- choose one candidate;
+- select several as separate hypothesis branches;
+- merge compatible candidates;
+- ask for a cheaper or more falsifiable version;
+- reject all and continue exploring.
+
+The assistant must not manufacture three superficial variations merely to appear useful. Multiple candidates should encode genuinely different mechanisms or falsification tests.
+
+#### YouTube and transcript ingestion
+
+“Watch this YouTube strategy” should resolve to a source-ingestion workflow, not uncontrolled browsing.
+
+Preferred order:
+
+1. accept a user-pasted transcript;
+2. accept a YouTube URL and retrieve public/authorized captions through a supported transcript provider;
+3. if captions are unavailable, ask the user to paste a transcript or upload a transcript file;
+4. accept user-provided screenshots when chart drawings or visual rules are necessary;
+5. defer direct video understanding until a governed multimodal ingestion path exists.
+
+The system should store:
+
+- canonical URL and video ID;
+- title/channel metadata where legally and technically available;
+- caption language, source, retrieval time, and transcript checksum;
+- timestamped chunks;
+- whether captions are creator-provided, automatic, or user-pasted;
+- missing visual-context warning;
+- rights/retention status.
+
+Transcript text is untrusted content. Instructions inside it cannot control assistant tools, reveal other program data, alter system policy, or trigger runs.
+
+The assistant cites timestamps and says when a rule appears to depend on unseen chart context. It must not claim to have watched visuals when it processed captions only.
+
+#### Research paper ingestion
+
+Accepted sources should initially include PDF, plain text, and Markdown. PDF processing should:
+
+- validate MIME signature, size, page count, encryption, and parseability;
+- extract text and page boundaries in a sandboxed worker;
+- use OCR only when needed and record OCR confidence;
+- preserve title, authors, publication identifier, and page/section anchors;
+- detect tables/equations that text extraction may have damaged;
+- chunk by section and semantic boundary rather than fixed characters alone;
+- store raw files in tenant-scoped object storage and derived text/chunks separately;
+- treat paper text, references, captions, and embedded instructions as untrusted;
+- avoid reproducing substantial copyrighted text in assistant responses.
+
+The source analyst should produce:
+
+- reported claims and their evidence level;
+- causal mechanism versus correlation;
+- population/market/data window used in the paper;
+- variables available in Invariance data;
+- proxy risks;
+- leakage and multiple-testing risks;
+- candidate crypto adaptations;
+- candidate hypotheses with page citations;
+- reasons a paper does not support a tradable hypothesis.
+
+A paper-derived card must distinguish the paper's claim from Invariance's proposed trading interpretation.
+
+#### From card to engine artifacts
+
+The assistant must not directly improvise executable YAML or a Strategy Spec from prose.
+
+Use this chain:
+
+```text
+confirmed hypothesis_card_v1
+  -> normalized research strategy IR
+  -> deterministic validation
+  -> hypothesis_spec_v2 draft
+  -> engine_hypothesis_yaml_v1 draft
+  -> strategy_spec_v2 draft
+  -> compile-readiness report
+  -> user approval
+  -> run-config compiler or implementation task
+```
+
+The current `hypothesis_spec_v1` and `strategy_spec_v1` are too small for rich hypotheses such as CSI composition, source fallbacks, feature graphs, gate expressions, trailing-stop evolution, required logging, and tier-specific evaluation. Preserve V1 readers, but introduce a V2 contract rather than hiding these details in free-form strings.
+
+`strategy_spec_v2` should model:
+
+- typed feature graph with source, transform, window, lag, normalization, and fallback nodes;
+- boolean gate/expression graph;
+- directional entry rules;
+- exit state machine;
+- sizing and risk policy;
+- parameter definitions and experiment grids;
+- data requirements and symbol mappings;
+- logging contract;
+- evaluation and falsification contract;
+- execution semantics including bar confirmation, delays, sessions, and timezones;
+- compiler target and capability requirements.
+
+`engine_hypothesis_yaml_v1` should formalize the shape already used under `research/hypotheses/`, including metadata, indicators, grids, entries, exits, execution semantics, sizing, risk, logging, evaluation, data requirements, falsification, and failure modes.
+
+The assistant may produce proposed values. A deterministic transformer and schema validator produce final serialized JSON/YAML.
+
+#### Compile readiness and coding-assistant boundary
+
+Schema-valid does not mean executable.
+
+Every generated strategy receives one status:
+
+- **registry_ready**: an existing reviewed engine strategy and primitives exactly support the card;
+- **graph_compilable**: the approved feature/gate graph can compile through reviewed generic engine primitives;
+- **implementation_required**: the spec is valid but needs a new strategy implementation or primitive;
+- **data_blocked**: required data is absent or has insufficient provenance;
+- **semantics_blocked**: timing, fallback, execution, or risk semantics remain ambiguous;
+- **unsupported**: the requested behavior cannot be represented safely.
+
+The CSI golden fixture should resolve to `registry_ready` only when its approved card matches the registered `l7_h1_csi_gated_displacement_trend` contract and required data is available.
+
+When implementation is required, create a `StrategyImplementationTask` containing:
+
+- confirmed card/spec hashes;
+- missing primitive or strategy behavior;
+- target files and registry contract;
+- required unit, lookahead, determinism, logging, and integration tests;
+- acceptance fixtures;
+- prohibited semantic shortcuts;
+- generated diff/artifact references;
+- review and approval state.
+
+A coding assistant may work on this task in an isolated checkout/container. It may propose code and tests, but cannot register, deploy, or run the strategy against paid production data until code review, tests, and user approval succeed.
+
+#### Copilot tool model
+
+The assistant should use a deny-by-default tool registry rather than arbitrary server access.
+
+Initial read tools:
+
+- `list_program_sources`;
+- `read_source_chunks`;
+- `list_program_artifacts`;
+- `read_artifact_manifest`;
+- `read_verdict_cards`;
+- `query_run_metrics`;
+- `query_trade_cohorts`;
+- `compare_runs`;
+- `read_hypothesis_card`;
+- `read_strategy_spec`;
+- `search_program_memory`;
+- `explain_compile_readiness`.
+
+Proposed-write tools requiring preview and confirmation:
+
+- `create_candidate_hypotheses`;
+- `revise_candidate_hypothesis`;
+- `draft_hypothesis_card`;
+- `revise_hypothesis_card`;
+- `confirm_hypothesis_card`;
+- `draft_engine_artifacts`;
+- `create_research_note`;
+- `create_next_experiment_proposal`;
+- `create_strategy_implementation_task`.
+
+High-impact tools requiring a separate explicit action outside ordinary chat:
+
+- approve hypothesis/spec;
+- approve experiment plan;
+- queue experiment;
+- generate billable export;
+- qualify demo;
+- create, mutate, pause, or stop a deployment;
+- submit or cancel any exchange order.
+
+The model never receives database credentials, object-storage credentials, exchange credentials, or unrestricted SQL/filesystem/network tools.
+
+#### Program artifact intelligence
+
+Do not place every program file into every prompt. Build a typed context service.
+
+For each artifact:
+
+1. register type, schema, owner, checksum, lineage, sensitivity, and retention;
+2. parse into a type-specific normalized representation;
+3. generate deterministic summaries and searchable chunks;
+4. retain table/row/page/timestamp anchors;
+5. expose only authorized query tools;
+6. assemble a turn-specific context snapshot within a token and cost budget;
+7. return citations that resolve to a user-visible artifact viewer.
+
+Retrieval should combine:
+
+- exact object lookup for current cards/specs/runs;
+- structured metric queries for numerical questions;
+- full-text and semantic search for notes, transcripts, papers, and narrative artifacts;
+- program-memory similarity for prior findings;
+- recency and version status;
+- explicit attachment priority from the user.
+
+The assistant should prefer structured facts over embedding matches. It should never calculate decision metrics by reading a chart image when the underlying table exists.
+
+#### Answer contract after a run
+
+Answers about research quality should follow a stable reasoning shape:
+
+1. **Direct answer**: promising, weak, contradicted, insufficient evidence, or unclear;
+2. **Evidence**: cited metrics/cards/artifacts supporting the answer;
+3. **What survived**: costs, slippage, holdout, null, tiers, or other attacks;
+4. **What did not survive**;
+5. **Evidence limitations**;
+6. **Alternative explanations**;
+7. **Next decisive experiment**;
+8. **What would change the conclusion**.
+
+Each statement is tagged internally as fact, inference, recommendation, or unknown. Numerical answers come from typed tools and include units, sample, tier, and run identity.
+
+#### Conversational state machine
+
+```text
+thread_open
+  -> exploring
+  -> source_ingesting | direct_instruction_parsing | artifact_question
+  -> candidate_hypotheses_proposed
+  -> candidate_selected
+  -> hypothesis_card_draft
+  -> hypothesis_card_needs_confirmation
+  -> hypothesis_card_confirmed
+  -> engine_artifacts_draft
+  -> compile_readiness_checked
+  -> implementation_required | data_blocked | spec_ready_for_approval
+  -> hypothesis_and_strategy_approved
+  -> experiment_plan_proposed
+  -> experiment_plan_approved
+  -> experiment_queued
+  -> results_available
+  -> results_interpreted
+  -> next_experiment_proposed | qualification_review
+```
+
+The conversation can move backward through revisions. Confirmed objects are never edited in place; they are superseded by new versions.
+
+#### User interface
+
+The Program page should become conversation-first:
+
+- full-height research thread as the primary canvas;
+- persistent composer with text, file attachment, URL attachment, and artifact mention;
+- streaming responses with clear tool activity and recoverable errors;
+- inline candidate-hypothesis and Hypothesis Card objects;
+- field-level provenance, citation, confidence, and confirmation controls;
+- compare/revise/confirm actions directly on structured objects;
+- a collapsible Research State drawer for current card, specs, experiments, memory, sources, and unresolved assumptions;
+- artifact viewer opened beside the conversation with cited page/row/timestamp focused;
+- conversation search and focused subthreads;
+- mobile layout that keeps chat primary and moves research state to a sheet;
+- existing forms retained temporarily as an advanced structured editor, not the default intake.
+
+The assistant should ask one question at a time in chat. When several independent defaults need approval, it may present one compact proposal object rather than serializing ten trivial messages.
+
+#### LLM and orchestration architecture
+
+Replace the current one-shot `structuredChat()` abstraction with a provider-neutral research-assistant runtime supporting:
+
+- streaming messages;
+- multi-turn conversation state;
+- structured outputs;
+- typed tool calls;
+- cancellation and resumable turns;
+- prompt/model/tool versioning;
+- token, latency, and cost accounting;
+- provider capability negotiation;
+- deterministic fallback when the provider is unavailable;
+- separate fast extraction and stronger synthesis/critique model policies where justified.
+
+The application, not the model provider, owns source extraction, chunking, retrieval, permissions, object state, and approvals.
+
+A turn should execute:
+
+```text
+authorize user/program
+  -> persist user message
+  -> classify intent and attachment types
+  -> build bounded context snapshot
+  -> stream model response/tool requests
+  -> validate tool arguments
+  -> authorize and execute read tools
+  -> require confirmation for proposed writes
+  -> validate all structured objects deterministically
+  -> persist response, citations, usage, and audit events
+```
+
+LLM output can propose a card or spec, but deterministic schemas, rule validators, compiler capabilities, and approval state decide whether it can progress.
+
+#### Security and trust model
+
+Transcripts, papers, Pine source, reports, CSV fields, artifact text, and comments are untrusted content.
+
+Required controls:
+
+- tenant-scoped authorization on every thread, message, source, chunk, artifact, and tool call;
+- prompt-injection isolation: source content is data, never system/tool instruction;
+- MIME/magic-byte validation, malware scanning, archive limits, PDF sandboxing, and OCR limits;
+- URL allowlist and SSRF protection for remote-source ingestion;
+- no arbitrary URL fetch by the model;
+- signed short-lived artifact reads;
+- field-level redaction before model calls;
+- provider data-retention configuration and disclosed provider boundary;
+- configurable deletion and retention;
+- per-account file, page, source, token, assistant-turn, and tool-call quotas;
+- output escaping and citation-safe rendering;
+- no secrets in prompts, transcripts, generated specs, logs, or citations;
+- immutable audit events for approvals and state-changing tools;
+- graceful provider failure without corrupting conversation or object state.
+
+#### Evaluation and release gates
+
+Create a maintained copilot evaluation corpus containing:
+
+- vague one-sentence intuitions;
+- “I do not know” responses;
+- the CSI detailed hypothesis card;
+- contradictory direct instructions;
+- a caption transcript with incomplete visual context;
+- a paper with one testable and several non-testable claims;
+- a paper with correlation mistaken for causation;
+- prompt injection inside a transcript/PDF;
+- a strategy requiring unavailable data;
+- a strategy requiring an unregistered engine primitive;
+- completed runs with positive, negative, contradictory, and insufficient evidence;
+- numerical questions requiring structured artifact tools;
+- cross-tenant artifact-access attempts.
+
+Measure:
+
+- field extraction accuracy and source citation correctness;
+- rate of unsupported invented details;
+- candidate-hypothesis distinctness and testability;
+- Hypothesis Card schema validity;
+- YAML/Strategy Spec validation and round-trip stability;
+- compile-readiness classification accuracy;
+- numerical answer accuracy;
+- approval-gate bypass rate;
+- prompt-injection/tool-policy violations;
+- latency, token cost, retries, and abandonment;
+- time from first message to confirmed card and first queued experiment;
+- whether users revise or accept recommended research choices.
+
+No release should regress the golden CSI card, schema validity, tenant isolation, approval gates, or numerical artifact-answer accuracy.
+
+#### Cross-repo ownership
+
+`bulletproof_bt` owns:
+
+- `hypothesis_card_v1`, `hypothesis_spec_v2`, `engine_hypothesis_yaml_v1`, and `strategy_spec_v2` canonical schemas;
+- normalized research strategy intermediate representation;
+- card-to-YAML/spec transformers;
+- compile-readiness and capability registry;
+- generic feature/gate graph compiler where supported;
+- engine strategy implementation-task contract;
+- deterministic validators, serializers, fixtures, and round-trip tests;
+- artifact query semantics and canonical verdict/run metric schemas.
+
+`invariance_research` owns:
+
+- threads, messages, turns, sources, chunks, citations, attachments, proposals, and confirmation persistence;
+- conversation UI, Research State drawer, artifact viewer, and streaming transport;
+- source upload, URL/caption ingestion, PDF parsing/OCR orchestration, and object storage;
+- provider-neutral assistant runtime and tool authorization;
+- program-scoped retrieval and context snapshots;
+- candidate/card/spec approval workflow and projections;
+- artifact-copilot query orchestration;
+- plans, quotas, usage, billing, admin, audit logs, retention, and security controls.
+
+Cross-repo requirements:
+
+- shared versioned schemas and golden fixtures;
+- idempotent object creation by program, source/card/spec hash, and tool idempotency key;
+- one deployed schema version of backward compatibility;
+- web app fails closed when its required engine schema/compiler version is unavailable;
+- assistant prompts cannot redefine engine semantics;
+- every generated engine artifact links to a confirmed card hash and source citations;
+- every artifact answer links to exact program/run evidence.
+
+#### Product success criteria
+
+- a user can begin with one plain-language sentence and reach a confirmed card without opening the advanced form;
+- a user can answer “I do not know” and receive reversible recommendations with reasons;
+- a complete direct card produces drafts without redundant questions;
+- a paper can produce several cited, distinct candidate hypotheses and explicitly reject non-testable claims;
+- no inferred/recommended field becomes confirmed without user action;
+- every executable program has a confirmed card;
+- YAML and Strategy Specs are deterministic for the same confirmed card/compiler version;
+- compile readiness never conflates schema validity with engine executability;
+- post-run numerical answers are sourced from typed artifact tools;
+- every material conclusion includes resolvable citations;
+- no assistant turn can queue an experiment, mutate deployment, or place an order without its required explicit approval path;
+- median time from first message to a confirmed, compile-ready card is under ten minutes for supported strategy families.
+
+#### Product validation assignment
+
+Before automating paper and YouTube ingestion broadly, run five observed sessions:
+
+- one user starts with a vague intuition;
+- one says “I do not know” for exits and risk;
+- one supplies a complete hypothesis card;
+- one supplies a transcript;
+- one supplies a paper.
+
+Do not guide them. Record where the assistant asks a redundant question, makes an unsupported inference, fails to explain a recommendation, or produces a card the user does not trust. The first milestone is not conversational polish; it is whether the user approves a better research object faster than they could have written one manually.
+
 ### Current Repo Reality And Connector Audit
 
 The existing repos support meaningful parts of this direction, but they do not yet support the complete product claim.
@@ -6110,10 +6719,17 @@ The existing repos support meaningful parts of this direction, but they do not y
 Every strategy should move through an explicit state machine. Promotion is deliberate; rollback is always available.
 
 ```text
-intuition
-  -> clarifying
-  -> brief_accepted
-  -> hypothesis_draft
+thread_open
+  -> exploring
+  -> source_ingesting | direct_instruction_parsing | artifact_question
+  -> candidate_hypotheses_proposed
+  -> candidate_selected
+  -> hypothesis_card_draft
+  -> hypothesis_card_needs_confirmation
+  -> hypothesis_card_confirmed
+  -> engine_artifacts_draft
+  -> compile_readiness_checked
+  -> implementation_required | data_blocked | hypothesis_draft
   -> hypothesis_approved
   -> strategy_spec_draft
   -> strategy_spec_approved
@@ -6407,17 +7023,387 @@ These pages should remain indexable and accessible from a restrained footer/help
 - keep Research Desk human review as `Request Expert Review` within a program/report, distinct from the Research Desk software product name.
 - avoid internal labels such as Approach A/B, B1-B12, “full ambition,” “lab wedge,” or “launch” in user-facing copy.
 
+### Pine Script Visualization Bridge
+
+Pine Script should be treated as a **chart projection and interoperability format**, not as a second research engine and not as the canonical strategy definition.
+
+The useful customer outcome is:
+
+```text
+approved Strategy Spec
+  -> compatibility analysis
+  -> generated Pine Script v6 indicator
+  -> signals, gates, stops, targets, and invalidations visible on TradingView
+  -> optional TradingView result import for parity comparison
+  -> optional alert observations returned to the Research Program
+```
+
+This gives retail systematic traders a familiar chart surface without weakening the deterministic, no-lookahead, execution-aware semantics of `bulletproof_bt`.
+
+#### Office Hours decision
+
+Three approaches were considered:
+
+1. **Generate a chart-only Pine indicator from approved strategy specs.** This ships the visualization value quickly and keeps TradingView outside the truth boundary.
+2. **Build a bidirectional Pine bridge with compatibility and parity contracts.** Export supported specs, import a restricted Pine subset into draft specs, and compare TradingView outputs with engine outputs.
+3. **Treat Pine as a second backtest/runtime target with broad language support.** This would require reproducing TradingView execution semantics and would create two competing sources of truth.
+
+Choose approach 2, delivered incrementally with approach 1 first. Reject approach 3. The product should be unusually honest about which strategy semantics can travel to TradingView and which cannot.
+
+#### Platform facts that constrain the design
+
+- target Pine Script v6 and pin the generated artifact to a compiler version;
+- Pine strategies simulate orders through TradingView's broker emulator, whose fills, bar processing, data, and cost behavior are not identical to `bulletproof_bt`;
+- Pine scripts run against TradingView chart/data contexts and cannot consume arbitrary private engine datasets as if they were local files;
+- multi-timeframe and cross-symbol data must use Pine request functions and remain subject to TradingView limits and symbol/data availability;
+- TradingView alerts are snapshots of the script, inputs, symbol, and timeframe at creation time, so changing the generated script or settings requires recreating the alert;
+- no product promise should depend on an undocumented one-click API for inserting private source into a user's Pine Editor;
+- the dependable delivery path is a downloadable `.pine` file plus copy-to-clipboard instructions for the Pine Editor;
+- TradingView alerts may be observed by Invariance through a hardened webhook, but must never bypass the Research Desk deployment qualification and order policy.
+
+Primary references:
+
+- `https://www.tradingview.com/pine-script-docs/welcome/`
+- `https://www.tradingview.com/pine-script-docs/concepts/strategies/`
+- `https://www.tradingview.com/pine-script-docs/concepts/alerts/`
+- `https://www.tradingview.com/pine-script-docs/concepts/other-timeframes-and-data/`
+- `https://www.tradingview.com/pine-script-docs/writing/limitations/`
+
+#### Truth boundary
+
+The canonical chain remains:
+
+```text
+Research Brief
+  -> Hypothesis Spec
+  -> approved Strategy Spec
+  -> bulletproof_bt run config
+  -> engine experiment artifacts and verdicts
+```
+
+Pine is a derived artifact from the exact approved Strategy Spec version. It is never allowed to silently become the source of the approved engine logic.
+
+Every Pine artifact must display and persist:
+
+- Research Program ID;
+- hypothesis and Strategy Spec IDs/versions;
+- Strategy Spec content hash;
+- Pine compiler version;
+- Pine language target;
+- generated-at timestamp;
+- compatibility status;
+- parity status;
+- unsupported or approximated semantics;
+- exact default parameters used;
+- a warning that TradingView Strategy Tester results are not engine validation results.
+
+User-facing status must distinguish:
+
+- **Visualization compatible**: supported signals can be plotted accurately;
+- **Strategy-simulation compatible**: entries/exits can also be represented with declared approximations;
+- **Provisional parity**: templates and the local reference evaluator agree, but no TradingView output has been compared;
+- **Verified parity**: an imported TradingView signal/trade export matches within declared rules;
+- **Divergent**: signal or trade differences exist and are itemized;
+- **Unsupported**: the strategy depends on semantics or data that cannot be represented honestly.
+
+Never label generated Pine as “equivalent,” “verified,” or “the same strategy” merely because source generation succeeded.
+
+#### Pine-compatible strategy subset
+
+The first compiler supports only approved strategies composed from a versioned registry of portable primitives.
+
+Initial portable candidates:
+
+- closed-bar EMA cross/context;
+- Donchian breakout;
+- ATR and ATR stop;
+- VWAP reversion when TradingView session semantics are explicit;
+- time stop measured in signal bars;
+- long/short entry direction;
+- one position at a time with no pyramiding;
+- explicit fixed parameter inputs;
+- chart-symbol OHLCV and volume;
+- supported higher-timeframe context using confirmed bars and no lookahead;
+- visual stop, target, invalidation, and entry/exit markers;
+- diagnostic labels for which gate admitted or rejected a signal.
+
+Compatibility must fail closed or declare an approximation for:
+
+- Python callbacks or arbitrary user code;
+- dynamic universe selection;
+- portfolio and cross-symbol capital allocation;
+- order-book, latency, partial-fill, queue-position, or broker microstructure logic;
+- venue-specific funding, open-interest, mark, index, or liquidation fields without a verified TradingView symbol mapping;
+- state produced by private research panels or engine-only features;
+- intrabar execution that cannot be reconstructed from the selected chart resolution;
+- asynchronous multi-asset events;
+- engine risk policies that require account, portfolio, or live connector state;
+- machine-learned features not reproducible from allowed Pine inputs;
+- any signal with unresolved lookahead, interpolation, session, timezone, or bar-confirmation semantics.
+
+Unsupported features must not be dropped from generated code. They must block generation or appear in the compatibility report as explicit visualization-only omissions that require user approval.
+
+#### Export artifacts
+
+The export service produces an immutable bundle:
+
+```text
+pine-export/
+  strategy_visualization.pine
+  pine_export_manifest.json
+  pine_compatibility_report.json
+  pine_parity_report.json
+  strategy_spec.snapshot.json
+  README.md
+```
+
+`strategy_visualization.pine` should initially use `indicator(..., overlay=true)`, not `strategy(...)`. Its job is to show:
+
+- confirmed entry and exit signals;
+- long/short direction;
+- active stop, target, and thesis invalidation;
+- signal-bar timing;
+- gate state and rejection reason where representable;
+- parameter inputs bounded by approved safe ranges;
+- a small status table with spec hash, compatibility, and known omissions;
+- `alertcondition()` definitions for confirmed signals only;
+- JSON alert payload templates containing artifact version, symbol, timeframe, signal timestamp, side, and idempotency key inputs, but no credentials.
+
+A separate `strategy_simulation.pine` may be emitted only after strategy-simulation compatibility passes. It must encode commission/slippage settings where Pine supports them, list every emulator mismatch, and remain subordinate to the engine report.
+
+#### Required contracts
+
+Add versioned schemas and fixtures for:
+
+1. `pine_export_manifest_v1`
+   - export ID, tenant/program identity, spec identity/hash, target language/compiler versions, generated file checksums, and approval state;
+2. `pine_compatibility_report_v1`
+   - portable primitives, unsupported datasets, approximations, session/timezone mapping, timeframe mapping, risk omissions, and final compatibility status;
+3. `pine_parity_report_v1`
+   - comparison source, symbol/timeframe/data window, engine and TradingView signal counts, matched/missing/extra timestamps, direction mismatches, entry/exit deltas, tolerance policy, and verdict;
+4. `pine_import_report_v1`
+   - source checksum, detected Pine version, supported AST nodes, rejected constructs, extracted parameters/signals, ambiguities, and draft-spec status;
+5. `tradingview_signal_observation_v1`
+   - tenant/program/spec/export identity, symbol, timeframe, confirmed bar timestamp, received timestamp, side, event type, payload hash, idempotency key, and verification status.
+
+The Strategy Spec registry must add portability metadata per signal primitive:
+
+- `pine_supported`;
+- template/compiler function;
+- required Pine version;
+- required TradingView series/symbol mapping;
+- bar confirmation policy;
+- session/timezone behavior;
+- known semantic differences;
+- visualization-only versus simulation-compatible status.
+
+#### Compiler architecture
+
+Do not generate Pine directly from free-form prompts. Use:
+
+```text
+approved Strategy Spec
+  -> normalized portable intermediate representation
+  -> compatibility checker
+  -> Pine v6 abstract syntax tree or structured code model
+  -> deterministic renderer
+  -> formatter/static policy checks
+  -> manifest + compatibility report
+```
+
+The portable intermediate representation should be shared by the engine run-config compiler and Pine compiler where possible. Each target may implement different rendering, but both must consume the same normalized signal intent, parameters, and execution semantics.
+
+LLMs may explain incompatibilities or propose a draft mapping. They must not emit the production Pine artifact directly. Production source must come from deterministic, reviewed templates.
+
+Required compiler checks:
+
+- no lookahead flags or future-data indexing;
+- all higher-timeframe requests use the approved confirmed-bar policy;
+- generated inputs match Strategy Spec defaults and bounds;
+- symbol and timeframe assumptions are explicit;
+- no secrets, remote URLs, tenant identifiers, or private raw evidence in source;
+- no alerts on unconfirmed/repainting states unless explicitly marked experimental;
+- output size/request/plot limits checked before delivery;
+- deterministic output checksum for the same compiler/spec pair;
+- source comments identify every approximation and omission.
+
+#### Parity verification
+
+Generation is not parity. Verification needs three levels:
+
+1. **Golden compiler tests** compare generated source against reviewed fixtures for every portable primitive and strategy family.
+2. **Reference semantic replay** evaluates the portable intermediate representation against fixed OHLCV fixtures and compares expected signal timestamps/directions with the engine.
+3. **TradingView result comparison** allows the user to upload a TradingView Strategy Tester trade export or signal-timestamp export. The system normalizes it and produces `pine_parity_report_v1` against the same symbol, timeframe, date range, timezone, session, and parameters.
+
+Local CI must not pretend to be TradingView's compiler. It proves deterministic rendering, template coverage, policy compliance, and reference semantics. A controlled TradingView QA account must compile and run the maintained release-candidate fixture scripts before a Pine compiler version is promoted.
+
+Parity must compare at least:
+
+- evaluated data window and missing bars;
+- signal timestamps and bar-close policy;
+- direction;
+- entry/exit event type;
+- parameter values;
+- session and timezone;
+- commission/slippage configuration;
+- matched, missing, and extra signals;
+- first divergence with surrounding input values;
+- whether divergence changes the research verdict.
+
+No automated “verified parity” badge is permitted without level 3 evidence from TradingView itself. If TradingView does not provide enough export detail, the result remains provisional.
+
+#### Pine import
+
+Pine import is useful, but should follow export and parity support.
+
+The user pastes source or uploads a `.pine` file. The service:
+
+1. stores the original source privately with tenant scope and checksum;
+2. enforces size/rate limits and treats all source/comments as untrusted input;
+3. tokenizes/parses a restricted Pine v6 subset without executing it;
+4. extracts indicator/strategy declaration, inputs, series, entry/exit conditions, requests, alerts, sessions, commission, slippage, and pyramiding settings;
+5. maps only recognized constructs into the portable intermediate representation;
+6. emits an import report listing unsupported code and semantic ambiguity;
+7. creates a **draft** Research Brief, Hypothesis Spec, and Strategy Spec;
+8. requires user review and approval before experiments can run;
+9. retains source-to-spec provenance and never overwrites an approved spec in place.
+
+Initial import should support the same narrow primitives as export. Arbitrary Pine is not translated by pretending an LLM understood it. Unsupported scripts can still enter Research Desk as source evidence and receive a guided manual reconstruction path.
+
+#### TradingView alert observation bridge
+
+Alerts are optional observational evidence, not an execution connector.
+
+Flow:
+
+```text
+generated Pine alertcondition
+  -> user creates TradingView alert
+  -> signed, unguessable Invariance webhook URL
+  -> rate-limited webhook ingress
+  -> payload/schema/freshness/idempotency verification
+  -> TradingView signal observation event
+  -> compare with engine/demo signal stream
+  -> append divergence or confirmation to Research Program memory
+```
+
+Security and operational requirements:
+
+- one revocable webhook credential per Pine export/deployment context;
+- never place exchange credentials or reusable account secrets in Pine source;
+- HTTPS only;
+- strict body-size and content-type limits;
+- idempotency and replay window;
+- timestamp freshness and expected symbol/timeframe/spec validation;
+- per-tenant rate limits and anomaly alerts;
+- raw payload retention bounded by policy;
+- no direct order creation from an alert webhook;
+- alert observations cannot increase risk or promote a strategy;
+- user-visible warning that TradingView alert configuration is external and may become stale after script/input changes.
+
+The bridge may later be used to compare TradingView observations with Bybit demo decisions, but the dedicated Invariance execution worker remains the only authorized route to exchange orders.
+
+#### Product surfaces
+
+Add Pine to a Research Program without making it a new top-level product:
+
+- **Strategy Spec -> Visualize on TradingView**: compatibility check and generation action;
+- **Pine artifact drawer**: compatibility, parity, source checksum, parameters, unsupported semantics, copy, and download;
+- **Setup guide**: paste into Pine Editor, select exact symbol/timeframe/session, set inputs, add to chart, create optional alert;
+- **Parity tab within the spec/run view**: upload TradingView results and inspect the first divergence;
+- **Import Pine** under New Research: source becomes a draft, never an approved executable strategy;
+- **Program timeline/memory**: generated, downloaded, parity checked, diverged, alert observed, and superseded events;
+- **Report appendix**: Pine compatibility and parity status without including private source by default;
+- **Share Room**: show compatibility/parity verdict and hashes, never source unless the owner explicitly includes it.
+
+Do not iframe or imitate the full TradingView terminal. Invariance should own the research workflow and send the user to TradingView only for familiar chart inspection.
+
+#### Permissions and commercial packaging
+
+- Free: compatibility preview only; no source export;
+- Explorer: Pine indicator export for supported specs and limited regenerations;
+- Pro: indicator plus strategy-simulation export, parity comparison, Pine import, and alert observations;
+- Expert Review: manual reconstruction/parity review for unsupported Pine or complex multi-source strategies.
+
+Generation and import quotas should be separate from experiment quotas. Regeneration with unchanged spec/compiler inputs should return the existing immutable artifact rather than consume a new generation.
+
+#### Cross-repo ownership
+
+`bulletproof_bt` owns:
+
+- portable strategy intermediate representation;
+- portability registry for signal primitives;
+- deterministic Pine v6 compiler and templates;
+- compatibility, import, and parity schemas;
+- restricted Pine parser/tokenizer and source-to-spec mapping;
+- reference semantic replay and golden fixtures;
+- engine-versus-portable-signal comparison;
+- immutable compiler artifacts and checksums.
+
+`invariance_research` owns:
+
+- Research Program actions, permissions, quotas, and approval UI;
+- Pine source upload/download/copy flows;
+- object-storage persistence and tenant isolation;
+- compiler job orchestration through dedicated workers;
+- artifact, compatibility, and parity projections in Postgres;
+- TradingView result upload and comparison UI;
+- hardened alert webhook issuance, revocation, ingress, and event persistence;
+- program timeline, memory, report, Share Room, billing, admin, and audit-log integration.
+
+Cross-repo requirements:
+
+- versioned compiler contract and shared fixtures;
+- web app fails closed when the required compiler version is unavailable;
+- compiler jobs are idempotent by tenant, spec hash, target, and compiler version;
+- source and reports use object storage; Postgres stores metadata, hashes, status, and object keys;
+- old Pine artifacts remain attached to the exact superseded spec version;
+- one deployed schema version of backward compatibility;
+- no web release may label parity verified without the engine contract that produced the report.
+
+#### Success criteria
+
+- 100% deterministic source checksum for identical approved spec/compiler inputs;
+- every generated artifact has a compatibility report and immutable source spec snapshot;
+- zero silent omission of unsupported strategy semantics;
+- all portable primitive fixtures match engine reference signal timestamps/directions;
+- TradingView imports produce draft specs only;
+- the first divergence is visible for every failed parity comparison;
+- maintained release-candidate fixture scripts compile in TradingView under the pinned Pine v6 target before compiler promotion;
+- alert replays and duplicates never create duplicate observations;
+- no TradingView alert can create or mutate an exchange order;
+- users can move from an approved compatible spec to a chart-visible indicator in under five minutes.
+
+#### Pre-implementation product validation
+
+Before building restricted Pine import or alert ingestion, manually project one approved breakout or trend Strategy Spec into a Pine overlay and watch at least three current crypto researchers use it without guidance.
+
+Observe whether they:
+
+- use the chart to find a genuine strategy-spec error;
+- change a parameter, invalidation, or experiment because of what they see;
+- ask to compare an engine run with TradingView timestamps;
+- ask for Pine import more often than export;
+- attempt to treat TradingView results as authoritative despite the warnings.
+
+The next build decision should follow observed behavior. If visualization catches specification errors, prioritize C2.5b-d. If users mainly want to migrate existing Pine, bring C2.5e forward after the export truth boundary exists. If users only admire the chart but make no research decision from it, keep Pine as a Pro convenience rather than a core roadmap dependency.
+
 ### Recommended Product Flow
 
 ```text
 Open app
-  -> type intuition or attach evidence
-  -> clarify only missing test conditions
-  -> review and approve hypothesis
-  -> review and approve strategy spec
+  -> type intuition, give direct instructions, or attach a source/artifact
+  -> explore candidate hypotheses conversationally
+  -> inspect assistant inferences, recommendations, citations, and unresolved assumptions
+  -> generate and confirm a versioned Hypothesis Card
+  -> generate hypothesis YAML and Strategy Spec drafts
+  -> inspect compile readiness or create a strategy implementation task
+  -> review and approve hypothesis and strategy artifacts
+  -> generate a compatible TradingView visualization when useful
   -> choose data/universe and experiment budget
   -> run baseline and falsification plan
-  -> receive verdict plus next experiment
+  -> ask the copilot questions against all authorized program artifacts
+  -> receive a cited verdict plus next experiment
   -> qualify for Bybit demo or remain blocked with reasons
   -> connect Bybit demo and approve risk policy
   -> monitor demo portfolio and incidents
@@ -6440,21 +7426,183 @@ Open app
 
 Owner: `invariance_research`, with contract language shared in `bulletproof_bt` docs.
 
+#### C0.5: Conversational Research Copilot foundation
+
+Replace form-first clarification with a durable program conversation while retaining the current form as an advanced fallback.
+
+Deliver in seven increments:
+
+1. **C0.5a - Conversation and source persistence**
+   - add thread, message, message-part, turn, tool-call, context-snapshot, source, source-version, source-chunk, citation, proposal, and decision schemas;
+   - add Postgres migrations, repositories, tenant-scoped indexes, retention hooks, and audit events;
+   - store raw sources in object storage and metadata/hashes/status in Postgres;
+   - make messages append-only and object revisions immutable.
+2. **C0.5b - Provider-neutral assistant runtime**
+   - replace one-shot `structuredChat()` usage with streaming multi-turn provider adapters;
+   - support structured outputs, typed tool calls, cancellation, resumable turns, usage/cost accounting, and model/prompt/tool versioning;
+   - preserve OpenAI and Ollama adapters behind one capability interface;
+   - add deterministic fallback and provider circuit breakers.
+3. **C0.5c - Research chat UI**
+   - make the Program thread the primary canvas;
+   - add streaming messages, persistent composer, files, URLs, artifact mentions, retries, and focused citations;
+   - render candidate hypotheses, assumptions, recommendations, diffs, and confirmation requests inline;
+   - add the collapsible Research State drawer and mobile sheet;
+   - preserve advanced structured editors without requiring them for ordinary use.
+4. **C0.5d - Exploratory and direct-instruction reasoning**
+   - infer exploratory versus direct mode;
+   - ask one high-information question at a time;
+   - support “I do not know” with explained, reversible defaults;
+   - track stated/extracted/inferred/recommended/confirmed/unresolved/unsupported provenance per field;
+   - parse detailed cards without redundant clarification;
+   - propose genuinely distinct candidate hypotheses and allow choose/merge/revise/reject actions.
+5. **C0.5e - Transcript, URL, and paper ingestion**
+   - add transcript paste/upload first;
+   - add allowlisted YouTube caption retrieval with provenance and timestamp citations, falling back to user-pasted transcripts;
+   - add sandboxed PDF/text/Markdown parsing, page anchors, selective OCR, chunking, and source-analysis reports;
+   - support screenshots for missing visual chart context;
+   - enforce SSRF, MIME, malware, size, page, archive, copyright, retention, and prompt-injection controls.
+6. **C0.5f - Copilot tool and approval policy**
+   - implement deny-by-default read and proposed-write tool registries;
+   - add argument schemas, authorization, idempotency, timeout, audit, and result-size controls;
+   - require explicit confirmation for object writes;
+   - keep approvals, experiment queues, deployments, and orders outside ordinary chat tool authority.
+7. **C0.5g - Evaluation and operations**
+   - build the maintained copilot evaluation corpus including the CSI card, vague ideas, transcripts, papers, prompt injection, unavailable data, and cross-tenant attempts;
+   - gate releases on extraction, citation, invention, schema, approval, numerical accuracy, security, latency, and cost thresholds;
+   - add admin visibility for provider health, failed turns, token/cost usage, tool errors, ingestion failures, and evaluation regressions without exposing private content unnecessarily.
+
+Owner: conversation/product/runtime/security in `invariance_research`; shared research-object contracts and fixtures in `bulletproof_bt`.
+
+Release gate: C0.5c may replace the default form only after a user can resume a thread, recover from provider failure, inspect provenance, and reach a draft candidate without losing program state. Marketing may say “research copilot” only when multi-turn persistence and citations are real, not when the UI merely resembles chat.
+
+Implementation status as of 2026-06-23: C0.5a-g are implemented across `invariance_research` and `bulletproof_bt`. The shipped foundation includes durable conversation/source/turn/tool/proposal/decision persistence, a provider-neutral OpenAI/Ollama runtime with deterministic rescue and circuit breaking, the conversation-first Program UI, exploratory/direct/source/artifact modes, governed transcript/YouTube/PDF/text/Markdown/screenshot ingestion, deny-by-default tools with explicit proposal confirmation, shared engine validation contracts, focused and end-to-end evaluation fixtures, and Admin Health telemetry. C1.5 remains responsible for confirmed Hypothesis Cards, V2 engine artifacts, compile readiness, and implementation tasks; C2.25 remains responsible for deep typed numerical interrogation of every completed artifact class.
+
 #### C1: Canonical lifecycle and event contracts
 
 - define deployment, connector, signal decision, order, fill, position, portfolio, trade episode, state snapshot, incident, memory assessment, and promotion schemas;
+- define conversation, source, citation, candidate hypothesis, Hypothesis Card, proposal, confirmation, context snapshot, and assistant tool-call schemas;
 - define stage identity across backtest/demo/live;
+- define Pine export, compatibility, import, parity, and TradingView observation contracts;
 - add shared fixtures and cross-repo contract tests.
 
 Owner: `bulletproof_bt` contracts; `invariance_research` projections and migrations.
+
+#### C1.5: Hypothesis Card and executable-spec bridge
+
+Make conversational research produce artifacts that `bulletproof_bt` can honestly classify and consume.
+
+Deliver in six increments:
+
+1. **C1.5a - Rich canonical schemas**
+   - implement `hypothesis_card_v1`, `hypothesis_spec_v2`, `engine_hypothesis_yaml_v1`, `strategy_spec_v2`, and `compile_readiness_report_v1`;
+   - formalize feature graphs, source fallbacks, gates, entries, exit state machines, sizing, risk, grids, logging, evaluation, and falsification;
+   - provide V1-to-V2 readers and backward-compatible fixtures.
+2. **C1.5b - Deterministic card transformation**
+   - transform confirmed cards into the normalized research strategy IR;
+   - serialize validated hypothesis JSON/YAML and Strategy Spec JSON deterministically;
+   - attach source citations, card/spec hashes, compiler version, and field provenance;
+   - reject unresolved blocking fields and contradictory semantics.
+3. **C1.5c - Capability and compile readiness**
+   - map every feature, gate, exit, risk policy, dataset, and logging requirement against the engine registry;
+   - classify `registry_ready`, `graph_compilable`, `implementation_required`, `data_blocked`, `semantics_blocked`, or `unsupported`;
+   - explain exact blockers and never equate schema validity with executability.
+4. **C1.5d - Generic feature/gate compiler**
+   - compile the reviewed portable subset into engine run configuration and strategy behavior;
+   - preserve closed-bar, no-lookahead, fallback, timeframe, session, cost, sizing, and logging semantics;
+   - add property, determinism, leakage, round-trip, and golden fixture tests.
+5. **C1.5e - Strategy implementation tasks**
+   - create isolated coding-assistant tasks when a valid card requires new behavior;
+   - require strategy module, registry entry, unit tests, integration fixture, logging assertions, lookahead audit, and deterministic run evidence;
+   - present diffs and test evidence for human approval before registration or execution.
+6. **C1.5f - Card/spec approval product**
+   - render readable card and spec views with source citations, provenance, diffs, compiler status, and unresolved blockers;
+   - support conversational revision and explicit object confirmation;
+   - enforce one confirmed card before hypothesis/spec approval;
+   - use the CSI card and existing L7-H1 YAML/strategy as the mandatory golden end-to-end fixture.
+
+Owner: schemas, IR, serializers, capability registry, compilers, and implementation-task acceptance contracts in `bulletproof_bt`; card/spec conversation, approval UI, persistence, and job orchestration in `invariance_research`.
+
+Release gate: a supported direct card must generate byte-stable YAML/spec artifacts and a correct compile-readiness result. Unsupported cards must produce useful blockers, not plausible but non-executable files.
 
 #### C2: Backtest-to-demo qualification
 
 - convert verdicts and experiment evidence into a deterministic qualification snapshot;
 - expose blocking reasons and required next tests;
-- require approval of exact strategy/risk/config hashes.
+- require approval of exact strategy/risk/config hashes;
+- normalize the approved Strategy Spec into a portable intermediate representation shared by engine and visualization targets;
+- expose whether the strategy is visualization-compatible, simulation-compatible, or unsupported before qualification.
 
 Owner: shared. Engine evidence in `bulletproof_bt`; workflow/UI in `invariance_research`.
+
+#### C2.25: Program Artifact Copilot
+
+Extend the same conversation across completed experiments and program memory.
+
+Deliver in five increments:
+
+1. **C2.25a - Typed artifact catalog**
+   - register manifests, run configs, datasets, trades, metrics, verdict cards, logs, reports, incidents, specs, and memory with sensitivity and lineage;
+   - add deterministic summaries, searchable text, table schemas, and row/page/timestamp anchors.
+2. **C2.25b - Program context and retrieval service**
+   - combine exact object lookup, structured metric queries, full-text/semantic source search, and memory similarity;
+   - honor explicit attachments, current versions, tenant policy, token budget, and citation requirements;
+   - persist the exact context snapshot used for each answer.
+3. **C2.25c - Artifact query tools**
+   - implement run metrics, trade cohorts, verdict cards, first failure, assumption lookup, run comparison, artifact manifest, and memory search tools;
+   - return bounded typed results with units, sample, tier, run identity, and citation anchors;
+   - prohibit model-side invention or arithmetic when a canonical query exists.
+4. **C2.25d - Cited research interpretation**
+   - answer promise, fragility, survival, limitation, alternative explanation, and next-experiment questions using the stable answer contract;
+   - distinguish fact, inference, recommendation, and unknown;
+   - let users turn a cited answer into a research note or proposed next experiment only through confirmation.
+5. **C2.25e - Artifact copilot evaluation**
+   - test positive, negative, contradictory, insufficient, and malformed runs;
+   - compare every numerical answer with canonical queries;
+   - test citation resolution, cross-tenant denial, large-artifact behavior, context truncation, and prompt injection in logs/artifacts;
+   - block release on numerical or authorization regressions.
+
+Owner: canonical artifact schemas/query semantics in `bulletproof_bt`; catalog, retrieval, tools, UI, citations, storage, and access policy in `invariance_research`.
+
+Release gate: the copilot cannot claim access to “all program artifacts” until every supported artifact type is cataloged, authorized, queryable, and citable. Unknown artifacts must be visible as unsupported rather than silently ignored.
+
+#### C2.5: Pine Script visualization and interoperability bridge
+
+Deliver in six bounded increments:
+
+1. **C2.5a - Compatibility registry and contracts**
+   - add portability metadata to every registered signal primitive;
+   - implement `pine_export_manifest_v1`, `pine_compatibility_report_v1`, `pine_parity_report_v1`, `pine_import_report_v1`, and `tradingview_signal_observation_v1`;
+   - add supported/approximated/unsupported reason codes and shared fixtures;
+   - fail closed on private datasets, portfolio state, unresolved intrabar semantics, or unconfirmed higher-timeframe data.
+2. **C2.5b - Deterministic Pine v6 indicator compiler**
+   - compile only approved Strategy Specs through the portable intermediate representation;
+   - generate overlay indicators with confirmed signals, gates, stops, targets, invalidations, bounded inputs, status metadata, and alert conditions;
+   - emit immutable source, manifest, compatibility report, spec snapshot, checksums, and setup guide;
+   - add golden tests, static policy checks, compiler versioning, idempotency, and output-limit checks.
+3. **C2.5c - Product export workflow**
+   - add Visualize on TradingView to approved Strategy Specs;
+   - add compatibility preview, generation job state, copy/download actions, superseded status, and exact Pine Editor setup instructions;
+   - persist artifacts in object storage and projections/audit events in Postgres;
+   - enforce plan, quota, tenant, rate-limit, and source-sharing rules.
+4. **C2.5d - Semantic replay and TradingView parity**
+   - compare the portable evaluator with engine signals on fixed datasets;
+   - accept TradingView signal/trade exports for the same symbol, timeframe, window, session, timezone, and parameters;
+   - emit first-divergence diagnostics and provisional/verified/divergent status;
+   - generate `strategy_simulation.pine` only for specs that pass simulation compatibility, while preserving emulator caveats.
+5. **C2.5e - Restricted Pine import**
+   - parse but never execute uploaded/pasted Pine v6 source;
+   - support only the registered portable subset;
+   - create draft Research Brief, Hypothesis Spec, and Strategy Spec with source provenance and ambiguity report;
+   - route unsupported constructs to manual reconstruction or Expert Review.
+6. **C2.5f - Alert observation bridge**
+   - issue revocable per-export webhook credentials;
+   - ingest strict, rate-limited, idempotent confirmed-signal observations;
+   - compare alerts with engine/demo decisions and append evidence to program memory;
+   - prohibit direct order creation and expose stale-alert warnings after spec/input changes.
+
+Owner: compiler, parser, portability registry, semantic replay, and schemas in `bulletproof_bt`; jobs, UI, storage, permissions, webhook ingress, parity workflow, and product projections in `invariance_research`.
+
+Release gate: C2.5b/c may ship before C2.5d-f. Marketing may say “Visualize supported strategies on TradingView” after C2.5c. It may not say “verified equivalent,” “import any Pine strategy,” “execute from TradingView,” or “TradingView parity” until the corresponding later increment passes its acceptance tests.
 
 #### C3: Bybit demo productization
 
@@ -6473,6 +7621,11 @@ Owner: Bybit/runtime in `bulletproof_bt`; orchestration/UI/security in `invarian
 - snapshot decision-time state features;
 - add comparable-state retrieval, drift, support count, calibration, and uncertainty;
 - emit advisory Memory Assessments;
+- retain source-backed copilot findings, confirmed research notes, rejected hypotheses, and user decisions with card, source, artifact, and conversation lineage;
+- keep raw chat, unconfirmed assistant interpretations, and proposed recommendations outside canonical research memory until the user confirms a typed note or decision;
+- allow the copilot to retrieve historical reasoning, but require current artifact evidence before a prior narrative can influence qualification or deployment policy;
+- retain Pine artifact lineage, parity findings, and verified TradingView signal observations as stage-qualified evidence;
+- keep unverified alerts separate from canonical backtest/demo/live trade episodes;
 - prohibit cross-tenant retrieval and future-enriched features.
 
 Owner: shared, with models/calibration in `bulletproof_bt` and tenant-safe storage/UI in `invariance_research`.
@@ -6502,6 +7655,7 @@ Owner: `invariance_research`, consuming `bulletproof_bt` events.
 - false-block and missed-risk monitoring;
 - allow automatic block/freeze only after explicit user policy approval;
 - never allow memory to increase risk automatically.
+- prohibit Pine source, TradingView emulator results, and alert observations from independently authorizing orders or promotions.
 
 Owner: models/evaluation in `bulletproof_bt`; policy configuration/audit in `invariance_research`.
 

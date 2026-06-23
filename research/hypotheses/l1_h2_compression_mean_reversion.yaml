@@ -106,3 +106,19 @@ notes:
     - "SessionVWAP vs cumulative VWAP mismatches can create spurious reversion signals."
     - "Compression gate can capture pre-breakout states where fades are punished."
     - "Tier2/Tier3 spread and fees can erase small mean-reversion edges."
+
+truth_contract:
+  version: "1.0"
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  parity_required_for_fast_path: true
+  research_memory_requires_certification: true

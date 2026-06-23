@@ -143,3 +143,19 @@ notes:
   failure_modes:
     - "Volatility scaling can under-size during trend accelerations and reduce upside capture."
     - "Clip-bound saturation can indicate unstable sigma reference calibration."
+
+truth_contract:
+  version: "1.0"
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  parity_required_for_fast_path: true
+  research_memory_requires_certification: true
