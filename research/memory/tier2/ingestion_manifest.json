@@ -1,9 +1,0 @@
-{
-  "candidates_ingested": 0,
-  "errors": [],
-  "experiments_scanned": 2,
-  "skipped_experiments": [],
-  "state_buckets_ingested": 1480,
-  "trades_ingested": 66838,
-  "verdicts_ingested": 1
-}

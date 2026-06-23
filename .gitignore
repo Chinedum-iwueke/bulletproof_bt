@@ -22,6 +22,7 @@ htmlcov/
 /logs/
 /research_data/
 /research_db/
+/research/memory/
 /research/state_findings/
 /research/verdicts/
 /research/audits/rich_state_feature_sample.csv
