@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hypothesis_spec_v2",
+  "type": "object",
+  "required": ["schema_version", "hypothesis_id", "program_id", "title", "claim", "market_mechanism", "observable_features", "required_datasets", "invalidation_criteria", "parameter_grid", "execution_semantics", "source_card_hash"],
+  "properties": {"schema_version": {"const": "hypothesis_spec_v2"}, "source_card_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}
+}

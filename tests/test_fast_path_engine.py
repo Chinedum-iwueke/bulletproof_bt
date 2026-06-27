@@ -14,9 +14,10 @@ from bt.core.enums import Side
 from bt.core.types import Bar
 from bt.engine.fast_path.l7_h1_kernel import L7H1KernelParams, build_l7_h1_feature_frame
 from bt.engine.fast_path import run_fast_path_if_supported
+from bt.engine.fast_path.family_kernels import kernel_for_strategy
 from bt.engine.fast_path.timing import TimingRecorder
 from bt.strategy.base import Strategy
-from bt.strategy.htf_context import PrecomputedHTFContextStrategyAdapter
+from bt.strategy.htf_context import HTFContextStrategyAdapter, PrecomputedHTFContextStrategyAdapter
 from bt.strategy.l7_h1_csi_gated_displacement_trend import L7H1CSIGatedDisplacementTrendStrategy
 from bt.research_data.jobs.state_features import _with_l7_h1_kernel_features
 
@@ -146,6 +147,42 @@ def test_fast_path_status_attaches_l7h1_compiled_feature_kernel(tmp_path: Path) 
     status = json.loads((run_dir / "fast_path_status.json").read_text(encoding="utf-8"))
     assert status["mode"] == "classic_with_compiled_l7h1_features"
     assert "L7-H1" in status["reason"]
+
+
+def test_fast_path_status_attaches_generic_htf_event_kernel(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run_h11"
+    run_dir.mkdir()
+    config = {
+        "execution_engine": "auto",
+        "data": {"dataset_kind": "research_panel", "htf_context_source": "precomputed"},
+        "htf_resampler": {"timeframes": ["15m"], "strict": True},
+        "strategy": {"name": "l1_h11_quality_filtered_continuation"},
+    }
+    result = run_fast_path_if_supported(
+        config=config,
+        data_path="research_data",
+        run_dir=run_dir,
+        timing=TimingRecorder(run_dir / "run_timing.json"),
+    )
+
+    assert result.handled is False
+    assert result.mode == "classic_with_compiled_htf_event_kernel_precomputed"
+    status = json.loads((run_dir / "fast_path_status.json").read_text(encoding="utf-8"))
+    assert "htf_event_schedule_kernel" in status["reason"]
+
+
+def test_current_hypothesis_strategies_have_registered_family_kernels() -> None:
+    from bt.hypotheses.contract import HypothesisContract
+
+    missing: list[str] = []
+    for path in sorted(Path("research/hypotheses").glob("*.yaml")):
+        if path.name == "sample_pipeline_smoke.yaml":
+            continue
+        contract = HypothesisContract.from_yaml(path)
+        strategy = str(contract.schema.entry.get("strategy", ""))
+        if kernel_for_strategy(strategy) is None:
+            missing.append(f"{path.name}:{strategy}")
+    assert missing == []
 
 
 def test_l7h1_kernel_emits_causal_decision_time_features() -> None:
@@ -300,6 +337,78 @@ def test_precomputed_htf_context_matches_streaming_cold_start() -> None:
     adapter.on_bars(second.ts, {"BTCUSDT": second}, {"BTCUSDT"}, {})
 
     assert inner.emitted == [pd.Timestamp("2024-01-01T00:00:00Z")]
+
+
+def test_precomputed_htf_event_kernel_skips_only_flat_no_event_minutes() -> None:
+    class CountingStrategy(Strategy):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def on_bars(self, ts, bars_by_symbol, tradeable, ctx):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            return []
+
+    inner = CountingStrategy()
+    adapter = PrecomputedHTFContextStrategyAdapter(
+        inner=inner,
+        timeframes=["15m"],
+        skip_empty_no_position=True,
+    )
+    bar = Bar(
+        ts=pd.Timestamp("2024-01-01T00:01:00Z"),
+        symbol="BTCUSDT",
+        open=100.0,
+        high=101.0,
+        low=99.0,
+        close=100.5,
+        volume=1000.0,
+        extra={},
+    )
+
+    adapter.on_bars(bar.ts, {"BTCUSDT": bar}, {"BTCUSDT"}, {"positions": {}})
+    assert inner.calls == 0
+    assert adapter.strategy_artifacts()["htf_event_kernel"]["noop_skipped_calls"] == 1
+
+    adapter.on_bars(
+        bar.ts + pd.Timedelta(minutes=1),
+        {"BTCUSDT": bar},
+        {"BTCUSDT"},
+        {"positions": {"BTCUSDT": {"side": "buy", "qty": 1.0}}},
+    )
+    assert inner.calls == 1
+
+
+def test_streaming_htf_event_kernel_skips_flat_no_event_minutes() -> None:
+    class CountingStrategy(Strategy):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def on_bars(self, ts, bars_by_symbol, tradeable, ctx):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            return []
+
+    from bt.data.resample import TimeframeResampler
+
+    inner = CountingStrategy()
+    adapter = HTFContextStrategyAdapter(
+        inner=inner,
+        resampler=TimeframeResampler(timeframes=["15m"], strict=True),
+        skip_empty_no_position=True,
+    )
+    bar = Bar(
+        ts=pd.Timestamp("2024-01-01T00:01:00Z"),
+        symbol="BTCUSDT",
+        open=100.0,
+        high=101.0,
+        low=99.0,
+        close=100.5,
+        volume=1000.0,
+        extra={},
+    )
+
+    adapter.on_bars(bar.ts, {"BTCUSDT": bar}, {"BTCUSDT"}, {"positions": {}})
+    assert inner.calls == 0
+    assert adapter.strategy_artifacts()["htf_event_kernel"]["noop_skipped_calls"] == 1
 
 
 def test_public_orchestrator_entrypoints_import_after_fast_path() -> None:

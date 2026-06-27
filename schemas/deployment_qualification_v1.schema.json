@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "deployment_qualification_v1",
+  "type": "object",
+  "required": ["schema_version", "qualification_id", "program_id", "stage_from", "stage_to", "status", "strategy_spec_hash", "risk_policy_hash", "config_hash", "rules", "blockers", "required_next_tests", "target_compatibility", "approval", "snapshot_hash"],
+  "properties": {
+    "schema_version": {"const": "deployment_qualification_v1"},
+    "qualification_id": {"type": "string", "minLength": 1},
+    "program_id": {"type": "string", "minLength": 1},
+    "stage_from": {"const": "backtest"},
+    "stage_to": {"const": "demo"},
+    "status": {"enum": ["blocked", "qualified"]},
+    "strategy_spec_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "risk_policy_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "config_hash": {"type": "string", "minLength": 1},
+    "rules": {"type": "array", "items": {"type": "object", "required": ["rule", "status", "required"], "properties": {"rule": {"type": "string"}, "status": {"enum": ["pass", "block"]}, "required": {"const": true}}}},
+    "blockers": {"type": "array", "items": {"type": "string"}},
+    "required_next_tests": {"type": "array", "items": {"type": "string"}},
+    "target_compatibility": {"type": "object"},
+    "limitations": {"type": "array"},
+    "approval": {"type": "object"},
+    "snapshot_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

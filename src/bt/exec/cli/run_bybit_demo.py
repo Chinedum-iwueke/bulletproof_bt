@@ -6,7 +6,7 @@ from bt.exec.runtime import run_exec_session
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run exec Bybit demo broker mode.")
+    parser = argparse.ArgumentParser(description="Run exec demo broker mode (Bybit or Binance, selected by config).")
     parser.add_argument("--config", default="configs/exec/bybit_demo_execution.yaml")
     parser.add_argument("--data", required=True)
     parser.add_argument("--out-dir", default=None)

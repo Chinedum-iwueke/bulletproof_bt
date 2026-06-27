@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "compile_readiness_report_v1",
+  "type": "object",
+  "required": ["schema_version", "strategy_spec_id", "status", "blockers", "capabilities", "compiler_version", "source_card_hash"],
+  "properties": {"schema_version": {"const": "compile_readiness_report_v1"}, "status": {"enum": ["registry_ready", "graph_compilable", "implementation_required", "data_blocked", "semantics_blocked", "unsupported"]}, "blockers": {"type": "array", "items": {"type": "object", "required": ["code", "detail"]}}}
+}

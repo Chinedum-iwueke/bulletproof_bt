@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "engine_hypothesis_yaml_v1",
+  "type": "object",
+  "required": ["hypothesis_id", "title", "parameter_grid", "entry", "exit", "execution_semantics", "truth_contract", "generation_provenance"],
+  "properties": {"truth_contract": {"type": "object", "required": ["version", "profile", "no_lookahead", "strict_utc", "missing_bars", "interpolation", "htf_completeness", "aux_join_direction", "execution_authority", "risk_authority", "accounting", "truth_gate_required"]}, "generation_provenance": {"type": "object", "required": ["schema_version", "source_card_hash", "compiler_version"]}}
+}

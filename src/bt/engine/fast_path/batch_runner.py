@@ -65,7 +65,11 @@ def run_fast_path_if_supported(
         return result
     data_cfg = config.get("data") if isinstance(config.get("data"), dict) else {}
     if data_cfg.get("htf_context_source") == "precomputed":
-        result = FastPathResult(False, "classic_with_precomputed_htf_context", support.reason)
+        result = FastPathResult(False, "classic_with_compiled_htf_event_kernel_precomputed", support.reason)
+        write_fast_path_status(run_dir, result)
+        return result
+    if data_cfg.get("dataset_kind") == "research_panel" and config.get("htf_resampler"):
+        result = FastPathResult(False, "classic_with_compiled_htf_event_kernel_streaming", support.reason)
         write_fast_path_status(run_dir, result)
         return result
 

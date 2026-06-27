@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cited_research_answer_v1",
+  "type": "object",
+  "required": ["schema_version", "question", "facts", "inferences", "recommendations", "unknowns", "citations", "canonical_query_hash", "answer_hash"],
+  "properties": {
+    "schema_version": {"const": "cited_research_answer_v1"},
+    "question": {"type": "string", "minLength": 1},
+    "facts": {"type": "array", "items": {"type": "object", "required": ["statement", "citations"]}},
+    "inferences": {"type": "array"},
+    "recommendations": {"type": "array"},
+    "unknowns": {"type": "array"},
+    "citations": {"type": "array"},
+    "canonical_query_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "answer_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

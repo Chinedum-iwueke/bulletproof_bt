@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pine_export_manifest_v1",
+  "type": "object",
+  "required": ["schema_version", "export_id", "program_id", "strategy_spec_id", "strategy_spec_hash", "pine_version", "compiler_version", "generated_at", "approval_state", "files", "source_sharing"],
+  "properties": {
+    "schema_version": {"const": "pine_export_manifest_v1"},
+    "export_id": {"type": "string", "minLength": 1},
+    "program_id": {"type": "string", "minLength": 1},
+    "strategy_spec_id": {"type": "string", "minLength": 1},
+    "strategy_spec_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "pine_version": {"const": "v6"},
+    "compiler_version": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string"},
+    "approval_state": {"const": "approved"},
+    "files": {"type": "object", "required": ["strategy_visualization.pine"], "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+    "source_sharing": {"const": "account_private"}
+  }
+}

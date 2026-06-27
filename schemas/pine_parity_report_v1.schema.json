@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pine_parity_report_v1",
+  "type": "object",
+  "required": ["schema_version", "comparison_source", "verdict", "tolerance_policy"],
+  "properties": {
+    "schema_version": {"const": "pine_parity_report_v1"},
+    "comparison_source": {"enum": ["reference_evaluator", "tradingview_export"]},
+    "verdict": {"enum": ["provisional", "verified", "divergent"]},
+    "engine_signal_count": {"type": "integer", "minimum": 0},
+    "tradingview_signal_count": {"type": "integer", "minimum": 0},
+    "matched": {"type": "integer", "minimum": 0},
+    "missing": {},
+    "extra": {},
+    "direction_mismatches": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "array"}]},
+    "first_divergence": {},
+    "tolerance_policy": {"type": "object"},
+    "report_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

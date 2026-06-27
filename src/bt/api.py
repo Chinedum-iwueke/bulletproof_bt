@@ -134,6 +134,13 @@ def _build_engine(
     data_cfg = config.get("data") if isinstance(config.get("data"), dict) else {}
     dataset_kind = data_cfg.get("dataset_kind") if isinstance(data_cfg, dict) else None
     timeframe_override = data_cfg.get("timeframe") if isinstance(data_cfg, dict) else None
+    execution_engine_raw = str(config.get("execution_engine", config.get("engine", "classic")) or "classic").strip().lower()
+    enable_htf_event_kernel = (
+        execution_engine_raw in {"auto", "fast_path"}
+        and dataset_kind == "research_panel"
+        and data_cfg.get("enable_htf_event_kernel", True) is not False
+        and str(strategy_name) != "l7_h1_csi_gated_displacement_trend"
+    )
     if timeframe_override is not None and mode == "default" and dataset_kind != "research_panel":
         from bt.data.resample import normalize_timeframe
 
@@ -154,6 +161,7 @@ def _build_engine(
         strategy = PrecomputedHTFContextStrategyAdapter(
             inner=strategy,
             timeframes=[str(tf) for tf in htf_resampler.get("timeframes", [])],
+            skip_empty_no_position=enable_htf_event_kernel,
         )
         htf_resampler = None
     if isinstance(htf_resampler, dict):
@@ -162,7 +170,11 @@ def _build_engine(
             strict=bool(htf_resampler.get("strict", True)),
         )
     if isinstance(htf_resampler, TimeframeResampler):
-        strategy = HTFContextStrategyAdapter(inner=strategy, resampler=htf_resampler)
+        strategy = HTFContextStrategyAdapter(
+            inner=strategy,
+            resampler=htf_resampler,
+            skip_empty_no_position=enable_htf_event_kernel,
+        )
 
     signal_conflict_policy = strategy_cfg.get("signal_conflict_policy", "reject")
     strategy = SignalConflictPolicyStrategyAdapter(inner=strategy, policy=str(signal_conflict_policy))

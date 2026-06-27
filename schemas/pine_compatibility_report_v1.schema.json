@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pine_compatibility_report_v1",
+  "type": "object",
+  "required": ["schema_version", "status", "simulation_status", "portable_primitives", "unsupported", "approximations", "session_mapping", "timezone_mapping", "risk_omissions", "compiler_version", "report_hash"],
+  "properties": {
+    "schema_version": {"const": "pine_compatibility_report_v1"},
+    "status": {"enum": ["visualization_compatible", "unsupported"]},
+    "simulation_status": {"enum": ["simulation_compatible", "unsupported"]},
+    "portable_primitives": {"type": "array", "items": {"type": "object", "required": ["feature_id", "primitive", "pine_supported"]}},
+    "unsupported": {"type": "array", "items": {"type": "string"}},
+    "approximations": {"type": "array", "items": {"type": "string"}},
+    "session_mapping": {"type": ["string", "null"]},
+    "timezone_mapping": {"const": "UTC"},
+    "timeframe_mapping": {"type": ["string", "null"]},
+    "risk_omissions": {"type": "array", "items": {"type": "string"}},
+    "compiler_version": {"type": "string"},
+    "report_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

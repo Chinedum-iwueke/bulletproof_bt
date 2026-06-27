@@ -22,8 +22,10 @@ __all__ = [
     "MarketDataAdapter",
     "SimulatedBrokerAdapter",
     "BybitBrokerAdapter",
+    "BinanceBrokerAdapter",
 ]
 
 from bt.exec.adapters.simulated import SimulatedBrokerAdapter
 
 from bt.exec.adapters.bybit import BybitBrokerAdapter
+from bt.exec.adapters.binance import BinanceBrokerAdapter

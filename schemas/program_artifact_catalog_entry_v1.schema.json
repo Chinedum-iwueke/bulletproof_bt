@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "program_artifact_catalog_entry_v1",
+  "type": "object",
+  "required": ["schema_version", "catalog_id", "account_id", "program_id", "artifact_type", "object_id", "sensitivity", "content_hash", "lineage", "summary", "searchable_text", "anchors", "schema", "catalog_hash"],
+  "properties": {
+    "schema_version": {"const": "program_artifact_catalog_entry_v1"},
+    "catalog_id": {"type": "string", "minLength": 1},
+    "account_id": {"type": "string", "minLength": 1},
+    "program_id": {"type": "string", "minLength": 1},
+    "artifact_type": {"enum": ["manifest", "run_config", "dataset", "trades", "metrics", "verdict_card", "log", "report", "incident", "spec", "memory"]},
+    "object_id": {"type": "string", "minLength": 1},
+    "sensitivity": {"enum": ["public", "account_private", "program_private", "secret"]},
+    "content_hash": {"type": "string", "minLength": 1},
+    "lineage": {"type": "object"},
+    "summary": {"type": "string"},
+    "searchable_text": {"type": "string"},
+    "anchors": {"type": "array", "items": {"type": "object"}},
+    "schema": {"type": "object"},
+    "query_payload": {"type": "object"},
+    "units": {"type": "object", "additionalProperties": {"type": "string"}},
+    "status": {"enum": ["ready", "unsupported"]},
+    "catalog_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

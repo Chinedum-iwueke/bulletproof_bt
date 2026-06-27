@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tradingview_signal_observation_v1",
+  "type": "object",
+  "required": ["schema_version", "account_id", "program_id", "pine_export_id", "symbol", "timeframe", "confirmed_bar_timestamp", "received_at", "side", "event_type", "payload_hash", "idempotency_key", "verification_status", "observation_only", "order_authority"],
+  "properties": {
+    "schema_version": {"const": "tradingview_signal_observation_v1"},
+    "account_id": {"type": "string", "minLength": 1},
+    "program_id": {"type": "string", "minLength": 1},
+    "pine_export_id": {"type": "string", "minLength": 1},
+    "symbol": {"type": "string", "minLength": 1},
+    "timeframe": {"type": "string", "minLength": 1},
+    "confirmed_bar_timestamp": {"type": "string"},
+    "received_at": {"type": "string", "format": "date-time"},
+    "side": {"enum": ["long", "short"]},
+    "event_type": {"enum": ["entry", "exit", "invalidation"]},
+    "payload_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "idempotency_key": {"type": "string", "minLength": 8},
+    "verification_status": {"enum": ["observed_unverified", "matched_engine_signal", "stale_spec"]},
+    "observation_only": {"const": true},
+    "order_authority": {"const": false}
+  }
+}

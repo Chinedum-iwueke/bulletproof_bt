@@ -32,6 +32,7 @@ def _make_adapter(*, environment: str = "demo", calls: list[dict[str, object]] |
                 "environment": environment,
                 "category": "linear",
                 "symbols": ["BTCUSDT"],
+                "ws": {"enabled": False},
                 "auth": {"api_key_env": "BYBIT_API_KEY", "api_secret_env": "BYBIT_API_SECRET"},
             }
         }

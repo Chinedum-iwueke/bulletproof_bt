@@ -13,6 +13,8 @@ from bt.exec.adapters.bybit import BybitBrokerAdapter, BybitRESTClient, resolve_
 from bt.exec.adapters.bybit.client_ws_private import BybitPrivateWSClient
 from bt.exec.adapters.bybit.client_ws_public import BybitPublicWSClient
 from bt.exec.adapters.bybit.errors import BybitAdapterError
+from bt.exec.adapters.binance import BinanceBrokerAdapter, BinanceRESTClient, resolve_binance_config
+from bt.exec.adapters.binance.errors import BinanceAdapterError
 from bt.exec.services.live_controls import load_canary_policy
 
 
@@ -36,36 +38,45 @@ def _load_exec_config(config_path: str, override_paths: list[str] | None) -> dic
 
 
 def run_doctor_diagnosis(*, config: dict[str, Any], check_ws: bool, live_readiness: bool = False) -> DoctorSummary:
-    bybit_cfg = resolve_bybit_config(config)
+    broker = config.get("broker") if isinstance(config.get("broker"), dict) else {}
+    venue = str(broker.get("venue", "bybit")).lower()
     canary_ok = True
     try:
         _ = load_canary_policy(config)
     except Exception:
         canary_ok = False
-    api_key, api_secret = bybit_cfg.auth.resolve()
-    rest = BybitRESTClient(
-        base_url=bybit_cfg.rest_base_url,
-        api_key=api_key,
-        api_secret=api_secret,
-        recv_window_ms=bybit_cfg.recv_window_ms,
-        timeout_ms=bybit_cfg.request_timeout_ms,
-        max_retries=bybit_cfg.max_retries,
-        retry_backoff_ms=bybit_cfg.retry_backoff_ms,
-        environment=bybit_cfg.environment,
-    )
-    adapter = BybitBrokerAdapter(
-        config=bybit_cfg,
-        rest_client=rest,
-        ws_public=BybitPublicWSClient(url=bybit_cfg.public_ws_url, topics=bybit_cfg.ws.public_topics, symbols=bybit_cfg.symbols, enabled=check_ws),
-        ws_private=BybitPrivateWSClient(url=bybit_cfg.private_ws_url, topics=bybit_cfg.ws.private_topics, api_key=api_key, api_secret=api_secret, enabled=check_ws),
-    )
+    if venue == "binance":
+        exchange_cfg = resolve_binance_config(config)
+        api_key, api_secret = exchange_cfg.auth.resolve()
+        adapter = BinanceBrokerAdapter(config=exchange_cfg, rest_client=BinanceRESTClient(
+            base_url=exchange_cfg.rest_base_url, api_key=api_key, api_secret=api_secret,
+            recv_window_ms=exchange_cfg.recv_window_ms, timeout_ms=exchange_cfg.request_timeout_ms,
+            max_retries=exchange_cfg.max_retries, retry_backoff_ms=exchange_cfg.retry_backoff_ms,
+            environment=exchange_cfg.environment,
+        ))
+        environment, symbols = exchange_cfg.environment, exchange_cfg.symbols
+    else:
+        bybit_cfg = resolve_bybit_config(config)
+        api_key, api_secret = bybit_cfg.auth.resolve()
+        rest = BybitRESTClient(
+            base_url=bybit_cfg.rest_base_url, api_key=api_key, api_secret=api_secret,
+            recv_window_ms=bybit_cfg.recv_window_ms, timeout_ms=bybit_cfg.request_timeout_ms,
+            max_retries=bybit_cfg.max_retries, retry_backoff_ms=bybit_cfg.retry_backoff_ms,
+            environment=bybit_cfg.environment,
+        )
+        adapter = BybitBrokerAdapter(
+            config=bybit_cfg, rest_client=rest,
+            ws_public=BybitPublicWSClient(url=bybit_cfg.public_ws_url, topics=bybit_cfg.ws.public_topics, symbols=bybit_cfg.symbols, enabled=check_ws),
+            ws_private=BybitPrivateWSClient(url=bybit_cfg.private_ws_url, topics=bybit_cfg.ws.private_topics, api_key=api_key, api_secret=api_secret, enabled=check_ws),
+        )
+        environment, symbols = bybit_cfg.environment, bybit_cfg.symbols
     adapter.start()
     try:
         balances = adapter.fetch_balances()
         positions = adapter.fetch_positions()
         open_orders = adapter.fetch_open_orders()
         fills = adapter.fetch_recent_fills_or_executions(limit=50)
-        instrument = adapter.get_instrument(bybit_cfg.symbols[0])
+        instrument = adapter.get_instrument(symbols[0])
         checks = {
             "rest_auth": True,
             "fetch_balances": True,
@@ -76,9 +87,10 @@ def run_doctor_diagnosis(*, config: dict[str, Any], check_ws: bool, live_readine
             "ws_checked": True,
             "canary_config_valid": canary_ok,
             "private_stream_ready": adapter.private_stream_ready() if check_ws else True,
+            "rest_authoritative_reconciliation": True,
         }
         if live_readiness:
-            checks["live_environment"] = bybit_cfg.environment == "live"
+            checks["live_environment"] = environment == "live"
             checks["startup_gate_prereqs"] = bool(config.get("exec", {}).get("require_private_stream_ready", True)) if isinstance(config.get("exec"), dict) else True
 
         health = {
@@ -96,8 +108,8 @@ def run_doctor_diagnosis(*, config: dict[str, Any], check_ws: bool, live_readine
             readiness = "blocked_canary_or_startup_prereqs"
         return DoctorSummary(
             ok=all(checks.values()),
-            venue="bybit",
-            environment=bybit_cfg.environment,
+            venue=venue,
+            environment=environment,
             readiness=readiness,
             checks=checks,
             health=health,
@@ -109,14 +121,14 @@ def run_doctor_diagnosis(*, config: dict[str, Any], check_ws: bool, live_readine
             },
             ts=pd.Timestamp.now(tz="UTC").isoformat(),
         )
-    except BybitAdapterError:
+    except (BybitAdapterError, BinanceAdapterError):
         raise
     finally:
         adapter.stop()
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run read-only Bybit doctor diagnostics.")
+    parser = argparse.ArgumentParser(description="Run read-only Bybit or Binance connector diagnostics.")
     parser.add_argument("--config", default="configs/exec/bybit_demo.yaml")
     parser.add_argument("--override", action="append", default=[])
     parser.add_argument("--check-ws", action="store_true")

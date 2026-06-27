@@ -1,0 +1,38 @@
+exec:
+  mode: live_broker
+  startup_reconcile_required: true
+  block_new_orders_until_reconciled: true
+  require_private_stream_ready: false
+
+broker:
+  venue: binance
+  environment: live
+  symbols: [BTCUSDT]
+  recv_window_ms: 5000
+  request_timeout_ms: 4000
+  max_retries: 2
+  retry_backoff_ms: 400
+  auth:
+    api_key_env: BINANCE_API_KEY
+    api_secret_env: BINANCE_API_SECRET
+
+live_controls:
+  enabled: true
+  canary_mode: true
+  read_only_startup: false
+  freeze_on_startup_mismatch: true
+  allow_reduce_only_when_frozen: true
+
+canary:
+  max_symbols: 1
+  allowed_symbols: [BTCUSDT]
+  max_total_open_positions: 1
+  max_open_orders_total: 2
+  max_notional_usd: 100
+  max_order_qty: 0.001
+  max_orders_per_hour: 10
+
+reconcile:
+  enabled: true
+  interval_seconds: 15
+  policy: freeze_on_material

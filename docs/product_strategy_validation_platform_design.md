@@ -31,7 +31,7 @@ Approach B is now the product center:
 
 The June 2026 product boundary is now crypto-first and extends the research pipeline through governed execution:
 
-> Invariance Research Desk is a crypto research companion from intuition to backtest to Bybit demo, bounded live deployment, portfolio monitoring, and memory-backed next decisions. Binance execution follows only after connector parity; current Binance support is research data, not order execution.
+> Invariance Research Desk is a crypto research companion from intuition to backtest to supervised Binance or Bybit demo deployment, bounded live-canary reconciliation, portfolio monitoring, and memory-backed next decisions. Unattended live execution remains gated on private-stream, recovery, and policy controls.
 
 The product should still grow from the existing app, not around it. The difference is that the app should now be reorganized around Research Programs, Hypotheses, Experiment Queues, Runs, Verdicts, and Research Memory instead of only uploaded analyses.
 
@@ -6702,17 +6702,17 @@ The existing repos support meaningful parts of this direction, but they do not y
 - hypothesis, strategy-spec, experiment-plan, verdict-card, and research-memory foundations;
 - crypto research data adapters for Binance and Bybit;
 - Binance and Bybit public market-data websocket collectors;
-- a Bybit broker adapter with REST order create/amend/cancel, private order/execution/position/wallet streams, instrument metadata, reconciliation, durable execution state, health reporting, demo mode, and live canary controls;
-- Bybit startup reconciliation, mutation gating, symbol/notional/quantity/open-position/open-order limits, freeze controls, and demo/live runbooks.
+- Binance and Bybit spot and perpetual broker adapters with authenticated REST order create/amend/cancel, instrument metadata, balances, reconciliation inputs, demo mode, and bounded live mutation controls;
+- Bybit private-stream foundations plus explicit REST-authoritative startup/recovery reconciliation, mutation gating, freeze controls, and demo/live runbooks.
 
 #### Important gaps and corrections
 
-1. **Binance execution is not implemented.** Binance currently exists as a research-data source and public websocket source. There is no production Binance broker adapter with authenticated order submission, private user streams, fill/order/position reconciliation, demo/testnet contract, or live mutation gate. Public copy must not claim Binance deployment until this reaches Bybit parity.
-2. **Bybit execution is engine-local, not a multi-tenant SaaS capability.** The CLI/runtime exists, but the web product does not yet provision connector credentials, create deployments, schedule persistent execution sessions, or expose their state safely.
-3. **Bybit live safety is first-pass, not institutional finality.** The engine explicitly does not claim exactly-once behavior across every failure mode. External alerting is absent, global rate-limit coordination is basic, and reduce-only behavior during freezes needs a dedicated path.
-4. **The current execution runtime is not yet the product's always-on real-time portfolio plane.** It writes operational artifacts and state, but `invariance_research` does not project a tenant-safe live portfolio, order, fill, incident, or risk stream into the dashboard.
-5. **Research memory is not yet a canonical backtest-to-demo-to-live trade ledger.** Existing memory and experiment cards are strong foundations, but stage-normalized trade identity, market-state snapshots, deployment lineage, and closed-loop outcome labeling are still required.
-6. **There is no safe memory-based pre-trade policy engine.** Historical similarity and prior outcomes must be converted into calibrated evidence with uncertainty, not a naive win-rate lookup.
+1. **Connector support is supervised, not unattended.** Binance and Bybit now support spot and perpetual REST diagnosis/reconciliation in demo and bounded live-canary environments. Binance private user-stream parity and continuously running compiled-strategy market-data execution remain release gates.
+2. **The connector control plane is multi-tenant.** The web product provisions encrypted write-only credentials, exact venue/product/environment identities, deployment commands, events, and portfolio projections. Credentials are only decrypted by the external execution worker.
+3. **Live safety is still first-pass, not institutional finality.** The engine does not claim exactly-once behavior across every failure mode. External alerting, global rate-limit coordination, persistent private-stream recovery, and dedicated reduce-only freeze behavior still gate unattended capital.
+4. **The portfolio plane is polling/reconciliation based.** Tenant-safe balances, positions, orders, fills, incidents, and controls exist, but durable low-latency event streaming and reconnect behavior remain C6 work.
+5. **Unified trade memory is implemented with an evidence boundary.** Backtest, demo, and live episodes share a canonical contract, but state-aware retrieval is only available where causal decision-time features were actually recorded. Missing state is never reconstructed with hindsight.
+6. **Memory is advisory, not order authority.** Comparable-state support, drift, uncertainty, and calibration are exposed, but assessments cannot authorize a trade or increase risk. Any automated policy gate remains C7 work after shadow calibration.
 
 ### Product State Machine
 
@@ -7414,6 +7414,273 @@ Open app
   -> memory changes the next experiment and can block unsafe order intents
 ```
 
+### First-1,000-User Market Data Model
+
+The first scaled Research Desk product should not make users bring OHLCV files for ordinary crypto research. Bring-your-own data is powerful, but it creates too much onboarding friction, inconsistent schemas, hidden data-quality problems, and support load. The launch path should be platform-managed crypto market data for common Binance and Bybit instruments, with user uploads reserved for audit imports, private fills, broker/export evidence, or advanced Research Desk review.
+
+Default launch model:
+
+1. **Platform-managed data first.**
+   - Maintain a canonical market-data library for Binance and Bybit public crypto data.
+   - Start with OHLCV bars for spot and perpetual markets; add mark/index/funding/open-interest/liquidation panels only where the connector and data-quality contract are already reliable.
+   - Store partitioned data in object storage, indexed by a small Postgres manifest, not as one giant relational time-series table.
+   - Treat exchange APIs as ingestion sources, not as per-user runtime dependencies. Backtests should read versioned local/object-storage panels so reruns are reproducible.
+   - Keep every run tied to a `market_data_snapshot_id`, coverage window, exchange/source, timeframe, symbol set, and content hash.
+2. **User-selected assets, not forced universes.**
+   - Users can run one asset, a selected list of assets, or a saved basket.
+   - The UI should expose available instruments from an instrument master instead of requiring users to know exact exchange symbols.
+   - The product should not force every user into the founder's internal stable/volatile universe workflow.
+3. **Simple static baskets only at launch.**
+   - A launch basket is a named static list of symbols plus venue, product type, timeframe defaults, and version hash.
+   - Users can create baskets such as "Large-cap perps", "BTC/ETH/SOL", or "My alts".
+   - No dynamic baskets at launch: no top-gainer/top-loser rotation, rolling liquidity screens, momentum-ranked universes, or rebalance rules. Those belong in Research Desk/full ambition after static basket research is proven.
+4. **Bring-your-own data remains an expert path.**
+   - User OHLCV upload is allowed only when they need unsupported venues, private datasets, or exact proprietary data.
+   - BYOD runs must carry stronger warnings: schema validation, timestamp alignment, timezone, survivorship, missing bars, and source provenance are user responsibility unless reviewed by Research Desk.
+   - BYOD data should not silently mix with platform-managed panels inside the same run unless an explicit data-source manifest is approved.
+
+#### Launch Data Objects
+
+| Object | Owner | Purpose |
+| --- | --- | --- |
+| `InstrumentMaster` | `invariance_research` projection, sourced from `bulletproof_bt`/exchange metadata | Available Binance/Bybit symbols, base/quote, venue, product type, status, precision, minimum notional, first/last available bar. |
+| `MarketDataPanel` | `bulletproof_bt` ingestion + object storage | Partitioned OHLCV/context files by venue, product type, symbol, timeframe, and date range. |
+| `MarketDataSnapshot` | shared contract | Immutable manifest used by a run: symbols, timeframe, coverage, panel versions, hashes, missing intervals, and source warnings. |
+| `ResearchBasket` | `invariance_research` | User/system static basket: name, symbols, venue/product type, timeframe defaults, account ownership, version hash, created/archived state. |
+| `ExperimentDataSelection` | `invariance_research` | The exact asset/basket/timeframe/window selected for an experiment plan. |
+| `ExperimentGridBudget` | shared contract | Total variant count, plan cap, estimated compute units, queue eligibility, and over-limit reason. |
+
+#### Data Source Policy
+
+Use Binance and Bybit as public market-data sources, but do not make every experiment fetch directly from Binance/Bybit at run time. Direct API fetches should happen in scheduled ingestion/backfill jobs. Experiment workers should consume the managed data snapshot.
+
+Rationale:
+
+- reproducibility beats convenience;
+- exchange API outages should not break already-versioned backtests;
+- one shared cache is cheaper than 1,000 users repeatedly fetching the same candles;
+- platform-managed data lets the assistant know what can actually be tested before a user queues compute;
+- object storage is cheaper and simpler than stuffing large OHLCV panels into Postgres.
+
+The Postgres database should hold metadata, manifests, baskets, permissions, and run selections. R2/S3 should hold the actual data files. The engine should receive resolved local/object-storage paths and a manifest hash.
+
+#### Instrument And Basket UX
+
+The experiment planner should ask:
+
+```text
+What do you want to test this against?
+
+Asset
+  - BTCUSDT perp
+  - ETHUSDT spot
+  - search all supported instruments
+
+Basket
+  - system baskets
+  - my saved baskets
+  - create static basket
+
+Window
+  - quick presets
+  - custom start/end
+
+Timeframe
+  - supported by data coverage
+```
+
+Basket creation should be deliberately boring:
+
+- name;
+- venue: Binance or Bybit;
+- product type: spot or perpetual;
+- symbols selected from instrument master;
+- optional default timeframe;
+- optional notes;
+- no ranking/rebalance logic.
+
+Dynamic universes are explicitly deferred:
+
+- top gainer/top loser rotations;
+- two-hour rolling selection;
+- volume/liquidity ranked membership;
+- volatility-ranked baskets;
+- rebalanced portfolios;
+- causal universe membership research.
+
+These can later become Pro/Research Desk features after the product has enough demand and enough data-quality surface area to explain them honestly.
+
+#### Grid Budget And Subscription Limits
+
+Grid limits should be expressed as total experiment variants, not only parameter count. A variant is one runnable combination of:
+
+```text
+symbol x timeframe x parameter set x cost/slippage scenario x split/holdout/null condition
+```
+
+Examples:
+
+- 1 symbol x 8 parameter sets = 8 variants.
+- 4 symbols x 2 parameter sets x 3 cost scenarios = 24 variants.
+- 4 symbols x 8 parameter sets = 32 variants.
+
+Launch caps:
+
+| Tier | Per-experiment grid cap | Basket cap | Concurrent experiments | Intended behavior |
+| --- | ---: | ---: | ---: | --- |
+| Free / Preview | 1 variant | no saved baskets | 0-1 | Let users see the flow, not run broad research. |
+| Explorer | 8 variants | up to 10 symbols per static basket | 1 | Lowest paid tier can test one asset deeply or a small basket lightly. |
+| Pro | 32 variants | up to 25 symbols per static basket | 2 | Serious self-serve research: modest cross-asset tests, parameter sweeps, cost scenarios. |
+| Research Desk / Admin-approved | custom, normally 92+ only by approval | custom | scheduled | Large grids, dynamic universes, and expensive sweeps need human or admin approval. |
+
+This means the founder's internal 92-grid stable/volatile daemon workflow remains available internally and through Research Desk, but it should not be the default web-app shape. The web app should feel open: choose the market, choose the basket, choose the experiment budget, and see exactly what will run before queueing.
+
+Compute policy:
+
+- show variant count before queueing;
+- warn when a basket multiplies variants unexpectedly;
+- require explicit user confirmation for any run that consumes more than half of the user's monthly compute allowance;
+- block queueing when the plan cap is exceeded, with a clear "reduce assets, reduce parameter sets, or upgrade/request Research Desk" message;
+- store the exact grid budget in the experiment plan and run manifest;
+- never split an over-limit grid into multiple hidden jobs to bypass plan limits.
+
+#### First-1,000-User Operating Choice
+
+For the first 1,000 users, the simplest and most efficient operating model is:
+
+```text
+Managed Binance/Bybit data library
+  -> user selects instrument(s) or static basket
+  -> app resolves a versioned MarketDataSnapshot
+  -> planner computes variant count and entitlement fit
+  -> worker runs from cached snapshot
+  -> results, verdicts, and memory cite the snapshot hash
+```
+
+Do not start with a pure bring-your-own-data model. Do not start with dynamic universe research for self-serve users. Do not fetch raw candles ad hoc for each user run except as a controlled cache miss/backfill path. The product should feel generous in asset choice, but strict in reproducibility and compute budget.
+
+#### Implementation Plan: First Managed-Data Backtest
+
+Goal: let a signed-in user start from a Research Program, select one Binance/Bybit asset or static basket, run a bounded experiment grid against platform-managed market data, and receive the first backtest verdict without touching local files or uploading OHLCV.
+
+Existing foundation:
+
+- `bulletproof_bt` already has a local canonical `research_data/` system with Binance/Bybit ingestion, instrument refresh, backfill/update commands, stable and volatile universe manifests, panel building, validation, coverage reports, and research-panel loaders.
+- The founder's local/internal research loop can continue using `research_data/` directly.
+- The web app must not expose the founder's local filesystem. Production users must never read from `/home/omenka/...`, a local mounted disk, or a developer workstation path.
+
+Production rule:
+
+```text
+Local/internal research_data
+  -> validate + freeze snapshot
+  -> publish selected panels/manifests to R2/S3 object storage
+  -> register metadata in Postgres
+  -> web experiment resolves MarketDataSnapshot
+  -> worker downloads or streams snapshot to its local cache
+  -> bulletproof_bt runs from worker-local cached files
+```
+
+Do not serve production users directly from the local `research_data/` folder. That folder can seed the first library, but the production source of truth for public users is object storage plus manifest records.
+
+Implementation phases:
+
+1. **Inventory and validate current data lake.**
+   - Run `bt.research_data` coverage and validation over the existing Binance/Bybit `research_data/` folders.
+   - Produce a machine-readable coverage manifest with venue, product type, symbol, timeframe, start/end, row count, missing intervals, dataset types, last update time, and validation status.
+   - Decide the launch subset: likely Binance and Bybit BTC/ETH/SOL plus the most liquid USDT spot/perp pairs before exposing "all" exchange instruments.
+   - Any symbol/timeframe without validated coverage should remain hidden or marked unavailable in the UI.
+   - Owner: `bulletproof_bt` for validation; `invariance_research` for product availability projection.
+2. **Define the managed-data contracts.**
+   - Add shared JSON schemas/contracts for:
+     - `instrument_master_v1`;
+     - `market_data_panel_manifest_v1`;
+     - `market_data_snapshot_v1`;
+     - `research_basket_v1`;
+     - `experiment_grid_budget_v1`.
+   - Include hashes, coverage windows, source exchange, product type, timeframe, symbol list, object keys, validation warnings, and schema version.
+   - Owner: contracts in `bulletproof_bt`; TypeScript mirrors in `invariance_research`.
+3. **Publish the first platform data snapshot to R2.**
+   - Build a controlled export job that copies validated `research_data` panels/manifests into R2 under a stable prefix such as:
+
+```text
+market-data/v1/{venue}/{product_type}/{timeframe}/{symbol}/panel.parquet
+market-data/v1/manifests/instrument_master.json
+market-data/v1/manifests/coverage.json
+market-data/v1/snapshots/{snapshot_id}.json
+```
+
+   - Preserve content hashes and validation reports.
+   - Use production R2 credentials from worker env, not developer shell history.
+   - Keep the bucket private; the web app/worker signs or downloads internally.
+   - Owner: `bulletproof_bt` export script or CLI; worker host/R2 operation.
+4. **Register market data in Postgres.**
+   - Add `market_instruments`, `market_data_panels`, `market_data_snapshots`, `research_baskets`, and `experiment_data_selections` tables.
+   - Postgres stores metadata and object keys only; no large OHLCV blobs.
+   - Add admin refresh/import command that reads the R2 manifest and upserts Postgres metadata.
+   - Owner: `invariance_research`.
+5. **Build asset and basket selection UI.**
+   - In the experiment planner, replace any hidden/fixed universe assumption with:
+     - single asset selector;
+     - multi-asset selector;
+     - saved static basket selector;
+     - create static basket flow.
+   - Basket creation is just venue, product type, symbols, default timeframe, and notes.
+   - Show coverage and warnings before queueing.
+   - Owner: `invariance_research`.
+6. **Enforce grid budget before queueing.**
+   - Calculate variant count from selected symbols, timeframes, parameter sets, scenarios, holdout/null choices, and enabled plan items.
+   - Enforce:
+     - Free / Preview: `1`;
+     - Explorer: `8`;
+     - Pro: `32`;
+     - Research Desk/admin: custom.
+   - Surface the reason when blocked and suggest the smallest reduction: fewer symbols, fewer parameters, fewer scenarios, or Research Desk approval.
+   - Store the approved `ExperimentGridBudget` with the plan and job.
+   - Owner: shared; UI/entitlements in `invariance_research`, budget hints in `bulletproof_bt`.
+7. **Resolve worker-local data before running.**
+   - Experiment worker receives `market_data_snapshot_id`, not a raw path.
+   - Worker resolves object keys from Postgres/R2 manifest, downloads needed panels to a local cache, verifies hashes, then passes a worker-local path and snapshot manifest to `bulletproof_bt`.
+   - Cache can be reused across jobs but must be treated as disposable; R2 + manifest remains source of truth.
+   - A missing or hash-mismatched panel fails the job before engine execution.
+   - Owner: `invariance_research` worker plus `bulletproof_bt` loader compatibility.
+8. **Run the first backtest path.**
+   - Start with one known portable strategy/spec and one validated asset, such as BTCUSDT perpetual on Binance or Bybit.
+   - Run one Free/Preview-sized variant end-to-end:
+
+```text
+Research Program
+  -> approved Hypothesis Card / Strategy Spec
+  -> choose BTCUSDT perp + timeframe + window
+  -> variant count = 1
+  -> resolve MarketDataSnapshot
+  -> queue experiment
+  -> worker downloads panel from R2
+  -> bulletproof_bt backtest executes
+  -> verdict cards/artifacts upload to R2
+  -> Program page renders result and memory event
+```
+
+   - Only after this path is stable should Explorer 8-variant and Pro 32-variant grids be enabled.
+   - Owner: both repos.
+9. **Add scheduled data updates after the first run works.**
+   - Run ingestion/backfill/update jobs on the worker/data VM, not inside Vercel.
+   - Weekly launch cadence is enough at first unless intraday recency becomes a user blocker.
+   - Each update produces a new manifest/snapshot version and does not mutate old snapshots used by completed runs.
+   - Admin Health must show latest data snapshot time, validation status, object-storage availability, and stale-data warnings.
+   - Owner: `bulletproof_bt` ingestion plus `invariance_research` admin health.
+
+Launch acceptance criteria:
+
+- no production run reads from a developer-local path;
+- at least one Binance and one Bybit instrument have validated R2-backed panels;
+- the web app can list supported instruments from Postgres metadata;
+- a user can create a static basket and see variant count before queueing;
+- Free/Preview, Explorer, Pro, and Research Desk/admin grid caps are enforced server-side;
+- worker verifies object hashes before engine execution;
+- every completed run cites `market_data_snapshot_id` in the verdict/report/memory;
+- stale or missing market data blocks queueing with a clear explanation.
+
 ### Implementation Phases
 
 #### C0: Product and domain contraction
@@ -7524,6 +7791,8 @@ Owner: schemas, IR, serializers, capability registry, compilers, and implementat
 
 Release gate: a supported direct card must generate byte-stable YAML/spec artifacts and a correct compile-readiness result. Unsupported cards must produce useful blockers, not plausible but non-executable files.
 
+Implementation status as of 2026-06-23: C1 and C1.5a-f are implemented across both repositories. `bulletproof_bt` owns the canonical lifecycle/event schema, stage identity, event-specific payload requirements, Pine/TradingView event vocabulary, Hypothesis Card/V2 spec schemas, V1 compatibility readers, deterministic IR and serializers, capability/readiness classification, the reviewed `research_graph_v1` portable runtime, implementation-task acceptance contract, and CSI golden fixture. `invariance_research` owns append-only lifecycle projections, immutable card and bundle revisions, source/provenance/diff review, explicit card confirmation, governed spec generation and approval, and implementation-evidence submission/approval. The generation assistant now embeds the normative rules from `hypothesis_strategy_generation_prompt_instructions.md` and `backtest_truth_certification.md`: closed bars, strict UTC, backward joins, no interpolation, engine-owned execution/risk/accounting, rich logs, separate admission/compile/data/truth gates, and no publication or memory promotion before certification. Cross-repo fixtures assert an identical canonical event hash. The portable compiler is deliberately limited to causal OHLCV/derived features, supported comparison gates, constant-R sizing, required decision/stop logging, and fixed-stop/time exits; auxiliary joins, custom transforms, and stateful exits produce implementation tasks rather than runnable configuration.
+
 #### C2: Backtest-to-demo qualification
 
 - convert verdicts and experiment evidence into a deterministic qualification snapshot;
@@ -7604,6 +7873,23 @@ Owner: compiler, parser, portability registry, semantic replay, and schemas in `
 
 Release gate: C2.5b/c may ship before C2.5d-f. Marketing may say “Visualize supported strategies on TradingView” after C2.5c. It may not say “verified equivalent,” “import any Pine strategy,” “execute from TradingView,” or “TradingView parity” until the corresponding later increment passes its acceptance tests.
 
+Implementation status as of 2026-06-23: C2, C2.25a-e, and C2.5a-f are implemented across `bulletproof_bt` and `invariance_research` with the following bounded production contract.
+
+- **C2 - Backtest-to-demo qualification:** the shared portable IR and deterministic qualification contract classify visualization and simulation targets, evaluate reproducibility, truth certification, execution assumptions, sample/coverage, holdout, cost survival, ruin, symbol/product support, critical verdicts, and exact strategy/risk/config hash approval. Completed experiment events can supply canonical evidence and run-config identity; absent fields remain blockers. Qualified snapshots are immutable and append a backtest-to-demo promotion lifecycle event. The product renders blockers, required next tests, evidence-run selection, and explicit exact-hash confirmation.
+- **C2.25a - Typed artifact catalog:** deterministic catalog identities and hashes register specs, run configs, attached datasets, normalized trades, metrics, verdict cards, logs, reports, incidents, and memory. Entries carry sensitivity, lineage, searchable text, schemas, units, storage references, and stable anchors. Unreadable attached objects are cataloged as `unsupported`, not omitted.
+- **C2.25b - Program context and retrieval:** artifact turns combine tenant-scoped exact attachments, canonical structured queries, lexical similarity retrieval, existing governed source chunks, and program memory. Context is bounded by row and character budgets, citations are resolved from selected catalog entries, and the exact query/result/catalog-id snapshot is persisted per turn.
+- **C2.25c - Canonical tools:** run metrics, trade cohorts, verdict cards, first failure, assumption lookup, run comparison, artifact manifest, and memory search return bounded typed results with unit, sample, tier, run identity, hash, and anchor metadata. The model is bypassed for canonical artifact answers so it cannot replace query values with invented arithmetic.
+- **C2.25d - Cited interpretation:** artifact answers are emitted through the stable fact/inference/recommendation/unknown contract and rendered with artifact citations. A cited answer can become a research-note or next-experiment proposal, but only user confirmation materializes the note; it never queues work or promotes a strategy.
+- **C2.25e - Evaluation:** automated tests cover positive and insufficient evidence, unsupported queries, contradictory signal direction, malformed Pine/CSV input, exact numeric preservation, cross-tenant denial, explicit attachments, large-result truncation, untrusted instruction text, citation persistence, and the complete SQLite workflow.
+- **C2.5a - Compatibility and shared contracts:** shared schemas and fixtures cover export manifests, compatibility, parity, restricted import, and TradingView observations. Portability fails closed for private/auxiliary datasets, portfolio state, unresolved intrabar semantics, unconfirmed higher-timeframe data, unsupported primitives, and incomplete fixed-exit parameters.
+- **C2.5b - Deterministic Pine v6 compiler:** approved specs compile to immutable account-private overlay indicators with closed-bar signals, bounded inputs, gates, invalidation plots, status metadata, strict JSON alerts, checksums, spec snapshot, compatibility/parity reports, and setup guide. Static policy rejects unsafe identifiers/operators, future references, lookahead, unsupported sources, oversized output, and source-string injection. A strategy simulation is generated only for the fixed-stop/time-exit portable subset and includes both stop and time exits.
+- **C2.5c - Product export workflow:** Research Desk exposes compatibility preview, generation state, indicator/simulation downloads, superseded versions, 30-day plan quota, account authorization, rate limiting, account-private object storage, lifecycle audit events, and exact setup guidance. Generation failures persist a terminal failed job rather than disappearing.
+- **C2.5d - Semantic replay and parity:** the shared closed-bar reference evaluator is covered by fixed datasets. Users can compare engine and TradingView JSON or CSV signals under exact symbol/timeframe/window/timezone/session/parameter identity. Reports classify provisional, verified, or divergent status and expose missing, extra, opposite-direction, and first-divergence evidence.
+- **C2.5e - Restricted Pine import:** Pine v6 source is parsed as text and never executed. Only the registered call subset is admitted; strategies, external requests, collections, libraries, unknown calls, wrong versions, and oversized source fail closed. Accepted imports persist draft Research Brief, Hypothesis Spec, and Strategy Spec projections with source checksum, ambiguity report, and explicit confirmation requirement.
+- **C2.5f - Alert observation bridge:** users can issue and revoke expiring per-export credentials. The public ingress is strict-schema, body-limited, rate-limited, idempotent, tenant-bound, and confirmed-bar-only. Observations are compared with cataloged engine decisions where available, marked `matched_engine_signal`, `observed_unverified`, or `stale_spec`, and appended to research memory with bounded confidence. They are lifecycle evidence only: `observation_only=true`, `order_authority=false`, with no path to order creation.
+
+Operational migration note: `invariance_research` migration 31 adds durable Pine export jobs and credential indexes without mutating migration 30. Production must run the normal Postgres schema migration/init path before enabling these surfaces. Pine and artifact APIs require the existing object-storage, account entitlement, rate-limit, and lifecycle-event infrastructure.
+
 #### C3: Bybit demo productization
 
 - secure connector onboarding;
@@ -7614,6 +7900,18 @@ Release gate: C2.5b/c may ship before C2.5d-f. Marketing may say “Visualize su
 - demo run report and memory ingestion.
 
 Owner: Bybit/runtime in `bulletproof_bt`; orchestration/UI/security in `invariance_research`.
+
+Implementation status as of 2026-06-24: the C3 connector and deployment control plane is implemented for Binance and Bybit spot and perpetual products, with demo/testnet and bounded live-canary environments represented as separate write-only credentials and deployment identities.
+
+- `bulletproof_bt` now provides venue-neutral runtime selection plus a Binance execution adapter with signed REST authentication, environment-safe endpoints, deterministic client-order IDs, order submission/cancel/amend, instrument filters, balances, positions, open/completed orders, fills, rate-limit metadata, reconciliation inputs, and the same live-mutation lock and canary policy used by Bybit. The connector bridge accepts credentials over stdin and emits redacted JSON snapshots; credentials are not command-line arguments or artifacts.
+- `invariance_research` now provides AES-256-GCM credential envelopes, key hints rather than secret responses, withdrawal-disabled attestation, tenant-scoped connector records, worker-run connector diagnosis, immutable qualification/hash pinning, deployment state, idempotent command outbox, event inbox, portfolio projections, connector revocation, execution-worker health, and start/pause/resume/freeze/reconcile/stop controls inside the Research Program.
+- The external execution worker is the only product runtime allowed to decrypt connector credentials. It uses exchange REST as the authoritative recovery and reconciliation source, freezes on bridge/connector failure, records incidents, and ingests terminal demo/live run summaries into program memory.
+- Live is not a general unrestricted trading mode. It is stored and labeled as a bounded canary, requires an approved qualification, exact strategy/risk/config hashes, explicit `LIVE CANARY` confirmation, conservative risk values, and clean startup reconciliation.
+- C3 does not mislabel the existing in-process Bybit websocket façade or Binance REST polling as a healthy private stream. Persistent private-stream parity and continuously running compiled-strategy market-data execution remain C5/C8 release gates before unattended live capital is invited. Until those gates pass, the new live connector path is a supervised canary/reconciliation surface, not a claim of unattended production execution.
+
+Operational gate: apply Postgres migration 32, set the same dedicated `EXCHANGE_CREDENTIAL_ENCRYPTION_KEY` on Vercel and the worker VM, then build and run `execution-worker` alongside analysis, export, and experiment workers. Demo/testnet must pass connector diagnosis and a full start/reconcile/freeze/resume/stop drill before creating any live connector.
+
+Migration 33 extends existing connector and deployment identities with `product_type`. Credential creation and rotation require only API key and API secret. The UI behaves like a write-only secret manager: saved values are never returned or redisplayed, and rotation replaces both values atomically before the connector is diagnosed again.
 
 #### C4: Unified trade memory
 
@@ -7630,6 +7928,18 @@ Owner: Bybit/runtime in `bulletproof_bt`; orchestration/UI/security in `invarian
 
 Owner: shared, with models/calibration in `bulletproof_bt` and tenant-safe storage/UI in `invariance_research`.
 
+Implementation status as of 2026-06-24: C4 is implemented across both repositories.
+
+- `bulletproof_bt` owns versioned JSON schemas and deterministic validation/assessment contracts for decision-state snapshots, trade episodes, and Memory Assessments. Feature timestamps after the decision cutoff and future-enriched state fail closed.
+- `invariance_research` migration 34 persists tenant-scoped causal snapshots, normalized backtest/demo/live episodes, fill deduplication lineage, advisory assessments, outcome calibration, and governed memory entries.
+- Backtest catalog imports create episodes from real trade rows and only create state snapshots when those rows contain decision-time state fields. Exchange REST fills are deduplicated and paired into stage-qualified episodes; missing spot entry basis remains explicit rather than fabricating profit.
+- Comparable-state retrieval reports total, same-strategy, and cross-strategy support separately, with recency weighting, normalized feature distance, state similarity, drift, expected net outcome, downside, empirical positive rate, and uncertainty interval. Fewer than eight comparable outcomes returns `insufficient_evidence`.
+- Assessment outcomes are linked to subsequently closed deployment episodes for provisional Brier calibration. The program workbench reports state coverage and calibration maturity instead of presenting an uncalibrated percentage as certainty.
+- Raw chat and unconfirmed proposals are excluded from canonical memory. Confirmed notes and decisions, verified Pine parity, and matched TradingView observations preserve source lineage in a separate governed reasoning index and never become trade episodes.
+- The assessment API is authenticated, tenant-bound, rate-limited, body-limited, feature-count-limited, and finite-number validated. Every assessment emits a lifecycle event and remains `advisory_only=true`; it cannot submit an exchange order or increase risk.
+
+Operational gate: apply Postgres migration 34 before enabling C4. Historical state-aware comparisons remain unavailable until at least eight closed episodes contain causal decision-time state snapshots. Episode-only history still supports lineage and outcome review, but the product must not infer market-state similarity from PnL alone.
+
 #### C5: Bybit live canary
 
 - close known live-hardening gaps;
@@ -7637,6 +7947,8 @@ Owner: shared, with models/calibration in `bulletproof_bt` and tenant-safe stora
 - require demo qualification before live activation.
 
 Owner: shared execution and production operations.
+
+Implementation status as of 2026-06-24: implemented. Live creation now requires an approved, strategy-hash-matched demo promotion. Promotion evidence includes minimum demo duration, closed trades, reconciliation, unresolved critical incidents, an approved risk policy, and successful kill-switch/recovery evidence. Every order intent passes deterministic symbol, quantity, order-notional, gross-notional, open-order, open-position, daily-loss, session-loss, freshness, reconciliation, and incident gates before the connector bridge can mutate exchange state. Emergency freeze cancels open orders, optionally closes perpetual positions reduce-only, freezes the deployment, reconciles from REST, records a critical incident, and queues a signed external alert. Credential use, user commands, recovery drills, incidents, and policy hashes are durable and auditable. The operational response is defined in `invariance_research/deploy/INCIDENT_RUNBOOK_EXECUTION.md`.
 
 #### C6: Real-time portfolio command
 
@@ -7646,6 +7958,8 @@ Owner: shared execution and production operations.
 - immutable decision snapshots and audit timeline.
 
 Owner: `invariance_research`, consuming `bulletproof_bt` events.
+
+Implementation status as of 2026-06-24: implemented. The Research Program contains one portfolio command surface for exchange-authoritative balances, USD-stablecoin valuation scope, active trade episodes, positions, orders, fills, risk consumption, connector freshness, reconciliation, promotions, incidents, and emergency controls. Durable deployment events are streamed through an authenticated tenant-scoped SSE endpoint with `(occurred_at, event_id)` reconnect cursors, heartbeat/reconnect behavior, and REST refresh recovery. The responsive surface is read-only apart from explicit operational controls, keeps emergency freeze available on narrow screens, and combines immutable user command actions, exchange events, and causal decision-state snapshot counts in the audit view.
 
 #### C7: Memory policy gate
 
@@ -7659,6 +7973,8 @@ Owner: `invariance_research`, consuming `bulletproof_bt` events.
 
 Owner: models/evaluation in `bulletproof_bt`; policy configuration/audit in `invariance_research`.
 
+Implementation status as of 2026-06-24: implemented with a deliberate shadow-first authority model. `bulletproof_bt` owns deterministic memory-policy evaluation and proves that policy output can only preserve or reduce requested quantity. `invariance_research` persists explicit policy approval, thresholds, assessment lineage, shadow/enforced decisions, effective quantity, and eventual outcomes. Enforcement fails closed when calibration is unavailable, support is below the approved threshold, drift exceeds policy, or the assessment is blocked. False blocks and missed risks are resolved and counted separately. Only assessments derived from canonical backtest/demo/live trade episodes can enter this path; Pine source, emulator parity, and TradingView observations remain non-trade evidence and cannot authorize or promote an order.
+
 #### C8: Binance parity
 
 - Binance testnet/demo broker adapter and doctor;
@@ -7667,6 +7983,8 @@ Owner: models/evaluation in `bulletproof_bt`; policy configuration/audit in `inv
 - live canary only after safety parity and fault-injection tests.
 
 Owner: `bulletproof_bt` adapter/runtime first, then `invariance_research` connector/product integration.
+
+Implementation status as of 2026-06-24: implemented at the same supervised-canary contract as Bybit. Binance spot and USD-M perpetual support separate testnet/live endpoints, signed REST, instrument filters, balances, positions, orders, fills, mutation locks, user-data listen-key lifecycle, private websocket mapping, and REST reconciliation. Connector diagnosis authenticates the real private stream and records a stream session; failures block the connector. Binance and Bybit share one certification contract covering REST/auth, instrument and balance snapshots, order/fill/private-state events, restart reconciliation, mutation lock, emergency freeze, disconnect/staleness/rate-limit freezing, idempotent fills, and divergence freezing. The web product exposes both venues and products through the same write-only credential, qualification, deployment, recovery, and audit flow. Live remains a bounded canary and is not enabled by adapter presence alone.
 
 ### Success Criteria
 

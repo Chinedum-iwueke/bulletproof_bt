@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from bt.engine.fast_path.family_kernels import kernel_for_strategy
+
 
 @dataclass(frozen=True)
 class FastPathSupport:
@@ -16,6 +18,7 @@ def inspect_support(config: dict[str, Any]) -> FastPathSupport:
     strategy_cfg = config.get("strategy") if isinstance(config.get("strategy"), dict) else {}
     strategy_name = str(strategy_cfg.get("name", "coinflip"))
     data_cfg = config.get("data") if isinstance(config.get("data"), dict) else {}
+    family_kernel = kernel_for_strategy(strategy_name)
     if data_cfg.get("dataset_kind") == "research_panel" and strategy_name == "l7_h1_csi_gated_displacement_trend":
         if strategy_cfg.get("use_compiled_features") is False:
             return FastPathSupport(
@@ -34,10 +37,24 @@ def inspect_support(config: dict[str, Any]) -> FastPathSupport:
             "compiled L7-H1 family feature kernel attached; classic engine remains source of truth for execution",
             strategy_name,
         )
-    if data_cfg.get("dataset_kind") == "research_panel" and data_cfg.get("htf_context_source") == "precomputed":
+    if (
+        data_cfg.get("dataset_kind") == "research_panel"
+        and family_kernel is not None
+        and data_cfg.get("htf_context_source") == "precomputed"
+    ):
         return FastPathSupport(
             True,
-            "precomputed HTF context enabled; classic strategy/risk/execution remain source of truth",
+            f"{family_kernel.mode} enabled on precomputed context; classic strategy/risk/execution remain source of truth on actionable bars",
+            strategy_name,
+        )
+    if (
+        data_cfg.get("dataset_kind") == "research_panel"
+        and family_kernel is not None
+        and config.get("htf_resampler")
+    ):
+        return FastPathSupport(
+            True,
+            f"{family_kernel.mode} enabled on streaming context; classic strategy/risk/execution remain source of truth on actionable bars",
             strategy_name,
         )
     if data_cfg.get("dataset_kind") == "research_panel":

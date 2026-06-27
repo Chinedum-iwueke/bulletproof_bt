@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://invarianceresearch.xyz/schemas/research_lifecycle_event_v1.schema.json",
+  "title": "Research Lifecycle Event V1",
+  "type": "object",
+  "required": ["schema_version", "event_id", "event_type", "occurred_at", "identity", "payload", "actor"],
+  "properties": {
+    "schema_version": { "const": "research_lifecycle_event_v1" },
+    "event_id": { "type": "string", "minLength": 1 },
+    "event_type": { "enum": ["deployment", "connector", "signal_decision", "order", "fill", "position", "portfolio", "trade_episode", "state_snapshot", "incident", "memory_assessment", "promotion", "conversation", "source", "citation", "candidate_hypothesis", "hypothesis_card", "proposal", "confirmation", "context_snapshot", "assistant_tool_call", "pine_export", "pine_import", "pine_parity", "tradingview_observation"] },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "identity": {
+      "type": "object",
+      "required": ["program_id", "account_id", "stage", "strategy_spec_hash", "code_hash", "data_snapshot_id"],
+      "properties": {
+        "program_id": { "type": "string" }, "account_id": { "type": "string" },
+        "stage": { "enum": ["backtest", "demo", "live_canary", "live"] },
+        "deployment_id": { "type": "string" }, "strategy_spec_hash": { "type": "string" },
+        "code_hash": { "type": "string" }, "data_snapshot_id": { "type": "string" }
+      }
+    },
+    "payload": { "type": "object" },
+    "actor": {
+      "type": "object", "required": ["type", "id"],
+      "properties": { "type": { "enum": ["user", "assistant", "worker", "engine", "exchange"] }, "id": { "type": "string" } }
+    },
+    "event_hash": { "type": "string" }
+  }
+}

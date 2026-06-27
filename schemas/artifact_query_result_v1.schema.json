@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "artifact_query_result_v1",
+  "type": "object",
+  "required": ["schema_version", "query_type", "rows", "citations", "result_count", "truncated", "result_hash"],
+  "properties": {
+    "schema_version": {"const": "artifact_query_result_v1"},
+    "query_type": {"enum": ["run_metrics", "trade_cohorts", "verdict_cards", "first_failure", "assumption_lookup", "run_comparison", "artifact_manifest", "memory_search"]},
+    "rows": {"type": "array", "maxItems": 500},
+    "citations": {"type": "array", "maxItems": 500, "items": {"type": "object", "required": ["catalog_id", "object_id", "content_hash", "anchor"]}},
+    "result_count": {"type": "integer", "minimum": 0, "maximum": 500},
+    "truncated": {"type": "boolean"},
+    "result_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

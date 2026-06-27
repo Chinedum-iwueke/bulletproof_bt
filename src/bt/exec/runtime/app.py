@@ -24,6 +24,8 @@ from bt.strategy import make_strategy
 from bt.strategy.htf_context import ReadOnlyContextStrategyAdapter
 
 from bt.exec.adapters.base import BrokerAdapter
+from bt.exec.adapters.binance import BinanceBrokerAdapter, BinanceRESTClient, resolve_binance_config
+from bt.exec.adapters.binance.client_ws_private import BinancePrivateWSClient
 from bt.exec.adapters.bybit import BybitBrokerAdapter, BybitRESTClient, resolve_bybit_config
 from bt.exec.adapters.bybit.client_ws_private import BybitPrivateWSClient
 from bt.exec.adapters.bybit.client_ws_public import BybitPublicWSClient
@@ -123,6 +125,25 @@ def _build_components(config: dict[str, Any]) -> tuple[StrategyRunner, RiskRunne
             ws_private=BybitPrivateWSClient(url=bybit_cfg.private_ws_url, topics=bybit_cfg.ws.private_topics, api_key=api_key, api_secret=api_secret, enabled=bybit_cfg.ws.enabled),
         )
         return StrategyRunner(strategy=strategy), RiskRunner(risk_engine=risk), PortfolioRunner(portfolio=portfolio), adapter
+    if venue == "binance":
+        binance_cfg = resolve_binance_config(config)
+        api_key, api_secret = binance_cfg.auth.resolve()
+        rest = BinanceRESTClient(
+            base_url=binance_cfg.rest_base_url,
+            api_key=api_key,
+            api_secret=api_secret,
+            recv_window_ms=binance_cfg.recv_window_ms,
+            timeout_ms=binance_cfg.request_timeout_ms,
+            max_retries=binance_cfg.max_retries,
+            retry_backoff_ms=binance_cfg.retry_backoff_ms,
+            environment=binance_cfg.environment,
+        )
+        adapter = BinanceBrokerAdapter(
+            config=binance_cfg,
+            rest_client=rest,
+            ws_private=BinancePrivateWSClient(rest=rest,ws_base_url=binance_cfg.ws_base_url,product_type=binance_cfg.product_type,enabled=binance_cfg.ws_enabled),
+        )
+        return StrategyRunner(strategy=strategy), RiskRunner(risk_engine=risk), PortfolioRunner(portfolio=portfolio), adapter
     simulated: BrokerAdapter = cast(BrokerAdapter, SimulatedBrokerAdapter(execution_model=ex_model))
     return StrategyRunner(strategy=strategy), RiskRunner(risk_engine=risk), PortfolioRunner(portfolio=portfolio), simulated
 
@@ -211,10 +232,10 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
     environment = str(broker_cfg.get("environment", "demo")).lower()
     is_live_mode = mode == "live_broker"
     if mode == "paper_broker":
-        if str(broker_cfg.get("venue", "")).lower() != "bybit":
-            raise ValueError("exec.mode=paper_broker currently requires broker.venue=bybit")
+        if str(broker_cfg.get("venue", "")).lower() not in {"bybit", "binance"}:
+            raise ValueError("exec.mode=paper_broker requires broker.venue=bybit or binance")
         if environment != "demo":
-            raise ValueError("exec.mode=paper_broker is demo-only in Phase 5")
+            raise ValueError("exec.mode=paper_broker is demo-only")
     if is_live_mode and environment != "live":
         raise ValueError("exec.mode=live_broker requires broker.environment=live")
 

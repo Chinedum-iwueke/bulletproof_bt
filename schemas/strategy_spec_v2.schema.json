@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "strategy_spec_v2",
+  "type": "object",
+  "required": ["schema_version", "strategy_spec_id", "program_id", "hypothesis_id", "feature_graph", "gate_graph", "entry", "exit_state_machine", "sizing", "risk_policy", "parameter_grid", "data_requirements", "logging_contract", "evaluation_contract", "falsification_contract", "execution_semantics", "truth_contract", "source_card_hash", "compiler_version", "user_approval_required"],
+  "properties": {"schema_version": {"const": "strategy_spec_v2"}, "user_approval_required": {"const": true}}
+}

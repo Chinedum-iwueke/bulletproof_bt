@@ -1,0 +1,16 @@
+{
+  "schema_version": "research_lifecycle_event_v1",
+  "event_id": "event-fixture-1",
+  "event_type": "signal_decision",
+  "occurred_at": "2026-06-23T00:00:00Z",
+  "identity": {
+    "program_id": "program-fixture-1",
+    "account_id": "account-fixture-1",
+    "stage": "backtest",
+    "strategy_spec_hash": "strategy-hash",
+    "code_hash": "code-hash",
+    "data_snapshot_id": "data-snapshot-1"
+  },
+  "payload": { "symbol": "BTCUSDT", "decision": "enter_long", "state_snapshot_id": "state-1" },
+  "actor": { "type": "engine", "id": "classic-engine" }
+}

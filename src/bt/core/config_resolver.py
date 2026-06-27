@@ -447,13 +447,13 @@ def resolve_config(cfg: dict[str, Any]) -> dict[str, Any]:
         resolved=resolved,
         top_key="max_notional_pct_equity",
         nested_key="max_notional_pct_equity",
-        default=1.0,
+        default=0.5,
     )
     _resolve_risk_value(
         resolved=resolved,
         top_key="max_gross_notional_pct_equity",
         nested_key="max_gross_notional_pct_equity",
-        default=None,
+        default=0.5,
     )
     _resolve_risk_value(
         resolved=resolved,

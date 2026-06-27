@@ -47,3 +47,13 @@ def test_bad_endpoint_combo_rejected() -> None:
                 }
             }
         )
+
+
+def test_spot_product_resolves_spot_category_and_stream() -> None:
+    config = _base("demo")
+    config["broker"]["product_type"] = "spot"
+    cfg = resolve_bybit_config(config)
+    assert cfg.product_type == "spot"
+    assert cfg.category == "spot"
+    assert cfg.public_ws_url == "wss://stream.bybit.com/v5/public/spot"
+    assert cfg.public_ws_url.endswith("/spot")

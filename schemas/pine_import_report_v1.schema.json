@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pine_import_report_v1",
+  "type": "object",
+  "required": ["schema_version", "source_checksum", "detected_pine_version", "supported_ast_nodes", "rejected_constructs", "extracted_parameters", "extracted_signals", "ambiguities", "draft_spec_status", "report_hash"],
+  "properties": {
+    "schema_version": {"const": "pine_import_report_v1"},
+    "source_checksum": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "detected_pine_version": {"type": "string"},
+    "supported_ast_nodes": {"type": "array", "items": {"type": "string"}},
+    "rejected_constructs": {"type": "array", "items": {"type": "string"}},
+    "extracted_parameters": {"type": "array"},
+    "extracted_signals": {"type": "array", "items": {"type": "string"}},
+    "ambiguities": {"type": "array", "items": {"type": "string"}},
+    "draft_spec_status": {"enum": ["draft", "blocked"]},
+    "draft_objects": {"type": ["object", "null"]},
+    "execution_prohibited": {"type": "boolean"},
+    "report_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

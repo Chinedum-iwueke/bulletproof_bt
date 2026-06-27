@@ -12,6 +12,13 @@ from bt.strategy.context_view import StrategyContextView
 from bt.strategy.signal_conflicts import SignalConflictSummary, resolve_signal_conflicts
 
 
+def _inner_strategy_artifacts(inner: Strategy) -> dict[str, Any]:
+    if hasattr(inner, "strategy_artifacts") and callable(getattr(inner, "strategy_artifacts")):
+        payload = inner.strategy_artifacts()
+        return dict(payload) if isinstance(payload, dict) else {}
+    return {}
+
+
 class ReadOnlyContextStrategyAdapter(Strategy):
     """Wrap a strategy to expose context as a read-only view."""
 
@@ -31,10 +38,28 @@ class ReadOnlyContextStrategyAdapter(Strategy):
 class HTFContextStrategyAdapter(Strategy):
     """Wrap a strategy and inject closed HTF bars into ctx['htf'][timeframe][symbol]."""
 
-    def __init__(self, *, inner: Strategy, resampler: TimeframeResampler) -> None:
+    def __init__(
+        self,
+        *,
+        inner: Strategy,
+        resampler: TimeframeResampler,
+        skip_empty_no_position: bool = False,
+    ) -> None:
         self._inner = inner
         self._resampler = resampler
         self._latest_closed: dict[str, dict[str, HTFBar]] = {}
+        self._skip_empty_no_position = bool(skip_empty_no_position)
+        self._noop_skipped_calls = 0
+
+    @staticmethod
+    def _has_open_position(ctx: Mapping[str, Any]) -> bool:
+        positions = ctx.get("positions") if isinstance(ctx, Mapping) else None
+        if not isinstance(positions, Mapping):
+            return False
+        for payload in positions.values():
+            if isinstance(payload, Mapping) and payload.get("side") is not None:
+                return True
+        return False
 
     def on_bars(
         self,
@@ -53,7 +78,24 @@ class HTFContextStrategyAdapter(Strategy):
 
         new_ctx = dict(ctx)
         new_ctx["htf"] = emitted_index
+        if self._skip_empty_no_position and not emitted_index and not self._has_open_position(ctx):
+            # Safe compiled control-flow kernel: all current research hypotheses
+            # use two-clock entries and 1m exits. With no newly closed HTF bar
+            # and no open position, the wrapped strategy cannot emit a valid
+            # entry or exit, so skipping preserves event semantics exactly.
+            self._noop_skipped_calls += 1
+            return []
         return self._inner.on_bars(ts, bars_by_symbol, tradeable, StrategyContextView(new_ctx))
+
+    def strategy_artifacts(self) -> dict[str, Any]:
+        return {
+            **_inner_strategy_artifacts(self._inner),
+            "htf_event_kernel": {
+                "enabled": self._skip_empty_no_position,
+                "noop_skipped_calls": self._noop_skipped_calls,
+                "mode": "streaming_htf_event_schedule",
+            }
+        }
 
 
 class PrecomputedHTFContextStrategyAdapter(Strategy):
@@ -65,10 +107,28 @@ class PrecomputedHTFContextStrategyAdapter(Strategy):
     recomputing HTF aggregation inside every stable backtest worker.
     """
 
-    def __init__(self, *, inner: Strategy, timeframes: list[str]) -> None:
+    def __init__(
+        self,
+        *,
+        inner: Strategy,
+        timeframes: list[str],
+        skip_empty_no_position: bool = False,
+    ) -> None:
         self._inner = inner
         self._timeframes = list(dict.fromkeys(str(tf).lower() for tf in timeframes))
         self._first_seen: dict[tuple[str, str], pd.Timestamp] = {}
+        self._skip_empty_no_position = bool(skip_empty_no_position)
+        self._noop_skipped_calls = 0
+
+    @staticmethod
+    def _has_open_position(ctx: Mapping[str, Any]) -> bool:
+        positions = ctx.get("positions") if isinstance(ctx, Mapping) else None
+        if not isinstance(positions, Mapping):
+            return False
+        for payload in positions.values():
+            if isinstance(payload, Mapping) and payload.get("side") is not None:
+                return True
+        return False
 
     def on_bars(
         self,
@@ -117,7 +177,23 @@ class PrecomputedHTFContextStrategyAdapter(Strategy):
 
         new_ctx = dict(ctx)
         new_ctx["htf"] = emitted_index
+        if self._skip_empty_no_position and not emitted_index and not self._has_open_position(ctx):
+            # Same safety argument as the streaming adapter, except the HTF
+            # event schedule has already been stamped causally onto the panel.
+            self._noop_skipped_calls += 1
+            return []
         return self._inner.on_bars(ts, bars_by_symbol, tradeable, StrategyContextView(new_ctx))
+
+    def strategy_artifacts(self) -> dict[str, Any]:
+        return {
+            **_inner_strategy_artifacts(self._inner),
+            "htf_event_kernel": {
+                "enabled": self._skip_empty_no_position,
+                "noop_skipped_calls": self._noop_skipped_calls,
+                "mode": "precomputed_htf_event_schedule",
+                "timeframes": self._timeframes,
+            }
+        }
 
 
 class SignalConflictPolicyStrategyAdapter(Strategy):

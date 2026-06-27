@@ -92,8 +92,9 @@ class BybitBrokerAdapter:
             "qty": str(request.qty),
             "orderLinkId": request.client_order_id,
             "timeInForce": request.time_in_force or ("GTC" if request.order_type.lower() == "limit" else "IOC"),
-            "reduceOnly": request.reduce_only,
         }
+        if self._config.product_type == "perpetual":
+            payload["reduceOnly"] = request.reduce_only
         if request.limit_price is not None:
             payload["price"] = str(request.limit_price)
         response = self._rest.post_private("/v5/order/create", payload=payload)
@@ -169,6 +170,8 @@ class BybitBrokerAdapter:
         return map_orders(self._fetch("/v5/order/history", symbol=self._config.symbols[0], limit=limit))
 
     def fetch_positions(self) -> list[Position]:
+        if self._config.product_type == "spot":
+            return []
         return map_positions(self._fetch("/v5/position/list", symbol=self._config.symbols[0]))
 
     def fetch_balances(self) -> BalanceSnapshot:
@@ -194,6 +197,7 @@ class BybitBrokerAdapter:
             status=status,
             metadata={
                 "environment": self._config.environment,
+                "product_type": self._config.product_type,
                 "public_ws": public_health.status.value,
                 "private_ws": private_health.status.value,
                 "last_private_message_ts": (

@@ -61,8 +61,8 @@ def test_resolve_config_injects_risk_guardrail_defaults() -> None:
     resolved = resolve_config({"risk": {"mode": "r_fixed", "r_per_trade": 0.01}})
 
     assert resolved["risk"]["min_stop_distance_pct"] == 0.001
-    assert resolved["risk"]["max_notional_pct_equity"] == 1.0
-    assert resolved["risk"]["max_gross_notional_pct_equity"] is None
+    assert resolved["risk"]["max_notional_pct_equity"] == 0.5
+    assert resolved["risk"]["max_gross_notional_pct_equity"] == 0.5
     assert resolved["risk"]["maintenance_free_margin_pct"] == 0.01
 
 
@@ -90,6 +90,6 @@ def test_config_used_yaml_contains_injected_risk_guardrail_defaults(tmp_path) ->
 
     payload = yaml.safe_load((tmp_path / "config_used.yaml").read_text(encoding="utf-8"))
     assert payload["risk"]["min_stop_distance_pct"] == 0.001
-    assert payload["risk"]["max_notional_pct_equity"] == 1.0
-    assert payload["risk"]["max_gross_notional_pct_equity"] is None
+    assert payload["risk"]["max_notional_pct_equity"] == 0.5
+    assert payload["risk"]["max_gross_notional_pct_equity"] == 0.5
     assert payload["risk"]["maintenance_free_margin_pct"] == 0.01

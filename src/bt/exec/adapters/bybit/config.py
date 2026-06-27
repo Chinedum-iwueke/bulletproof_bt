@@ -10,12 +10,13 @@ from bt.exec.adapters.bybit.errors import BybitConfigError
 _ENDPOINTS: dict[str, dict[str, str]] = {
     "live": {
         "rest_base_url": "https://api.bybit.com",
-        "public_ws_url": "wss://stream.bybit.com/v5/public/linear",
+        "public_ws_url": "wss://stream.bybit.com/v5/public/{category}",
         "private_ws_url": "wss://stream.bybit.com/v5/private",
     },
     "demo": {
         "rest_base_url": "https://api-demo.bybit.com",
-        "public_ws_url": "wss://stream-demo.bybit.com/v5/public/linear",
+        # Bybit demo accounts use mainnet public market data; stream-demo is private-only.
+        "public_ws_url": "wss://stream.bybit.com/v5/public/{category}",
         "private_ws_url": "wss://stream-demo.bybit.com/v5/private",
     },
 }
@@ -48,6 +49,7 @@ class BybitAuthConfig:
 @dataclass(frozen=True)
 class BybitBrokerConfig:
     environment: str
+    product_type: str
     category: str
     symbols: list[str]
     recv_window_ms: int
@@ -65,8 +67,10 @@ def _validate_endpoints(*, environment: str, rest_base_url: str, public_ws_url: 
     if environment == "demo":
         if "api.bybit.com" in rest_base_url:
             raise BybitConfigError("Demo environment cannot use live REST endpoint")
-        if "stream.bybit.com" in public_ws_url or "stream.bybit.com" in private_ws_url:
-            raise BybitConfigError("Demo environment cannot use live websocket endpoints")
+        if "stream-demo.bybit.com" in public_ws_url:
+            raise BybitConfigError("Bybit demo public market data must use the mainnet public stream")
+        if "stream.bybit.com" in private_ws_url:
+            raise BybitConfigError("Bybit demo private events must use the demo private stream")
     if environment == "live":
         if "api-demo.bybit.com" in rest_base_url:
             raise BybitConfigError("Live environment cannot use demo REST endpoint")
@@ -103,10 +107,16 @@ def resolve_bybit_config(config: dict[str, Any]) -> BybitBrokerConfig:
     if environment not in _ENDPOINTS:
         raise BybitConfigError("broker.environment must be one of: demo, live")
 
+    product_type = str(broker.get("product_type", "perpetual")).strip().lower()
+    if product_type not in {"spot", "perpetual"}:
+        raise BybitConfigError("broker.product_type must be one of: spot, perpetual")
+    category = "spot" if product_type == "spot" else str(broker.get("category", "linear"))
+    if product_type == "perpetual" and category not in {"linear", "inverse"}:
+        raise BybitConfigError("Bybit perpetual category must be linear or inverse")
     endpoints_raw = broker.get("endpoints") if isinstance(broker.get("endpoints"), dict) else {}
     defaults = _ENDPOINTS[environment]
     rest_base_url = str(endpoints_raw.get("rest_base_url", defaults["rest_base_url"]))
-    public_ws_url = str(endpoints_raw.get("public_ws_url", defaults["public_ws_url"]))
+    public_ws_url = str(endpoints_raw.get("public_ws_url", defaults["public_ws_url"].format(category=category)))
     private_ws_url = str(endpoints_raw.get("private_ws_url", defaults["private_ws_url"]))
     _validate_endpoints(
         environment=environment,
@@ -132,7 +142,8 @@ def resolve_bybit_config(config: dict[str, Any]) -> BybitBrokerConfig:
 
     return BybitBrokerConfig(
         environment=environment,
-        category=str(broker.get("category", "linear")),
+        product_type=product_type,
+        category=category,
         symbols=symbols,
         recv_window_ms=int(broker.get("recv_window_ms", 5000)),
         request_timeout_ms=int(broker.get("request_timeout_ms", 4000)),

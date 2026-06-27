@@ -1,0 +1,15 @@
+{
+  "schema_version": "pine_export_manifest_v1",
+  "export_id": "pine-export-fixture-1",
+  "program_id": "program-fixture-1",
+  "strategy_spec_id": "strategy-fixture-1",
+  "strategy_spec_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+  "pine_version": "v6",
+  "compiler_version": "pine_bridge_v1",
+  "generated_at": "2026-06-23T00:00:00Z",
+  "approval_state": "approved",
+  "files": {
+    "strategy_visualization.pine": "2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  "source_sharing": "account_private"
+}
