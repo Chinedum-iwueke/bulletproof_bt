@@ -1,0 +1,33 @@
+portfolio_id: fixed_weight_demo
+starting_equity: 100000
+base_currency: USDT
+data_path: ../../data/curated/sample.csv
+output_dir: ../../outputs/portfolios
+allocation_policy:
+  type: fixed_weight
+  rebalance_frequency: daily
+  max_strategy_weight: 0.70
+  max_symbol_exposure: 0.50
+  max_total_gross_exposure: 1.00
+  max_total_net_exposure: 1.00
+  conflict_policy: block_conflict
+strategies:
+  - strategy_id: trend_breakout_btc_eth
+    hypothesis_id: H001
+    enabled: true
+    weight: 0.60
+    config_path: ../engine.yaml
+    overrides:
+      strategy:
+        name: coinflip
+        p_trade: 0.0
+  - strategy_id: mean_reversion_alts
+    hypothesis_id: H002
+    enabled: true
+    weight: 0.40
+    config_path: ../engine.yaml
+    overrides:
+      strategy:
+        name: coinflip
+        p_trade: 0.0
+

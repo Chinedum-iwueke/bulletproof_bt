@@ -35,46 +35,78 @@ def run_fast_path_if_supported(
     run_dir: Path,
     timing: TimingRecorder,
 ) -> FastPathResult:
-    requested = resolve_execution_engine(config)
+    with timing.stage("fast_path.resolve_execution_engine"):
+        requested = resolve_execution_engine(config)
+    timing.event(
+        "fast_path.requested",
+        requested=requested,
+        data_kind=(config.get("data") or {}).get("dataset_kind") if isinstance(config.get("data"), dict) else None,
+        strategy=(config.get("strategy") or {}).get("name") if isinstance(config.get("strategy"), dict) else None,
+    )
     if requested == "classic":
-        result = FastPathResult(False, "classic", "classic execution requested")
-        write_fast_path_status(run_dir, result)
+        result = FastPathResult(
+            False,
+            "classic",
+            "classic execution requested",
+            {"requested": requested, "active_path": "classic_requested"},
+        )
+        with timing.stage("fast_path.write_status", mode=result.mode):
+            write_fast_path_status(run_dir, result)
         return result
 
     with timing.stage("fast_path.support_check", requested=requested):
         support = inspect_support(config)
+    timing.event(
+        "fast_path.support_result",
+        requested=requested,
+        supported=support.supported,
+        mode=support.mode,
+        strategy=support.strategy_name,
+        kernel_name=support.kernel_name,
+        reason=support.reason,
+        **support.details,
+    )
 
     if not support.supported:
-        result = FastPathResult(False, "classic_fallback", support.reason)
-        write_fast_path_status(run_dir, result)
+        result = FastPathResult(
+            False,
+            support.mode or "classic_fallback",
+            support.reason,
+            {"requested": requested, "strategy_name": support.strategy_name, "kernel_name": support.kernel_name, **support.details},
+        )
+        with timing.stage("fast_path.write_status", mode=result.mode):
+            write_fast_path_status(run_dir, result)
         if requested == "fast_path":
             # Hard fast_path still falls back instead of failing because research
             # daemon safety requires unsupported hypotheses to keep running.
             return result
         return result
 
-    if support.strategy_name == "l7_h1_csi_gated_displacement_trend":
-        strategy_cfg = config.get("strategy") if isinstance(config.get("strategy"), dict) else {}
-        if strategy_cfg.get("use_compiled_event_kernel") is True:
-            source = str(strategy_cfg.get("compiled_event_source", "columns") or "columns").strip().lower()
-            mode = f"classic_with_l7h1_{source}_event_adapter"
-        else:
-            mode = "classic_with_compiled_l7h1_features"
-        result = FastPathResult(False, mode, support.reason)
-        write_fast_path_status(run_dir, result)
-        return result
-    data_cfg = config.get("data") if isinstance(config.get("data"), dict) else {}
-    if data_cfg.get("htf_context_source") == "precomputed":
-        result = FastPathResult(False, "classic_with_compiled_htf_event_kernel_precomputed", support.reason)
-        write_fast_path_status(run_dir, result)
-        return result
-    if data_cfg.get("dataset_kind") == "research_panel" and config.get("htf_resampler"):
-        result = FastPathResult(False, "classic_with_compiled_htf_event_kernel_streaming", support.reason)
-        write_fast_path_status(run_dir, result)
+    if support.mode in {
+        "classic_with_compiled_l7h1_features",
+        "classic_with_l7h1_columns_event_adapter",
+        "classic_with_l7h1_online_event_adapter",
+        "classic_with_compiled_htf_event_kernel_precomputed",
+        "classic_with_compiled_htf_event_kernel_streaming",
+    }:
+        result = FastPathResult(
+            False,
+            support.mode,
+            support.reason,
+            {"requested": requested, "strategy_name": support.strategy_name, "kernel_name": support.kernel_name, **support.details},
+        )
+        with timing.stage("fast_path.write_status", mode=result.mode):
+            write_fast_path_status(run_dir, result)
         return result
 
     # Placeholder for future supported kernels. Keeping this fallback until
     # parity-expanded avoids silently changing strategy behavior.
-    result = FastPathResult(False, "classic_fallback", "no enabled kernel adapter")
-    write_fast_path_status(run_dir, result)
+    result = FastPathResult(
+        False,
+        "classic_fallback",
+        "no enabled kernel adapter",
+        {"requested": requested, "strategy_name": support.strategy_name, "kernel_name": support.kernel_name, **support.details},
+    )
+    with timing.stage("fast_path.write_status", mode=result.mode):
+        write_fast_path_status(run_dir, result)
     return result

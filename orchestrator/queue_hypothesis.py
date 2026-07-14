@@ -21,7 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--priority", type=int, default=80)
     parser.add_argument("--max-workers", type=int, default=6)
     parser.add_argument("--volatile-max-workers", type=int, default=None)
-    parser.add_argument("--phase", default="tier2")
+    parser.add_argument("--phase", choices=("tier2a", "tier2b", "tier2", "tier3", "validate"), default="tier2b")
     parser.add_argument("--queue-name", default="approved_backtests")
     parser.add_argument("--config", default="configs/engine.yaml")
     parser.add_argument("--local-config", default="configs/local/engine.lab.yaml")

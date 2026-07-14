@@ -11,6 +11,7 @@ DEFAULT_TIMEFRAME = "1m"
 DEFAULT_START_TS = pd.Timestamp("2021-01-01T00:00:00Z")
 
 RAW_DATASETS = ("ohlcv", "mark", "index", "funding", "oi")
+SPOT_RAW_DATASETS = ("ohlcv",)
 
 # Stable major/stable Binance USDT perpetual research basket. Some symbols were
 # listed after 2021 or migrated over time; instrument reconciliation skips absent
@@ -56,3 +57,4 @@ STABLE_SYMBOL_ALIASES: dict[str, tuple[str, ...]] = {
 BINANCE_FAPI_BASE_URL = "https://fapi.binance.com"
 BYBIT_V5_BASE_URL = "https://api.bybit.com"
 OKX_V5_BASE_URL = "https://www.okx.com"
+BINANCE_SPOT_BASE_URL = "https://api.binance.com"

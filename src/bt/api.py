@@ -20,6 +20,56 @@ from bt.contracts.schema_versions import (
 from bt.validation.config_completeness import validate_resolved_config_completeness
 
 
+def _utc_timestamp(value: Any):
+    import pandas as pd
+
+    ts = pd.Timestamp(value)
+    if ts.tzinfo is None:
+        return ts.tz_localize("UTC")
+    return ts.tz_convert("UTC")
+
+
+def _apply_data_warmup_window(config: dict[str, Any]) -> dict[str, Any]:
+    """Expand loader range for causal warmup while preserving official start.
+
+    Warmup bars are used to seed indicators, HTF resamplers, and online state.
+    The engine suppresses trading/logged equity before
+    ``data.analysis_start_ts`` so performance remains scoped to the requested
+    date range.
+    """
+    data_cfg = config.get("data") if isinstance(config.get("data"), dict) else None
+    if not isinstance(data_cfg, dict):
+        return config
+    date_range = data_cfg.get("date_range")
+    if not isinstance(date_range, dict) or not date_range.get("start"):
+        return config
+    warmup_start_raw = data_cfg.get("warmup_start")
+    warmup_period_raw = data_cfg.get("warmup_period")
+    if not warmup_start_raw and not warmup_period_raw:
+        return config
+
+    official_start = _utc_timestamp(date_range["start"])
+    if warmup_start_raw:
+        warmup_start = _utc_timestamp(warmup_start_raw)
+    else:
+        import pandas as pd
+
+        warmup_start = official_start - pd.Timedelta(str(warmup_period_raw))
+    if warmup_start >= official_start:
+        raise ValueError("data.warmup_start/warmup_period must begin before data.date_range.start")
+
+    updated = dict(config)
+    updated_data = dict(data_cfg)
+    updated_range = dict(date_range)
+    updated_range["start"] = warmup_start.isoformat()
+    updated_data["date_range"] = updated_range
+    updated_data["analysis_start_ts"] = official_start.isoformat()
+    updated_data["warmup_start_ts"] = warmup_start.isoformat()
+    updated_data["warmup_enabled"] = True
+    updated["data"] = updated_data
+    return updated
+
+
 def _resolve_timeframe_mode(config: dict[str, Any]) -> tuple[str, str | None, str | None, str]:
     data_cfg = config.get("data") if isinstance(config.get("data"), dict) else {}
     if not isinstance(data_cfg, dict):
@@ -378,6 +428,7 @@ def run_backtest(
         config = deep_merge(config, load_yaml(override_path))
     config = resolve_config(config)
     validate_resolved_config_completeness(config)
+    config = _apply_data_warmup_window(config)
 
     resolved_run_name = run_name or make_run_id()
     run_dir = prepare_run_dir(Path(out_dir), resolved_run_name)
@@ -485,9 +536,10 @@ def run_backtest(
             benchmark_metrics["schema_version"] = BENCHMARK_METRICS_SCHEMA_VERSION
             write_json_deterministic(run_dir / "benchmark_metrics.json", benchmark_metrics)
 
-        with timing.stage("metrics.performance"):
+        with timing.stage("metrics.performance.compute_and_write"):
             report = compute_performance(run_dir)
             write_performance_artifacts(report, run_dir)
+        with timing.stage("metrics.performance.reconcile_costs"):
             reconcile_execution_costs(run_dir)
 
         if benchmark_spec.enabled:
@@ -538,6 +590,7 @@ def run_backtest(
             audit_manager.write_json("determinism_report.json", report_det)
 
         execution_snapshot = build_effective_execution_snapshot(config)
+        research_cfg = config.get("research") if isinstance(config.get("research"), dict) else {}
         with timing.stage("artifact.run_status"):
             _write_run_status(
                 run_dir,
@@ -547,6 +600,7 @@ def run_backtest(
                     "error_message": "",
                     "traceback": "",
                     "run_id": resolved_run_name,
+                    "research": research_cfg,
                     **execution_snapshot,
                 },
                 config=config,
@@ -571,16 +625,20 @@ def run_backtest(
         )
         raise
     finally:
-        timing.write()
-        write_sanity_json(
-            run_dir,
-            sanity_counters,
-            data_scope=_read_data_scope_for_sanity(run_dir),
-        )
+        with timing.stage("artifact.timing_write"):
+            timing.write()
+        with timing.stage("artifact.sanity_write"):
+            write_sanity_json(
+                run_dir,
+                sanity_counters,
+                data_scope=_read_data_scope_for_sanity(run_dir),
+            )
         try:
-            audit_manager.write_coverage_json()
+            with timing.stage("artifact.audit_coverage_write"):
+                audit_manager.write_coverage_json()
         except Exception:
             pass
+        timing.write()
 
     return str(run_dir)
 

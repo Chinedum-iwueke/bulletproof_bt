@@ -25,8 +25,29 @@ def test_resolve_config_maps_legacy_risk_per_trade_pct_to_canonical_key() -> Non
 def test_parse_risk_spec_rejects_missing_risk_fraction() -> None:
     resolved = resolve_config({"risk": {"mode": "r_fixed"}})
 
-    with pytest.raises(ValueError, match=r"risk\.mode and risk\.r_per_trade are required"):
+    with pytest.raises(ValueError, match=r"risk\.r_per_trade"):
         parse_risk_spec(resolved)
+
+
+def test_resolve_config_maps_sizing_block_to_risk_contract() -> None:
+    resolved = resolve_config(
+        {
+            "sizing": {
+                "mode": "fixed_notional_pct_equity",
+                "notional_pct_equity": 0.05,
+                "cap_policy": "allow_clip_with_truth",
+                "min_risk_utilization_pct": 0.10,
+                "report_under_risked_trades": True,
+            },
+            "risk": {"max_positions": 2},
+        }
+    )
+
+    assert resolved["risk"]["mode"] == "fixed_notional_pct_equity"
+    assert resolved["risk"]["notional_pct_equity"] == 0.05
+    assert resolved["risk"]["cap_policy"] == "allow_clip_with_truth"
+    assert resolved["risk"]["min_risk_utilization_pct"] == 0.10
+    assert resolved["risk"]["report_under_risked_trades"] is True
 
 
 def test_resolve_config_injects_default_stop_resolution() -> None:

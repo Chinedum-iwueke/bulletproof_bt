@@ -20,9 +20,108 @@ Implementation: `src/bt/portfolio/portfolio.py`, `src/bt/risk/risk_engine.py`, `
 - `strict` mode forbids `allow_legacy_proxy=true`.
 - Stop contract reporting is deterministic for identical inputs.
 
+## Sizing Modes
+
+Bulletproof_bt now supports two explicit sizing intents. They answer different
+questions and must not be conflated.
+
+### Risk-at-stop sizing
+
+```yaml
+sizing:
+  mode: risk_at_stop
+  r_per_trade: 0.005
+```
+
+Equivalent legacy/internal forms:
+
+```yaml
+risk:
+  mode: equity_pct   # or r_fixed
+  r_per_trade: 0.005
+```
+
+This means: "size the position so the initial stop would lose 0.5% of
+equity." Position notional is derived from stop distance:
+
+```text
+target_risk = equity * r_per_trade
+qty = target_risk / stop_distance
+notional = qty * entry_price
+```
+
+This is the R-normalized/professional model because different stop distances
+can still produce comparable loss impact.
+
+### Fixed-notional-percent sizing
+
+```yaml
+sizing:
+  mode: fixed_notional_pct_equity
+  notional_pct_equity: 0.05
+```
+
+Equivalent internal form:
+
+```yaml
+risk:
+  mode: fixed_notional_pct_equity
+  notional_pct_equity: 0.05
+```
+
+This means: "open a position with about 5% of equity as notional exposure."
+The stop still exits the trade and creates R metrics, but the actual loss at
+stop varies with stop distance:
+
+```text
+notional = equity * notional_pct_equity
+qty = notional / entry_price
+actual_stop_risk = qty * stop_distance
+```
+
+Use this mode when the research question is exposure-first, such as small
+account fixed-allocation tests.
+
+## Cap Policy And Truthful Clipping
+
+Notional, gross exposure, and margin caps are separate from the sizing target.
+When a cap prevents full risk-at-stop sizing, use an explicit policy:
+
+```yaml
+sizing:
+  mode: risk_at_stop
+  r_per_trade: 0.005
+  cap_policy: allow_clip_with_truth
+  min_risk_utilization_pct: 0.10
+  report_under_risked_trades: true
+```
+
+`allow_clip_with_truth` keeps potentially useful trades, but logs the truth:
+
+- `risk_budget`: requested risk dollars
+- `risk_amount`: actual filled stop risk
+- `risk_utilization_pct`: `risk_amount / risk_budget`
+- `under_risked_trade`: true when actual risk is below requested risk
+- `cap_applied` / `gross_cap_applied`: whether caps resized the order
+
+If the clipped trade would use less than `min_risk_utilization_pct` of the
+requested risk, it is rejected as dust.
+
+For strict measurement, use:
+
+```yaml
+sizing:
+  mode: risk_at_stop
+  r_per_trade: 0.005
+  cap_policy: reject_if_clipped
+```
+
+That rejects capped trades instead of taking smaller positions.
+
 ## Instrument-aware sizing (T3)
 
-Sizing remains R-normalized (`risk_amount` and stop-distance based), with deterministic instrument-aware conversion:
+Risk-at-stop sizing remains R-normalized (`risk_amount` and stop-distance
+based), with deterministic instrument-aware conversion:
 
 - **Crypto / no instrument block**
   - Keeps existing sizing behavior (no new rounding changes by default).

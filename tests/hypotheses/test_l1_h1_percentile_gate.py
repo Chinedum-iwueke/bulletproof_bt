@@ -4,6 +4,7 @@ from bt.hypotheses.l1_h1 import RollingPercentileGate, bars_for_30_calendar_days
 
 
 def test_timeframe_mapping_for_30_days() -> None:
+    assert bars_for_30_calendar_days("1m") == 43200
     assert bars_for_30_calendar_days("5m") == 8640
     assert bars_for_30_calendar_days("15m") == 2880
     assert bars_for_30_calendar_days("1h") == 720

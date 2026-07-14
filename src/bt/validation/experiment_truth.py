@@ -26,6 +26,8 @@ RUN_TRUTH_ARTIFACTS = (
     "performance.json",
     "run_status.json",
 )
+RISK_BUDGET_REL_TOLERANCE = 1e-6
+RISK_BUDGET_ABS_TOLERANCE = 1e-8
 
 
 @dataclass
@@ -239,7 +241,14 @@ def _check_risk(df: pd.DataFrame, *, run_id: str, issues: list[TruthIssue], noti
                     "risk_amount does not equal filled quantity times frozen stop risk",
                     {"rows": int(bad.sum()), "max_abs_drift": float(drift[bad].max())},
                 )
-        over_budget = risk_amount.notna() & risk_budget.notna() & (risk_amount > risk_budget * (1.0 + 1e-6))
+        # Trades can legitimately reach near-zero risk budgets after equity is
+        # almost depleted. trades.csv is fixed-decimal text, so a fill-time
+        # clipped risk like 5.6068258e-7 can round-trip as 5.60683e-7 while the
+        # budget rounds as 5.60682e-7. That is not a capital-risk breach. Keep
+        # the relative guard for normal trades and add a tiny absolute floor for
+        # post-serialization dust.
+        budget_tolerance = risk_budget.abs().mul(RISK_BUDGET_REL_TOLERANCE).clip(lower=RISK_BUDGET_ABS_TOLERANCE)
+        over_budget = risk_amount.notna() & risk_budget.notna() & (risk_amount > risk_budget + budget_tolerance)
         if over_budget.any():
             _add(issues, "error", run_id, "risk_budget", "actual stop risk exceeds requested risk budget", {"rows": int(over_budget.sum())})
 
@@ -389,8 +398,11 @@ def validate_experiment_root(
             _add(issues, "error", run_id, "trades_csv", f"Unable to read trades.csv: {exc}")
             continue
         runs_checked += 1
-        _check_schema(trades, run_id=run_id, issues=issues)
         _check_metrics(trades, perf, run_id=run_id, issues=issues)
+        if trades.empty:
+            _add(issues, "warning", run_id, "zero_trades", "Run produced zero trades; skipped trade-row schema/risk/source checks")
+            continue
+        _check_schema(trades, run_id=run_id, issues=issues)
         _check_risk(trades, run_id=run_id, issues=issues, notional_tolerance_pct=notional_tolerance_pct)
         _check_source_ts(trades, run_id=run_id, issues=issues)
 

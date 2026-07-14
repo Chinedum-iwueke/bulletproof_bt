@@ -1,0 +1,12 @@
+{
+  "contract_version": "1.0",
+  "hard_failures": 0,
+  "hypothesis_path": "research/hypotheses/l2_h1_htf_trend_filter_pullback.yaml",
+  "hypothesis_sha256": "bb53f7e7f17bca3b56cdb5298c70115cc3bc2828f0c8015c9a923a6cd71773ab",
+  "issues": [],
+  "status": "PASS",
+  "strategy_name": "l2_h1_htf_trend_filter_pullback",
+  "strategy_path": "/home/omenka/Projects/bulletproof_bt/src/bt/strategy/l2_h1_htf_trend_filter_pullback.py",
+  "strategy_sha256": "ef885657ac5f0199b8ff76f7cbaa8fa262da0d90a36008c08909342027078cc8",
+  "warnings": 0
+}

@@ -576,6 +576,35 @@ class ResearchDB:
         conn.commit()
         return conn.execute("SELECT * FROM queues WHERE id = ?", (row["id"],)).fetchone()
 
+    def dequeue_by_id(self, queue_name: str, queue_id: str, locked_by: str) -> sqlite3.Row | None:
+        now = self._now()
+        conn = self.connect()
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            """
+            SELECT * FROM queues
+            WHERE id = ?
+              AND queue_name = ?
+              AND status = 'PENDING'
+              AND (available_after IS NULL OR available_after <= ?)
+            """,
+            (queue_id, queue_name, now),
+        ).fetchone()
+        if row is None:
+            conn.commit()
+            return None
+
+        conn.execute(
+            """
+            UPDATE queues
+            SET status = 'LOCKED', locked_at = ?, locked_by = ?, attempts = attempts + 1, updated_at = ?
+            WHERE id = ?
+            """,
+            (now, locked_by, now, queue_id),
+        )
+        conn.commit()
+        return conn.execute("SELECT * FROM queues WHERE id = ?", (queue_id,)).fetchone()
+
     def peek_next_pending(self, queue_name: str) -> sqlite3.Row | None:
         now = self._now()
         return self.connect().execute(

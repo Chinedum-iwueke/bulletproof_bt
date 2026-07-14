@@ -1,0 +1,194 @@
+hypothesis_id: "L2-H3"
+title: "Reference-Price Reversion Using Session VWAP"
+description: "Session VWAP reversion should outperform naive mean reversion when the reference price is aligned to UTC liquidity/trading benchmarks and entries are restricted to compression/liquid regimes."
+research_layer: "L2"
+hypothesis_family: "reference_price_reversion"
+version: "1.0.0"
+author: "bulletproof_bt"
+created_at: "2026-07-10T00:00:00Z"
+
+required_indicators:
+  - atr
+  - session_vwap
+
+indicator_defaults:
+  signal_timeframe: "5m"
+  atr_period: 14
+  session: "utc_day"
+  vwap_price_source: "typical"
+  compression_window_days: 30
+  liquidity_window_days: 30
+  liquidity_proxy_formula: "0.5 * (high - low) / close"
+  base_execution_timeframe: "1m"
+
+gates:
+  - field: "comp_gate_t"
+    op: "=="
+    value: true
+  - field: "liq_gate_t"
+    op: "=="
+    value: true
+  - field: "abs_z"
+    op: ">="
+    param: "z0"
+
+parameter_grid:
+  z0: [0.8, 1.2]
+  k_atr: [1.5, 2.0]
+  signal_timeframe: ["5m"]
+  q_comp: [0.20]
+  q_liq: [0.60]
+  T_hold: [12]
+  family_variant: ["L2-H3"]
+
+entry:
+  strategy: "l2_h3_reference_price_reversion"
+  signal_timeframe: "5m"
+  timeframe: "5m"
+  base_execution_timeframe: "1m"
+  order_timing: "bar_close_submit_next_bar_execution"
+  disallow_flip: true
+  no_pyramiding: true
+
+exit:
+  stop_kind: "atr_multiple"
+  stop_model: "fixed_atr_multiple"
+  stop_atr_param: "k_atr"
+  stop_update_policy: "frozen_at_entry"
+  atr_source_timeframe: "signal_timeframe"
+  profit_exit: "session_vwap_touch"
+  hard_exit: "utc_session_end"
+  time_stop_param: "T_hold"
+  hold_time_unit: "signal_bars"
+  exit_monitoring_timeframe: "1m"
+
+execution_semantics:
+  signal_timeframe: "5m"
+  htf_timeframes: ["5m"]
+  base_execution_timeframe: "1m"
+  exit_monitoring_timeframe: "1m"
+  base_data_frequency_expected: "1m"
+  strategy_family: "reference_price_reversion"
+  family_pattern: "session_vwap_zscore_fade_with_compression_and_liquidity_gates"
+  reference_price: "session_vwap"
+  session_anchor: "utc_day"
+  stop_model: "fixed_atr_multiple"
+  stop_update_policy: "frozen_at_entry"
+  tp_update_policy: "session_vwap_touch"
+  hold_time_unit: "signal_bars"
+  atr_source_timeframe: "signal_timeframe"
+  risk_accounting: "engine_canonical_R"
+  no_pyramiding: true
+
+sizing:
+  mode: risk_at_stop
+  r_per_trade: 0.005
+  cap_policy: allow_clip_with_truth
+  min_risk_utilization_pct: 0.10
+  report_under_risked_trades: true
+
+risk_controls:
+  max_positions: 5
+  max_leverage: 1.0
+  max_notional_pct_equity: 0.5
+  max_gross_notional_pct_equity: 0.5
+  disallow_flip: true
+  no_averaging_down: true
+  unresolved_stops: reject
+  forced_liquidation_expected: false
+
+data_assumptions:
+  dataset_kind: research_panel
+  universes: ["stable", "volatile"]
+  required_columns: ["ts", "open", "high", "low", "close", "volume"]
+  optional_rich_columns:
+    - funding_rate
+    - funding_source_ts
+    - open_interest
+    - oi_source_ts
+    - mark_close
+    - index_close
+    - premium_mark_vs_index
+    - basis_close_vs_index
+  rich_data_role: "logging_only_context"
+  ohlcv_only_fallback: true
+  reference_price_contract: "SessionVWAP resets at UTC 00:00 and uses only bars seen inside the current UTC day."
+
+evaluation:
+  required_tiers: ["Tier2", "Tier3"]
+  metrics:
+    - ev_r_net
+    - ev_r_gross
+    - ev_by_session_hour
+    - turnover
+    - capacity_proxy
+    - cost_breakdown_sensitivity
+    - max_drawdown
+    - win_rate
+    - under_risked_trade_rate
+
+logging:
+  schema_version: "1.0"
+  required_fields:
+    - run_id
+    - hypothesis_id
+    - tier
+    - ev_r_gross
+    - ev_r_net
+    - status
+    - anchor_id
+    - session_anchor_id
+    - session_vwap
+    - z
+    - z_vwap_t
+    - z0
+    - session_hour
+    - comp_gate_t
+    - liq_gate_t
+    - rv_t
+    - spread_proxy_t
+    - entry_reason
+    - stop_distance
+    - risk_amount
+    - risk_budget
+    - requested_risk_amount
+    - risk_utilization_pct
+    - under_risked_trade
+    - entry_state_mark_price
+    - entry_state_index_price
+    - entry_state_funding_raw
+    - entry_state_oi_level
+    - entry_state_basis_raw
+    - entry_decision_conditions_json
+    - entry_decision_gate_values_json
+
+runtime_controls:
+  enabled: true
+  tags: ["session_vwap", "reference_price", "mean_reversion", "compression", "liquidity_gate"]
+  notes: "Isolates z0 and ATR stop sensitivity. Compression and liquidity gates reuse L1-H2/L1-H4 primitives."
+
+falsification_criteria:
+  - "If net EV is not positive under Tier2 costs, scrap the session-VWAP reference-price reversion thesis."
+  - "If only low z0 works gross but disappears net of costs, require larger dislocations or scrap."
+  - "If session-hour buckets show edge only in a tiny sample, require Tier3 confirmation before promotion."
+
+expected_failure_modes:
+  - "VWAP anchor mis-specified for crypto participants that do not benchmark on UTC days."
+  - "Reversion becomes catching falling knives in directional liquidation cascades."
+  - "Tier3 costs may require z0=1.2 or larger despite Tier2 activity at z0=0.8."
+
+truth_contract:
+  version: "1.0"
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  parity_required_for_fast_path: true
+  research_memory_requires_certification: true

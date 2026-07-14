@@ -1,7 +1,7 @@
 poll_interval_seconds: 5
 queue_name: sample_pipeline_smoke
 locked_by_prefix: research-daemon-sample
-default_phase: tier2
+default_phase: tier2b
 default_max_workers: 6
 default_config: configs/engine.yaml
 default_local_config: configs/local/engine.sample_pipeline_smoke.yaml

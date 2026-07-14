@@ -1,7 +1,7 @@
 poll_interval_seconds: 60
 queue_name: approved_backtests
 locked_by_prefix: research-daemon
-default_phase: tier2
+default_phase: tier2b
 default_max_workers: 12
 volatile_max_workers: 12
 default_config: configs/engine.yaml
@@ -26,6 +26,19 @@ runner_min_free_ram_gb: 8
 runner_run_timeout_seconds: null
 runner_fail_fast: false
 runner_resume_strict: true
+capacity_scheduler:
+  enabled: false
+  target_workers: 28
+  max_workers_per_job: 12
+  max_concurrent_jobs: 4
+  min_free_ram_gb: 8
+  pause_free_ram_gb: 6
+  resume_free_ram_gb: 12
+  poll_seconds: 30
+  stale_lock_refresh_seconds: 60
+  log_path: logs/research_capacity_scheduler.log
+  state_path: logs/research_capacity_scheduler_state.json
+  child_log_dir: logs/research_capacity_scheduler_jobs
 log_path: logs/research_daemon.log
 heartbeat_path: logs/research_daemon_heartbeat.json
 max_job_attempts: 2

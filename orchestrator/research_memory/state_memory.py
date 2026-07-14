@@ -56,45 +56,91 @@ def normalize_state_record(row: dict[str, Any], source_path: Path) -> dict[str, 
 
 
 def aggregate_buckets_from_trades(conn, min_trades: int = 1) -> list[dict[str, Any]]:
-    df = pd.read_sql_query("SELECT * FROM research_memory_trades WHERE metrics_valid = 1 AND r_net IS NOT NULL", conn)
-    if df.empty:
-        return []
     records: list[dict[str, Any]] = []
-    bucket_specs = [
-        ("csi_pctile", _pct_bucket),
-        ("vol_pctile", _pct_bucket),
-        ("spread_pctile", _pct_bucket),
-        ("tr_over_atr", _tr_bucket),
-        ("setup_class", lambda x: str(x) if pd.notna(x) and x != "" else None),
+    bucket_specs: list[tuple[str, str]] = [
+        ("csi_pctile", _pct_bucket_sql("csi_pctile")),
+        ("vol_pctile", _pct_bucket_sql("vol_pctile")),
+        ("spread_pctile", _pct_bucket_sql("spread_pctile")),
+        ("tr_over_atr", _tr_bucket_sql("tr_over_atr")),
+        ("setup_class", "CASE WHEN setup_class IS NULL OR setup_class = '' THEN NULL ELSE setup_class END"),
     ]
-    for state_key, fn in bucket_specs:
-        if state_key not in df.columns:
-            continue
-        work = df.copy()
-        work["bucket"] = work[state_key].map(fn)
-        work = work[work["bucket"].notna()]
-        group_cols = ["bucket", "setup_class", "hypothesis_name", "dataset_type", "phase"]
-        for keys, group in work.groupby(group_cols, dropna=False):
-            if len(group) < min_trades:
-                continue
-            bucket, setup_class, hypothesis_name, dataset_type, phase = keys
-            row = _metrics(group)
+    for state_key, bucket_expr in bucket_specs:
+        sql = f"""
+            WITH bucketed AS (
+                SELECT
+                    {bucket_expr} AS bucket,
+                    setup_class,
+                    hypothesis_name,
+                    dataset_type,
+                    phase,
+                    run_id,
+                    r_net,
+                    r_gross,
+                    mfe_r,
+                    mae_r,
+                    exit_efficiency,
+                    cost_drag_r
+                FROM research_memory_trades
+                WHERE metrics_valid = 1 AND r_net IS NOT NULL
+            )
+            SELECT
+                bucket,
+                setup_class,
+                hypothesis_name,
+                dataset_type,
+                phase,
+                COUNT(*) AS n_trades,
+                AVG(r_net) AS ev_r_net,
+                AVG(r_gross) AS ev_r_gross,
+                MAX(r_net) AS max_r,
+                MIN(r_net) AS min_r,
+                AVG(CASE WHEN r_net >= 3 THEN 1.0 ELSE 0.0 END) AS tail_3r_rate,
+                AVG(CASE WHEN r_net >= 5 THEN 1.0 ELSE 0.0 END) AS tail_5r_rate,
+                AVG(CASE WHEN r_net >= 10 THEN 1.0 ELSE 0.0 END) AS tail_10r_rate,
+                AVG(mfe_r) AS avg_mfe_r,
+                AVG(mae_r) AS avg_mae_r,
+                AVG(exit_efficiency) AS avg_exit_efficiency,
+                AVG(cost_drag_r) AS avg_cost_drag_r,
+                COUNT(DISTINCT run_id) AS run_count
+            FROM bucketed
+            WHERE bucket IS NOT NULL
+            GROUP BY bucket, setup_class, hypothesis_name, dataset_type, phase
+            HAVING COUNT(*) >= ?
+        """
+        for db_row in conn.execute(sql, (min_trades,)).fetchall():
+            row = {
+                "n_trades": int(db_row["n_trades"]),
+                "ev_r_net": _num(db_row["ev_r_net"]),
+                "ev_r_gross": _num(db_row["ev_r_gross"]),
+                "median_r": None,
+                "p95_r": None,
+                "p99_r": None,
+                "max_r": _num(db_row["max_r"]),
+                "min_r": _num(db_row["min_r"]),
+                "tail_3r_rate": _num(db_row["tail_3r_rate"]),
+                "tail_5r_rate": _num(db_row["tail_5r_rate"]),
+                "tail_10r_rate": _num(db_row["tail_10r_rate"]),
+                "avg_mfe_r": _num(db_row["avg_mfe_r"]),
+                "avg_mae_r": _num(db_row["avg_mae_r"]),
+                "avg_exit_efficiency": _num(db_row["avg_exit_efficiency"]),
+                "avg_cost_drag_r": _num(db_row["avg_cost_drag_r"]),
+            }
             row.update({
                 "state_key": state_key,
-                "bucket": str(bucket),
-                "setup_class": None if pd.isna(setup_class) else setup_class,
-                "hypothesis_name": None if pd.isna(hypothesis_name) else hypothesis_name,
-                "dataset_type": None if pd.isna(dataset_type) else dataset_type,
-                "phase": None if pd.isna(phase) else phase,
+                "bucket": str(db_row["bucket"]),
+                "setup_class": db_row["setup_class"],
+                "hypothesis_name": db_row["hypothesis_name"],
+                "dataset_type": db_row["dataset_type"],
+                "phase": db_row["phase"],
                 "joint_key": None,
                 "finding_type": _finding_type(row),
-                "confidence_score": min(1.0, len(group) / 30.0),
+                "confidence_score": min(1.0, int(db_row["n_trades"]) / 30.0),
                 "source_path": "trade_aggregate",
                 "created_at": _now(),
             })
             rid = hashlib.sha1(json.dumps(row, sort_keys=True, default=str).encode("utf-8")).hexdigest()
             row["id"] = rid
-            row["evidence_json"] = json.dumps({"source": "trade_aggregate", "run_count": int(group["run_id"].nunique()), **row}, sort_keys=True, default=str)
+            row["evidence_json"] = json.dumps({"source": "trade_aggregate", "run_count": int(db_row["run_count"]), **row}, sort_keys=True, default=str)
             records.append(row)
     return records
 
@@ -181,6 +227,31 @@ def _tr_bucket(v: Any) -> str | None:
     if x >= 0.75:
         return "mid"
     return "low"
+
+
+def _pct_bucket_sql(column: str) -> str:
+    return f"""
+        CASE
+            WHEN {column} IS NULL THEN NULL
+            WHEN {column} >= 0.85 THEN 'very_high'
+            WHEN {column} >= 0.70 THEN 'high'
+            WHEN {column} >= 0.30 THEN 'mid'
+            WHEN {column} >= 0.15 THEN 'low'
+            ELSE 'very_low'
+        END
+    """
+
+
+def _tr_bucket_sql(column: str) -> str:
+    return f"""
+        CASE
+            WHEN {column} IS NULL THEN NULL
+            WHEN {column} >= 2.0 THEN 'very_high'
+            WHEN {column} >= 1.5 THEN 'high'
+            WHEN {column} >= 0.75 THEN 'mid'
+            ELSE 'low'
+        END
+    """
 
 
 def _mean(df: pd.DataFrame, col: str) -> float | None:

@@ -1,12 +1,15 @@
 # Hypothesis Strategy Logging Audit
 
-Scanned hypotheses: 27
+Scanned hypotheses: 37
 
 | hypothesis_id | strategy_name | status | missing_requirements | strategy_file |
 |---|---|---|---|---|
 | L1-H11A | l1_h11_quality_filtered_continuation | compliant | none | src/bt/strategy/l1_h11_quality_filtered_continuation.py |
+| L1-H11A-REFINED | l1_h11_quality_filtered_continuation | compliant | none | src/bt/strategy/l1_h11_quality_filtered_continuation.py |
 | L1-H11B | l1_h11_quality_filtered_continuation | compliant | none | src/bt/strategy/l1_h11_quality_filtered_continuation.py |
+| L1-H11B-REFINED | l1_h11_quality_filtered_continuation | compliant | none | src/bt/strategy/l1_h11_quality_filtered_continuation.py |
 | L1-H11C | l1_h11_quality_filtered_continuation | compliant | none | src/bt/strategy/l1_h11_quality_filtered_continuation.py |
+| L1-H11C-REFINED | l1_h11_quality_filtered_continuation | compliant | none | src/bt/strategy/l1_h11_quality_filtered_continuation.py |
 | L1-H1 | l1_h1_vol_floor_trend | compliant | none | src/bt/strategy/l1_h1_vol_floor_trend.py |
 | L1-H1B | l1_h1b_salvage | compliant | none | src/bt/strategy/l1_h1b_salvage.py |
 | L1-H1C | volfloor_ema_pullback | compliant | none | src/bt/strategy/volfloor_ema_pullback.py |
@@ -31,3 +34,10 @@ Scanned hypotheses: 27
 | L1-H8E | l1_h8_trend_continuation_pullback | compliant | none | src/bt/strategy/l1_h8_trend_continuation_pullback.py |
 | L1-H9A | l1_h9_momentum_breakout | compliant | none | src/bt/strategy/l1_h9_momentum_breakout.py |
 | L1-H9B | l1_h9_momentum_breakout | compliant | none | src/bt/strategy/l1_h9_momentum_breakout.py |
+| L2-H1 | l2_h1_htf_trend_filter_pullback | compliant | none | src/bt/strategy/l2_h1_htf_trend_filter_pullback.py |
+| L2-H2 | l1_h1_vol_floor_trend | compliant | none | src/bt/strategy/l1_h1_vol_floor_trend.py |
+| L2-H3 | l2_h3_reference_price_reversion | compliant | none | src/bt/strategy/l2_h3_reference_price_reversion.py |
+| L2-H4 | l2_h4_prior_day_extreme_traps | compliant | none | src/bt/strategy/l2_h4_prior_day_extreme_traps.py |
+| L2-H5 | l2_h5_htf_trend_funding_stress | compliant | none | src/bt/strategy/l2_h5_htf_trend_funding_stress.py |
+| L7-H1 | l7_h1_csi_gated_displacement_trend | compliant | none | src/bt/strategy/l7_h1_csi_gated_displacement_trend.py |
+| SAMPLE-PIPELINE-SMOKE | volfloor_ema_pullback | compliant | none | src/bt/strategy/volfloor_ema_pullback.py |

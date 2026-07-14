@@ -191,6 +191,36 @@ def _resolve_r_per_trade_alias(resolved: dict[str, Any]) -> None:
     resolved["risk"] = risk_cfg
 
 
+def _resolve_sizing_block(resolved: dict[str, Any]) -> None:
+    sizing_cfg = resolved.get("sizing")
+    if sizing_cfg is None:
+        return
+    if not isinstance(sizing_cfg, dict):
+        raise ConfigError("Invalid sizing: expected mapping")
+    risk_cfg = _ensure_mapping(resolved.get("risk"), name="risk")
+
+    mapping = {
+        "mode": "mode",
+        "r_per_trade": "r_per_trade",
+        "notional_pct_equity": "notional_pct_equity",
+        "cap_policy": "cap_policy",
+        "min_risk_utilization_pct": "min_risk_utilization_pct",
+        "report_under_risked_trades": "report_under_risked_trades",
+    }
+    for sizing_key, risk_key in mapping.items():
+        if sizing_key not in sizing_cfg:
+            continue
+        sizing_value = sizing_cfg[sizing_key]
+        if risk_key in risk_cfg and risk_cfg[risk_key] != sizing_value:
+            raise ConfigError(
+                f"Conflicting config values for 'sizing.{sizing_key}' ({sizing_value!r}) "
+                f"and 'risk.{risk_key}' ({risk_cfg[risk_key]!r}). Define only one or make them equal."
+            )
+        risk_cfg[risk_key] = sizing_value
+
+    resolved["risk"] = risk_cfg
+
+
 def resolve_config(cfg: dict[str, Any]) -> dict[str, Any]:
     """
     Normalize config into one authoritative shape.
@@ -461,10 +491,14 @@ def resolve_config(cfg: dict[str, Any]) -> dict[str, Any]:
         nested_key="maintenance_free_margin_pct",
         default=0.01,
     )
+    _resolve_sizing_block(resolved)
     _resolve_r_per_trade_alias(resolved)
 
     risk_cfg = resolved.get("risk", {})
     risk_cfg.setdefault("mode", "equity_pct")
+    risk_cfg.setdefault("cap_policy", "allow_clip_with_truth")
+    risk_cfg.setdefault("min_risk_utilization_pct", 0.0)
+    risk_cfg.setdefault("report_under_risked_trades", True)
     risk_cfg.setdefault("may_liquidate", True)
     fx_cfg = _ensure_mapping(risk_cfg.get("fx"), name="risk.fx")
     fx_cfg.setdefault("lot_step", None)
@@ -505,6 +539,43 @@ def resolve_config(cfg: dict[str, Any]) -> dict[str, Any]:
 
     if not isinstance(risk_cfg.get("may_liquidate"), bool):
         raise ConfigError("Invalid risk.may_liquidate: expected boolean")
+
+    if risk_cfg.get("cap_policy") not in {"allow_clip_with_truth", "reject_if_clipped"}:
+        raise ConfigError(
+            "Invalid risk.cap_policy: expected allow_clip_with_truth or reject_if_clipped"
+        )
+
+    try:
+        min_risk_utilization_pct = float(risk_cfg.get("min_risk_utilization_pct"))
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(
+            "Invalid risk.min_risk_utilization_pct: expected a float in [0.0, 1.0]; "
+            f"got {risk_cfg.get('min_risk_utilization_pct')!r}."
+        ) from exc
+    if not (0.0 <= min_risk_utilization_pct <= 1.0):
+        raise ConfigError(
+            "Invalid risk.min_risk_utilization_pct: expected a float in [0.0, 1.0] "
+            f"got {min_risk_utilization_pct!r}."
+        )
+    risk_cfg["min_risk_utilization_pct"] = min_risk_utilization_pct
+
+    if not isinstance(risk_cfg.get("report_under_risked_trades"), bool):
+        raise ConfigError("Invalid risk.report_under_risked_trades: expected boolean")
+
+    if risk_cfg.get("mode") == "fixed_notional_pct_equity":
+        try:
+            notional_pct_equity = float(risk_cfg.get("notional_pct_equity"))
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(
+                "Invalid risk.notional_pct_equity: expected a float in (0.0, 5.0]; "
+                f"got {risk_cfg.get('notional_pct_equity')!r}."
+            ) from exc
+        if not (0.0 < notional_pct_equity <= 5.0):
+            raise ConfigError(
+                "Invalid risk.notional_pct_equity: expected a float in (0.0, 5.0] "
+                f"got {notional_pct_equity!r}."
+            )
+        risk_cfg["notional_pct_equity"] = notional_pct_equity
 
     try:
         margin_buffer_tier = int(risk_cfg.get("margin_buffer_tier"))

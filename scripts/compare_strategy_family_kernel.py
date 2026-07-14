@@ -90,15 +90,22 @@ def _make_local_config(
     start: str,
     end: str,
     path_mode: str,
+    warmup_start: str | None,
+    warmup_period: str | None,
 ) -> dict[str, Any]:
+    data_cfg: dict[str, Any] = {
+        "date_range": {"start": start, "end": end},
+    }
+    if warmup_start:
+        data_cfg["warmup_start"] = warmup_start
+    if warmup_period:
+        data_cfg["warmup_period"] = warmup_period
     cfg = dict(base_local)
     cfg = deep_merge(
         cfg,
         {
             "execution_engine": "classic" if path_mode == "classic" else "auto",
-            "data": {
-                "date_range": {"start": start, "end": end},
-            },
+            "data": data_cfg,
         },
     )
     return cfg
@@ -176,6 +183,7 @@ def _run_tasks_subprocess(
     root: Path,
     max_workers: int,
     timeout_seconds: int | None,
+    volatile_fast_source: str,
 ) -> list[dict[str, Any]]:
     work_dir = root / "comparison_worker_payloads"
     log_dir = root / "comparison_worker_logs"
@@ -208,7 +216,21 @@ def _run_tasks_subprocess(
             encoding="utf-8",
         )
         cmd = [sys.executable, str(script_path), "--worker-task", str(payload_path)]
-        proc = subprocess.Popen(cmd, stdout=stdout, stderr=stderr, text=True)
+        env = None
+        if task.path_mode == "fast" and task.universe == "volatile":
+            # Volatile membership streams are path-dependent because inactive
+            # symbols must keep flowing while live positions/orders need exits
+            # and mark-to-market. Static column-backed volatile runs are
+            # allowed only after the per-symbol continuation panels have been
+            # stamped and this comparison proves equality.
+            import os
+
+            env = os.environ.copy()
+            if volatile_fast_source == "static":
+                env["BT_ALLOW_VOLATILE_L7H1_STATIC"] = "1"
+            else:
+                env["BT_ALLOW_VOLATILE_L7H1_COMPILED"] = "1"
+        proc = subprocess.Popen(cmd, stdout=stdout, stderr=stderr, text=True, env=env)
         running[proc] = (task, result_path, stdout, stderr, time.monotonic())
 
     max_workers = max(1, int(max_workers))
@@ -406,6 +428,9 @@ def main() -> int:
     parser.add_argument("--output-root", default="outputs/kernel_comparison/l7_h1_2w")
     parser.add_argument("--max-workers", type=int, default=8)
     parser.add_argument("--run-timeout-seconds", type=int, default=0)
+    parser.add_argument("--volatile-fast-source", choices=("online", "static"), default="online")
+    parser.add_argument("--warmup-start", default=None)
+    parser.add_argument("--warmup-period", default=None)
     parser.add_argument("--clean", action="store_true")
     args = parser.parse_args()
     if args.worker_task:
@@ -442,7 +467,14 @@ def main() -> int:
 
     tasks: list[ComparisonTask] = []
     for path_mode in path_modes:
-        local_cfg = _make_local_config(base_local=base_local, start=args.start, end=args.end, path_mode=path_mode)
+        local_cfg = _make_local_config(
+            base_local=base_local,
+            start=args.start,
+            end=args.end,
+            path_mode=path_mode,
+            warmup_start=args.warmup_start,
+            warmup_period=args.warmup_period,
+        )
         local_path = _write_yaml(root / "overrides" / f"{path_mode}.yaml", local_cfg)
         for universe in universes:
             for tf in signal_timeframes:
@@ -473,6 +505,7 @@ def main() -> int:
         root=root,
         max_workers=args.max_workers,
         timeout_seconds=args.run_timeout_seconds if args.run_timeout_seconds > 0 else None,
+        volatile_fast_source=args.volatile_fast_source,
     )
 
     run_rows, pair_rows = _build_comparison(results)

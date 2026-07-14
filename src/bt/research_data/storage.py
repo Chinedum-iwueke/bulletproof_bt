@@ -56,15 +56,26 @@ class ResearchDataStore:
                 except (ImportError, OSError):
                     pass
 
-    def raw_path(self, exchange: str, symbol: str, dataset: str, timeframe: str) -> Path:
+    @staticmethod
+    def _market(market: str | None) -> str:
+        value = str(market or "perp").strip().lower()
+        if value not in {"perp", "spot"}:
+            raise ValueError("market must be one of: perp, spot")
+        return value
+
+    def raw_path(self, exchange: str, symbol: str, dataset: str, timeframe: str, market: str = "perp") -> Path:
+        tf = timeframe if dataset not in {"funding", "oi", "liquidations"} else ("event" if dataset in {"funding", "liquidations"} else timeframe)
+        return self.root / "raw" / self._market(market) / exchange / symbol / dataset / f"timeframe={tf}" / "data.parquet"
+
+    def legacy_raw_path(self, exchange: str, symbol: str, dataset: str, timeframe: str) -> Path:
         tf = timeframe if dataset not in {"funding", "oi", "liquidations"} else ("event" if dataset in {"funding", "liquidations"} else timeframe)
         return self.root / "raw" / exchange / symbol / dataset / f"timeframe={tf}" / "data.parquet"
 
-    def raw_dataset_dir(self, exchange: str, symbol: str, dataset: str, timeframe: str) -> Path:
-        return self.raw_path(exchange, symbol, dataset, timeframe).parent
+    def raw_dataset_dir(self, exchange: str, symbol: str, dataset: str, timeframe: str, market: str = "perp") -> Path:
+        return self.raw_path(exchange, symbol, dataset, timeframe, market=market).parent
 
-    def raw_chunks_dir(self, exchange: str, symbol: str, dataset: str, timeframe: str) -> Path:
-        return self.raw_dataset_dir(exchange, symbol, dataset, timeframe) / "chunks"
+    def raw_chunks_dir(self, exchange: str, symbol: str, dataset: str, timeframe: str, market: str = "perp") -> Path:
+        return self.raw_dataset_dir(exchange, symbol, dataset, timeframe, market=market) / "chunks"
 
     def raw_chunk_path(
         self,
@@ -74,6 +85,7 @@ class ResearchDataStore:
         timeframe: str,
         start: object,
         end: object,
+        market: str = "perp",
     ) -> Path:
         start_ts = pd.Timestamp(start)
         end_ts = pd.Timestamp(end)
@@ -88,26 +100,47 @@ class ResearchDataStore:
         year = f"year={start_ts.year:04d}"
         month = f"month={start_ts.month:02d}"
         name = f"part-{start_ts.strftime('%Y%m%dT%H%M%S')}-{end_ts.strftime('%Y%m%dT%H%M%S')}.parquet"
-        return self.raw_chunks_dir(exchange, symbol, dataset, timeframe) / year / month / name
+        return self.raw_chunks_dir(exchange, symbol, dataset, timeframe, market=market) / year / month / name
 
-    def raw_jsonl_path(self, exchange: str, symbol: str, dataset: str, timeframe: str = "event") -> Path:
-        return self.root / "raw" / exchange / symbol / dataset / f"timeframe={timeframe}" / "data.jsonl"
+    def raw_jsonl_path(self, exchange: str, symbol: str, dataset: str, timeframe: str = "event", market: str = "perp") -> Path:
+        return self.root / "raw" / self._market(market) / exchange / symbol / dataset / f"timeframe={timeframe}" / "data.jsonl"
 
-    def canonical_symbol_dir(self, exchange: str, symbol: str, timeframe: str) -> Path:
+    def canonical_symbol_dir(self, exchange: str, symbol: str, timeframe: str, market: str = "perp") -> Path:
+        return self.root / "canonical" / self._market(market) / exchange / symbol / f"timeframe={timeframe}"
+
+    def legacy_canonical_symbol_dir(self, exchange: str, symbol: str, timeframe: str) -> Path:
         return self.root / "canonical" / exchange / symbol / f"timeframe={timeframe}"
 
-    def canonical_path(self, exchange: str, symbol: str, timeframe: str, name: str) -> Path:
-        return self.canonical_symbol_dir(exchange, symbol, timeframe) / f"{name}.parquet"
+    def canonical_path(self, exchange: str, symbol: str, timeframe: str, name: str, market: str = "perp") -> Path:
+        return self.canonical_symbol_dir(exchange, symbol, timeframe, market=market) / f"{name}.parquet"
 
     def manifest_path(self, name: str) -> Path:
         return self.manifests_dir / f"{name}.parquet"
 
     def read(self, path: Path) -> pd.DataFrame:
+        if not path.exists():
+            legacy = self._legacy_compatible_path(path)
+            if legacy is not None and legacy.exists():
+                path = legacy
         if path.name == "data.parquet":
             return self.read_raw_compatible(path)
         if not path.exists():
             return pd.DataFrame()
         return pd.read_parquet(path)
+
+    def _legacy_compatible_path(self, path: Path) -> Path | None:
+        try:
+            rel = path.relative_to(self.root)
+        except ValueError:
+            return None
+        parts = rel.parts
+        if len(parts) < 4:
+            return None
+        if parts[0] == "raw" and parts[1] == "perp":
+            return self.root / "raw" / Path(*parts[2:])
+        if parts[0] == "canonical" and parts[1] == "perp":
+            return self.root / "canonical" / Path(*parts[2:])
+        return None
 
     def read_raw_compatible(self, path: Path) -> pd.DataFrame:
         frames: list[pd.DataFrame] = []
@@ -198,10 +231,11 @@ class ResearchDataStore:
         dataset: str,
         timeframe: str,
         df: pd.DataFrame,
+        market: str = "perp",
     ) -> pd.DataFrame:
         schema = SCHEMAS[dataset]
         return self.upsert_parquet(
-            self.raw_path(exchange, symbol, dataset, timeframe),
+            self.raw_path(exchange, symbol, dataset, timeframe, market=market),
             df,
             key=schema.key,
             columns=schema.columns,
@@ -216,6 +250,7 @@ class ResearchDataStore:
         df: pd.DataFrame,
         start: object,
         end: object,
+        market: str = "perp",
     ) -> pd.DataFrame:
         """Write one raw fetch chunk without rewriting the full historical file."""
         schema = SCHEMAS[dataset]
@@ -226,7 +261,7 @@ class ResearchDataStore:
         missing_keys = [col for col in key_cols if col not in incoming.columns]
         if missing_keys:
             raise ValueError(f"chunk write missing key columns {missing_keys}")
-        path = self.raw_chunk_path(exchange, symbol, dataset, timeframe, start, end)
+        path = self.raw_chunk_path(exchange, symbol, dataset, timeframe, start, end, market=market)
         existing = pd.read_parquet(path) if path.exists() else pd.DataFrame()
         if not existing.empty:
             existing = normalize_frame(existing, schema.columns)

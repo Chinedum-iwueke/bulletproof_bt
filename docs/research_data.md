@@ -1,6 +1,6 @@
 # Research Data Subsystem
 
-`bt.research_data` builds local canonical perpetual futures datasets under `research_data/`.
+`bt.research_data` builds local canonical perpetual futures and spot datasets under `research_data/`.
 
 It stores:
 
@@ -11,9 +11,10 @@ It stores:
 - historical open interest where each exchange exposes it
 - canonical research panels for Bulletproof_bt loaders
 
-Phase 2 supports Binance, Bybit, and OKX adapters. Exchange APIs are always
+Perpetual futures support Binance, Bybit, and OKX adapters. Spot support is
+available for Binance and Bybit. Exchange APIs are always
 called with the exchange-native symbol, while cross-exchange research uses a
-canonical perpetual symbol.
+canonical market-specific symbol.
 
 All timestamps are normalized to UTC. The storage layer performs atomic parquet upserts by reading the existing file, concatenating new rows, dropping duplicate keys, sorting by timestamp, and renaming a temporary parquet file into place.
 
@@ -27,18 +28,32 @@ research_data/
     coverage.parquet
     validation_report.parquet
     stable_universe.parquet
+    stable_universe_spot.parquet
     volatile_universe_membership.parquet
-  raw/<exchange>/<native_symbol>/
-    ohlcv/timeframe=1m/data.parquet
-    mark/timeframe=1m/data.parquet
-    index/timeframe=1m/data.parquet
-    funding/timeframe=event/data.parquet
-    oi/timeframe=5m/data.parquet
-  canonical/<exchange>/<native_symbol>/timeframe=1m/
-    ohlcv.parquet
-    perp_features.parquet
-    research_panel.parquet
+    volatile_universe_membership_spot.parquet
+  raw/
+    perp/<exchange>/<native_symbol>/
+      ohlcv/timeframe=1m/data.parquet
+      mark/timeframe=1m/data.parquet
+      index/timeframe=1m/data.parquet
+      funding/timeframe=event/data.parquet
+      oi/timeframe=5m/data.parquet
+    spot/<exchange>/<native_symbol>/
+      ohlcv/timeframe=1m/data.parquet
+  canonical/
+    perp/<exchange>/<native_symbol>/timeframe=1m/
+      ohlcv.parquet
+      perp_features.parquet
+      research_panel.parquet
+    spot/<exchange>/<native_symbol>/timeframe=1m/
+      ohlcv.parquet
+      research_panel.parquet
 ```
+
+Older perp files in `research_data/raw/<exchange>/...` and
+`research_data/canonical/<exchange>/...` remain readable for backward
+compatibility. New writes use the explicit `perp` or `spot` namespace so native
+symbols such as Binance `BTCUSDT` cannot collide across markets.
 
 ## Causal Joins
 
@@ -61,10 +76,31 @@ Refresh the canonical instrument map for every supported exchange:
 python -m bt.research_data.cli refresh-instruments --exchange all
 ```
 
+Refresh spot instruments for Binance and Bybit:
+
+```bash
+python -m bt.research_data.cli refresh-instruments --exchange binance --market spot
+python -m bt.research_data.cli refresh-instruments --exchange bybit --market spot
+```
+
 Resumable chunked backfill for one dataset:
 
 ```bash
 python -m bt.research_data.cli fetch-backfill \
+  --market perp \
+  --exchange binance \
+  --dataset ohlcv \
+  --symbol BTCUSDT \
+  --timeframe 1m \
+  --start 2021-01-01 \
+  --end now
+```
+
+Resumable spot OHLCV backfill for one symbol:
+
+```bash
+python -m bt.research_data.cli fetch-backfill \
+  --market spot \
   --exchange binance \
   --dataset ohlcv \
   --symbol BTCUSDT \
@@ -97,7 +133,16 @@ Incremental update with overlap safety:
 
 ```bash
 python -m bt.research_data.cli fetch-update \
+  --market perp \
   --exchange binance
+```
+
+Incremental spot update with overlap safety:
+
+```bash
+python -m bt.research_data.cli fetch-update \
+  --market spot \
+  --exchange bybit
 ```
 
 After the full bootstrap, omit `--all` to update the locally bootstrapped
@@ -116,6 +161,18 @@ Backfill the stable universe:
 
 ```bash
 python -m bt.research_data.cli backfill-stable \
+  --market perp \
+  --exchange binance \
+  --start 2021-01-01 \
+  --end now \
+  --timeframe 1m
+```
+
+Backfill the configured spot stable basket:
+
+```bash
+python -m bt.research_data.cli backfill-stable \
+  --market spot \
   --exchange binance \
   --start 2021-01-01 \
   --end now \
@@ -138,8 +195,26 @@ Build the volatile historical top-movers universe:
 
 ```bash
 python -m bt.research_data.cli build-volatile-universe \
+  --market perp \
   --exchange binance \
   --start 2021-01-01 \
+  --end now \
+  --rebalance-freq 2h \
+  --lookback 24h \
+  --top-gainers 20 \
+  --top-losers 10 \
+  --min-age-days 30 \
+  --min-median-dollar-volume-7d 5000000
+```
+
+Build a spot volatile historical top-movers universe from downloaded spot
+OHLCV:
+
+```bash
+python -m bt.research_data.cli build-volatile-universe \
+  --market spot \
+  --exchange bybit \
+  --start 2025-01-01 \
   --end now \
   --rebalance-freq 2h \
   --lookback 24h \
@@ -153,9 +228,30 @@ Build canonical panels:
 
 ```bash
 python -m bt.research_data.cli build-panel \
+  --market perp \
   --exchange binance \
   --symbols BTCUSDT,ETHUSDT,SOLUSDT \
   --timeframe 1m
+```
+
+Build spot OHLCV research panels:
+
+```bash
+python -m bt.research_data.cli build-panel \
+  --market spot \
+  --exchange binance \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT \
+  --timeframe 1m
+```
+
+Parallel spot bootstrap commands for dedicated tmux sessions:
+
+```bash
+tmux new-session -d -s research_data_binance_spot \
+  'cd /home/omenka/Projects/bulletproof_bt && PYTHONPATH=src python3 scripts/bootstrap_research_data_spot_fast.py --exchange binance --workers 6 --stable-start 2021-01-01 --volatile-start 2025-01-01 --end now 2>&1 | tee -a logs/research_data_binance_spot.log'
+
+tmux new-session -d -s research_data_bybit_spot \
+  'cd /home/omenka/Projects/bulletproof_bt && PYTHONPATH=src python3 scripts/bootstrap_research_data_spot_fast.py --exchange bybit --workers 6 --stable-start 2021-01-01 --volatile-start 2025-01-01 --end now 2>&1 | tee -a logs/research_data_bybit_spot.log'
 ```
 
 Materialize the active volatile fast-path panel after rebuilding volatile
@@ -243,10 +339,13 @@ Aliases are resolved where applicable, such as `POLUSDT`/`MATICUSDT` and `FETUSD
 - Binance `BTCUSDT` -> `BTC-USDT-PERP`
 - Bybit `BTCUSDT` -> `BTC-USDT-PERP`
 - OKX `BTC-USDT-SWAP` -> `BTC-USDT-PERP`
+- Binance spot `BTCUSDT` -> `BTC-USDT-SPOT`
+- Bybit spot `BTCUSDT` -> `BTC-USDT-SPOT`
 
 The instrument manifest at `research_data/manifests/instruments.parquet` stores:
 
 ```text
+market
 exchange
 native_symbol
 canonical_symbol
@@ -261,10 +360,11 @@ price_precision
 qty_precision
 ```
 
-Raw storage remains exchange/native-symbol based:
+Raw storage remains exchange/native-symbol based inside an explicit market
+namespace:
 
 ```text
-research_data/raw/<exchange>/<native_symbol>/<dataset>/timeframe=<timeframe>/data.parquet
+research_data/raw/<market>/<exchange>/<native_symbol>/<dataset>/timeframe=<timeframe>/data.parquet
 ```
 
 Canonical panel rows include both `symbol` (the native symbol for backward compatibility) and `canonical_symbol`.
@@ -285,7 +385,7 @@ This avoids using today's listed symbols or future candles to create past basket
 For fast backtests, the active volatile rows can be materialized into:
 
 ```text
-research_data/canonical/<exchange>/_volatile_active/timeframe=1m/research_panel.parquet
+research_data/canonical/perp/<exchange>/_volatile_active/timeframe=1m/research_panel.parquet
 ```
 
 This file is derived from `volatile_universe_membership.parquet`; it does not
@@ -305,7 +405,7 @@ manually, run `materialize-volatile-panel` after `build-volatile-universe` and
 
 The `bt.research_data.fetching` package provides resumable historical and incremental fetching:
 
-- `fetch_state.parquet` stores one checkpoint per `exchange/symbol/dataset/timeframe`.
+- `fetch_state.parquet` stores one checkpoint per `market/exchange/symbol/dataset/timeframe`.
 - Historical backfills run in chronological chunks and checkpoint after each successful chunk.
 - Incremental updates overlap prior successful windows: 3 days for OHLCV, mark, index, and OI; 14 days for funding.
 - Writes validate each fetched chunk before persistence, then use atomic parquet upserts with duplicate-key removal.

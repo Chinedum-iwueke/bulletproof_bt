@@ -24,12 +24,19 @@ from bt.logging.run_manifest import write_run_manifest
 from bt.logging.summary import write_summary_txt
 from bt.metrics.per_symbol import write_per_symbol_metrics
 from bt.analysis.ev_by_bucket import run_structural_bucket_analysis
+from bt.research_tiers import (
+    PORTFOLIO_RESEARCH_MODE,
+    SIGNAL_EPISODE_RESEARCH_MODE,
+    phase_to_contract_phase,
+    research_metadata_for_phase,
+)
 
 
 DEFAULT_VOLATILE_RESEARCH_PANEL_CHUNKSIZE = 50_000
 
 
 def resolve_phase_tiers(contract: HypothesisContract, phase: str) -> tuple[str, ...]:
+    phase = phase_to_contract_phase(phase)
     required = contract.required_tiers()
     if phase == "tier2":
         return tuple(t for t in required if t == "Tier2")
@@ -37,7 +44,7 @@ def resolve_phase_tiers(contract: HypothesisContract, phase: str) -> tuple[str, 
         return tuple(t for t in required if t == "Tier3")
     if phase == "validate":
         return required
-    raise ValueError("phase must be one of: tier2, tier3, validate")
+    raise ValueError("phase must be one of: tier2a, tier2b, tier2, tier3, validate")
 
 
 def validation_status(contract: HypothesisContract, observed_tiers: set[str]) -> str:
@@ -97,7 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data", required=True, help="Canonical 1m data path (dataset dir or file)")
     parser.add_argument("--out", required=True, help="Output root directory")
     parser.add_argument("--hypothesis", required=True, help="Hypothesis YAML path")
-    parser.add_argument("--phase", choices=("tier2", "tier3", "validate"), default="validate")
+    parser.add_argument("--phase", choices=("tier2a", "tier2b", "tier2", "tier3", "validate"), default="validate")
     parser.add_argument("--override", action="append", default=[], help="Additional override YAML paths")
     return parser
 
@@ -107,7 +114,13 @@ def _tier_to_execution_profile(tier: str) -> str:
     return mapping.get(tier, "tier2")
 
 
-def build_runtime_override(contract: HypothesisContract, spec: dict[str, Any], tier: str) -> dict[str, Any]:
+def build_runtime_override(
+    contract: HypothesisContract,
+    spec: dict[str, Any],
+    tier: str,
+    *,
+    phase: str = "tier2b",
+) -> dict[str, Any]:
     entry = contract.schema.entry
     spec_params = spec.get("params", {})
     signal_timeframe = str(
@@ -118,6 +131,12 @@ def build_runtime_override(contract: HypothesisContract, spec: dict[str, Any], t
     ).lower()
     sem = contract.schema.execution_semantics
     htf_timeframes = [signal_timeframe]
+    if isinstance(sem, dict) and sem.get("htf_timeframes") is not None:
+        raw_htf_timeframes = sem.get("htf_timeframes")
+        if isinstance(raw_htf_timeframes, (list, tuple)):
+            htf_timeframes = sorted(set([signal_timeframe, *[str(tf).lower() for tf in raw_htf_timeframes]]))
+        else:
+            htf_timeframes = sorted(set([signal_timeframe, str(raw_htf_timeframes).lower()]))
     if isinstance(sem, dict) and str(sem.get("strategy_family", "")).lower() == "regime_switch":
         branch_high = sem.get("branch_high_vol") if isinstance(sem.get("branch_high_vol"), dict) else {}
         branch_low = sem.get("branch_low_vol") if isinstance(sem.get("branch_low_vol"), dict) else {}
@@ -135,6 +154,11 @@ def build_runtime_override(contract: HypothesisContract, spec: dict[str, Any], t
         "entry_timeframe": None,
         "exit_timeframe": "1m",
     }
+    raw_entry_timeframe = spec_params.get("entry_timeframe", entry.get("entry_timeframe"))
+    if raw_entry_timeframe is not None:
+        normalized_entry_timeframe = str(raw_entry_timeframe).strip().lower()
+        if normalized_entry_timeframe not in {"", "none", "off", "false", "0"}:
+            data_override["entry_timeframe"] = normalized_entry_timeframe
     strategy_name = str(entry.get("strategy", "l1_h1_vol_floor_trend"))
     use_compiled_features = spec_params.get("use_compiled_features")
     if use_compiled_features is None:
@@ -144,9 +168,13 @@ def build_runtime_override(contract: HypothesisContract, spec: dict[str, Any], t
 
         data_override["extra_column_prefixes"] = [prefix_for_timeframe(signal_timeframe)]
         data_override["requires_htf_context"] = False
+        data_override["candidate_event_mode"] = "auto"
+        data_override["columnar_candidate_events"] = True
     elif bool(use_compiled_features):
         data_override["extra_column_prefixes"] = [f"htf_{tf}_" for tf in htf_timeframes]
         data_override["htf_context_source"] = "precomputed"
+        data_override["candidate_event_mode"] = "auto"
+        data_override["columnar_candidate_events"] = True
 
     strategy_params = dict(spec["params"])
     if strategy_name != "l7_h1_csi_gated_displacement_trend":
@@ -156,6 +184,7 @@ def build_runtime_override(contract: HypothesisContract, spec: dict[str, Any], t
         strategy_params.pop("use_compiled_features", None)
         strategy_params.pop("use_compiled_event_kernel", None)
         strategy_params.pop("compiled_event_source", None)
+        strategy_params.pop("entry_timeframe", None)
 
     strategy_payload = {
         "name": strategy_name,
@@ -167,14 +196,21 @@ def build_runtime_override(contract: HypothesisContract, spec: dict[str, Any], t
     if strategy_name == "l7_h1_csi_gated_displacement_trend":
         strategy_payload["use_compiled_event_kernel"] = bool(use_compiled_features)
 
-    return {
+    research_meta = research_metadata_for_phase(phase)
+    is_signal_episode = research_meta["research_mode"] == SIGNAL_EPISODE_RESEARCH_MODE
+
+    override = {
         "identity": {
             "hypothesis_id": str(spec["hypothesis_id"]),
             "grid_id": str(spec["grid_id"]),
             "parameter_set_id": str(spec["config_hash"]),
             "tier": tier,
+            "research_tier": research_meta["research_tier"],
+            "research_mode": research_meta["research_mode"],
+            "evidence_type": research_meta["evidence_type"],
             "strategy_id": strategy_name,
         },
+        "research": research_meta,
         "data": data_override,
         "execution": {
             "profile": _tier_to_execution_profile(tier),
@@ -190,6 +226,27 @@ def build_runtime_override(contract: HypothesisContract, spec: dict[str, Any], t
             "profile": "full",
         } if strategy_name == "l7_h1_csi_gated_displacement_trend" and bool(use_compiled_features) else {},
     }
+    if is_signal_episode:
+        # Tier 2A is signal-outcome discovery, not account deployability. Keep
+        # the classic fill/cost/stop/path machinery, but remove portfolio-level
+        # admission bottlenecks and suppress non-signal decision spam. This is
+        # deliberately labelled as non-deployability evidence in every artifact.
+        override["outputs"] = {
+            "decision_logging_profile": "research_sparse",
+            "decision_negative_sample_every": 0,
+        }
+        override["risk"] = {
+            "max_positions": 1_000_000,
+            "max_gross_notional_pct_equity": None,
+            "cap_policy": "allow_clip_with_truth",
+            "min_risk_utilization_pct": 0.10,
+            "report_under_risked_trades": True,
+            "may_liquidate": False,
+            "signal_episode_sizing_equity": "initial_cash",
+        }
+    else:
+        override["research"].setdefault("research_mode", PORTFOLIO_RESEARCH_MODE)
+    return override
 
 
 def _research_panel_universe_from_overrides(override_paths: list[str] | None) -> str | None:
@@ -255,13 +312,23 @@ def apply_runtime_data_memory_controls(runtime_override: dict[str, Any], overrid
             data.pop("htf_context_source", None)
             data.pop("extra_column_prefixes", None)
             data.pop("requires_htf_context", None)
+            data.pop("candidate_event_mode", None)
+            data.pop("columnar_candidate_events", None)
     if (
         universe == "volatile"
         and isinstance(strategy, dict)
         and strategy.get("name") == "l7_h1_csi_gated_displacement_trend"
     ):
         wants_event_kernel = bool(strategy.get("use_compiled_event_kernel"))
-        if os.environ.get("BT_ALLOW_VOLATILE_L7H1_COMPILED", "").strip() == "1" and wants_event_kernel:
+        if os.environ.get("BT_ALLOW_VOLATILE_L7H1_STATIC", "").strip() == "1" and wants_event_kernel:
+            # Static volatile fast path is allowed only after all active and
+            # continuation panels have exact causal L7-H1 columns stamped and
+            # parity has passed. Keeping the explicit env gate prevents a
+            # half-built volatile lake from silently changing decisions.
+            strategy["compiled_event_source"] = "columns"
+            if isinstance(data, dict):
+                data["requires_htf_context"] = False
+        elif os.environ.get("BT_ALLOW_VOLATILE_L7H1_COMPILED", "").strip() == "1" and wants_event_kernel:
             # Volatile membership streams are path-dependent: active rows come
             # from the materialized feed, while continuation rows for live
             # positions/orders come from individual symbol panels. Static
@@ -274,6 +341,8 @@ def apply_runtime_data_memory_controls(runtime_override: dict[str, Any], overrid
                 data.pop("extra_column_prefixes", None)
                 data.pop("extra_columns", None)
                 data["requires_htf_context"] = False
+                data.pop("candidate_event_mode", None)
+                data.pop("columnar_candidate_events", None)
         elif wants_event_kernel or bool(strategy.get("use_compiled_features")):
             # Volatile materialization only contains active membership rows.
             # The engine may still request inactive symbols after entry so
@@ -288,10 +357,38 @@ def apply_runtime_data_memory_controls(runtime_override: dict[str, Any], overrid
                 data.pop("extra_column_prefixes", None)
                 data.pop("extra_columns", None)
                 data.pop("requires_htf_context", None)
+                data.pop("candidate_event_mode", None)
+                data.pop("columnar_candidate_events", None)
         else:
             strategy.pop("compiled_event_source", None)
             if isinstance(data, dict):
                 data.pop("requires_htf_context", None)
+    elif (
+        universe != "volatile"
+        and isinstance(strategy, dict)
+        and strategy.get("name") == "l7_h1_csi_gated_displacement_trend"
+        and bool(strategy.get("use_compiled_event_kernel"))
+    ):
+        if os.environ.get("BT_ALLOW_STABLE_L7H1_STATIC", "").strip() == "1":
+            # Static L7-H1 columns are safe only after coverage has been rebuilt
+            # and parity-tested for the exact requested sample. Keeping this
+            # behind an explicit gate prevents partially stamped research panels
+            # from starving the strategy of future decision bars.
+            strategy["compiled_event_source"] = "columns"
+            if isinstance(data, dict):
+                data["requires_htf_context"] = False
+        else:
+            # The online adapter is slower but computes the same causal L7-H1
+            # feature state from emitted 1m bars and leaves risk, execution,
+            # accounting, and artifact writing in the classic engine.
+            strategy["compiled_event_source"] = "online"
+            runtime_override["state_features"] = {"enabled": True, "profile": "full"}
+            if isinstance(data, dict):
+                data.pop("extra_column_prefixes", None)
+                data.pop("extra_columns", None)
+                data["requires_htf_context"] = False
+                data.pop("candidate_event_mode", None)
+                data.pop("columnar_candidate_events", None)
     if universe != "volatile":
         return
     data = runtime_override.setdefault("data", {})
@@ -370,8 +467,9 @@ def execute_hypothesis_variant(
     local_config: str | None = None,
     override_paths: list[str] | None = None,
     run_slug: str | None = None,
+    phase: str = "tier2b",
 ) -> dict[str, Any]:
-    runtime_override = build_runtime_override(contract, spec, tier)
+    runtime_override = build_runtime_override(contract, spec, tier, phase=phase)
     resolved_override_paths = list(override_paths or [])
     if local_config:
         resolved_override_paths.append(local_config)
@@ -398,6 +496,7 @@ def execute_hypothesis_variant(
     _postprocess_run_artifacts(run_dir, data_path=data_path)
     metrics = _read_run_metrics(run_dir)
     metrics["run_dir"] = str(run_dir)
+    metrics.update(research_metadata_for_phase(phase))
     return metrics
 
 
@@ -431,6 +530,7 @@ def main() -> None:
             out_root=str(out_root),
             local_config=args.local_config,
             override_paths=list(args.override),
+            phase=args.phase,
         )
 
     signal_tf = str(contract.schema.entry.get("signal_timeframe", contract.schema.entry.get("timeframe", "15m"))).lower()
@@ -442,7 +542,7 @@ def main() -> None:
         start_ts=start_ts,
         end_ts=end_ts,
         available_tiers={"Tier2", "Tier3"},
-        phase=args.phase,
+        phase=phase_to_contract_phase(args.phase),
     )
 
     output_rows_path = out_root / "hypothesis_rows.jsonl"

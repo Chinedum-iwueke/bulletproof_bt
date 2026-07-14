@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import gc
+import os
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +11,9 @@ import pandas as pd
 from .candidate_memory import insert_candidates, load_candidate_file
 from .schema import ensure_research_memory_schema
 from .state_memory import aggregate_buckets_from_trades, insert_state_buckets, load_state_file
-from .trade_memory import infer_context_from_path, insert_trades, normalize_trade
+from .trade_memory import NORMALIZE_SOURCE_COLUMNS, infer_context_from_path, insert_trades, normalize_trade
+
+TRADE_PARQUET_BATCH_ROWS = 25_000
 
 
 def ingest_research_memory(
@@ -23,6 +27,8 @@ def ingest_research_memory(
     output_dir: Path,
 ) -> dict[str, Any]:
     ensure_research_memory_schema(conn)
+    _configure_bulk_ingest_connection(conn)
+    _drop_bulk_ingest_indexes(conn)
     manifest: dict[str, Any] = {
         "experiments_scanned": 0,
         "trades_ingested": 0,
@@ -76,6 +82,7 @@ def ingest_research_memory(
         except Exception as exc:
             manifest["errors"].append({"path": str(path), "error": str(exc)})
 
+    ensure_research_memory_schema(conn)
     conn.commit()
     (output_dir / "ingestion_manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
     return manifest
@@ -102,6 +109,7 @@ def discover_experiment_roots(outputs_root: Path) -> list[Path]:
 
 def _ingest_experiment(conn, exp_root: Path, outputs_root: Path) -> dict[str, int]:
     context = infer_context_from_path(exp_root, outputs_root)
+    context["raw_json_mode"] = os.environ.get("RESEARCH_MEMORY_RAW_JSON_MODE", "compact").strip().lower()
     validation = _load_validation(exp_root)
     context["metrics_valid"] = validation.get("metrics_valid", True)
     context["invalid_reason"] = validation.get("invalid_reason")
@@ -109,9 +117,8 @@ def _ingest_experiment(conn, exp_root: Path, outputs_root: Path) -> dict[str, in
 
     dataset_path = exp_root / "research_data" / "trades_dataset.parquet"
     if dataset_path.exists():
-        trades = pd.read_parquet(dataset_path)
-        records = [normalize_trade(row, context=context, row_index=i) for i, row in enumerate(trades.to_dict("records"))]
-        return {"trades": insert_trades(conn, records), "state_buckets": state_count}
+        trade_count = _ingest_trade_parquet(conn, dataset_path, context=context)
+        return {"trades": trade_count, "state_buckets": state_count}
 
     records = []
     row_offset = 0
@@ -131,6 +138,83 @@ def _ingest_experiment(conn, exp_root: Path, outputs_root: Path) -> dict[str, in
     if not records:
         return {"trades": 0, "state_buckets": state_count}
     return {"trades": insert_trades(conn, records), "state_buckets": state_count}
+
+
+def _ingest_trade_parquet(conn, dataset_path: Path, *, context: dict[str, Any]) -> int:
+    """Ingest large extracted trade datasets without materializing them in memory.
+
+    Research-memory rows intentionally preserve a rich raw JSON payload. For large
+    experiments that makes full-file ``read_parquet`` ingestion unsafe, so parquet
+    inputs are committed in bounded batches. The write is idempotent through the
+    research_memory_trades conflict key.
+    """
+
+    try:
+        import pyarrow.parquet as pq
+    except Exception:
+        frame = pd.read_parquet(dataset_path)
+        try:
+            records = [
+                normalize_trade(row, context=context, row_index=i)
+                for i, row in enumerate(frame.to_dict("records"))
+            ]
+            count = insert_trades(conn, records)
+            conn.commit()
+            return count
+        finally:
+            del frame
+            gc.collect()
+
+    parquet_file = pq.ParquetFile(dataset_path)
+    expected_rows = parquet_file.metadata.num_rows if parquet_file.metadata else None
+    row_offset = 0
+    total = 0
+    available_columns = [
+        name
+        for name in parquet_file.schema_arrow.names
+        if name in NORMALIZE_SOURCE_COLUMNS
+    ]
+    for batch in parquet_file.iter_batches(batch_size=TRADE_PARQUET_BATCH_ROWS, columns=available_columns):
+        frame = batch.to_pandas()
+        try:
+            records = [
+                normalize_trade(row, context=context, row_index=row_offset + i)
+                for i, row in enumerate(frame.to_dict("records"))
+            ]
+            total += insert_trades(conn, records)
+            conn.commit()
+            row_offset += len(frame)
+            print(
+                f"research memory ingested {dataset_path}: {total}/{expected_rows or '?'} trades",
+                flush=True,
+            )
+        finally:
+            del frame
+            if "records" in locals():
+                del records
+            gc.collect()
+    return total
+
+
+def _configure_bulk_ingest_connection(conn) -> None:
+    # Research-memory ingestion is idempotent and commits after each batch. NORMAL
+    # synchronous mode keeps crash recovery via WAL while avoiding an fsync storm
+    # for million-row memory refreshes.
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA temp_store=MEMORY")
+    conn.execute("PRAGMA cache_size=-524288")
+
+
+def _drop_bulk_ingest_indexes(conn) -> None:
+    # These are derived lookup indexes, not truth constraints. Dropping them for
+    # bulk ingestion avoids maintaining three large b-trees row-by-row. The
+    # unique upsert constraint remains active, and ensure_research_memory_schema
+    # recreates these indexes before the command returns.
+    conn.execute("DROP INDEX IF EXISTS idx_rm_trades_setup")
+    conn.execute("DROP INDEX IF EXISTS idx_rm_trades_state")
+    conn.execute("DROP INDEX IF EXISTS idx_rm_trades_valid")
+    conn.commit()
 
 
 def _ingest_summary_buckets(conn, exp_root: Path) -> int:

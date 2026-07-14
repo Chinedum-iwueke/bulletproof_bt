@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import pandas as pd
 
@@ -98,3 +99,41 @@ def test_engine_smoke(tmp_path: Path) -> None:
     assert len(decisions_lines) >= 1
     assert len(fills_lines) >= 1
     assert len(equity_lines) >= 2
+
+
+def test_engine_warmup_suppresses_pre_start_trading_and_equity(tmp_path: Path) -> None:
+    bars_df = _make_bars_df()
+    datafeed = HistoricalDataFeed(bars_df)
+    official_start = pd.Timestamp("2024-01-03T00:00:00Z")
+
+    engine = BacktestEngine(
+        datafeed=datafeed,
+        universe=UniverseEngine(min_history_bars=1, lookback_bars=1, min_avg_volume=0.0, lag_bars=0),
+        strategy=CoinFlipStrategy(seed=7, p_trade=1.0, cooldown_bars=0),
+        risk=RiskEngine(max_positions=1, config={"risk": {"mode": "r_fixed", "r_per_trade": 0.01, "stop": {}}}),
+        execution=ExecutionModel(
+            fee_model=FeeModel(maker_fee_bps=0.0, taker_fee_bps=0.0),
+            slippage_model=SlippageModel(k=0.0),
+            delay_bars=0,
+        ),
+        portfolio=Portfolio(initial_cash=10000.0, max_leverage=2.0),
+        decisions_writer=JsonlWriter(tmp_path / "decisions.jsonl"),
+        fills_writer=JsonlWriter(tmp_path / "fills.jsonl"),
+        trades_writer=TradesCsvWriter(tmp_path / "trades.csv"),
+        equity_path=tmp_path / "equity.csv",
+        config={"data": {"analysis_start_ts": official_start.isoformat()}},
+    )
+
+    engine.run()
+
+    decisions = [
+        json.loads(line)
+        for line in (tmp_path / "decisions.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert decisions
+    assert all(pd.Timestamp(row["ts"]) >= official_start for row in decisions)
+
+    equity = pd.read_csv(tmp_path / "equity.csv")
+    assert not equity.empty
+    assert pd.to_datetime(equity["ts"], utc=True).min() >= official_start

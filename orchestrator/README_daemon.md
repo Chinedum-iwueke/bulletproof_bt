@@ -38,6 +38,23 @@ python orchestrator/research_daemon.py \
   --config orchestrator/daemon_config.yaml
 ```
 
+For a production queue with multiple hypothesis pipelines, prefer the global
+capacity scheduler. It launches one-shot daemon jobs up to a shared worker
+budget, pauses whole jobs under RAM pressure, and resumes them when memory
+recovers without changing backtest semantics:
+
+```bash
+tmux new-session -d -s research_capacity_scheduler \
+  'cd /home/omenka/Projects/bulletproof_bt && PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 orchestrator/global_capacity_scheduler.py --db research_db/research.sqlite --config orchestrator/daemon_config.yaml >> logs/research_capacity_scheduler_tmux.log 2>&1'
+```
+
+Monitor it with:
+
+```bash
+cat logs/research_capacity_scheduler_state.json
+tail -f logs/research_capacity_scheduler.log
+```
+
 ## 5) Optional systemd service
 
 ```ini

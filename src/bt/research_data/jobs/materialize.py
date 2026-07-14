@@ -85,7 +85,10 @@ def materialize_volatile_panel(
     for symbol, symbol_intervals in intervals.groupby("symbol", sort=True):
         panel_path = store.canonical_path(exchange, str(symbol), timeframe, "research_panel")
         if not panel_path.exists():
-            continue
+            legacy_panel_path = store.legacy_canonical_symbol_dir(exchange, str(symbol), timeframe) / "research_panel.parquet"
+            if not legacy_panel_path.exists():
+                continue
+            panel_path = legacy_panel_path
         panel = pd.read_parquet(panel_path)
         if panel.empty:
             continue
@@ -209,7 +212,7 @@ def _select_materialized_columns(frame: pd.DataFrame) -> pd.DataFrame:
     columns.extend(
         col
         for col in frame.columns
-        if col.startswith("entry_state_") and col not in columns
+        if (col.startswith("entry_state_") or col.startswith("l7h1_")) and col not in columns
     )
     return frame.loc[:, columns]
 

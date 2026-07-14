@@ -39,6 +39,9 @@ class FakeAdapter:
     def fetch_ohlcv(self, symbol, start, end, timeframe):
         return self.frame[(self.frame["ts"] >= start) & (self.frame["ts"] < end)].reset_index(drop=True)
 
+    def fetch_spot_ohlcv(self, symbol, start, end, timeframe):
+        return self.fetch_ohlcv(symbol, start, end, timeframe)
+
 
 def test_kline_chunking_uses_1500_one_minute_candles() -> None:
     chunks = list(iter_chunks("2021-01-01", "2021-01-03 02:00", "ohlcv", "1m"))
@@ -50,7 +53,7 @@ def test_kline_chunking_uses_1500_one_minute_candles() -> None:
 def test_scheduler_resumes_from_last_successful_timestamp(tmp_path) -> None:
     store = ResearchDataStore(tmp_path / "research_data")
     state = FetchStateStore(store)
-    key = FetchKey("binance", "BTCUSDT", "ohlcv", "1m")
+    key = FetchKey("perp", "binance", "BTCUSDT", "ohlcv", "1m")
     state.update(
         key,
         status="success",
@@ -103,12 +106,46 @@ def test_funding_validator_requires_expected_cadence() -> None:
         validate_before_commit(funding, "funding", "1m")
 
 
+def test_bybit_funding_validator_accepts_exchange_published_variable_cadence() -> None:
+    funding = pd.DataFrame(
+        {
+            "ts": [
+                pd.Timestamp("2021-01-01 00:00", tz="UTC"),
+                pd.Timestamp("2021-01-01 04:00", tz="UTC"),
+                pd.Timestamp("2021-01-01 08:00", tz="UTC"),
+            ],
+            "exchange": ["bybit", "bybit", "bybit"],
+            "symbol": ["BTCUSDT", "BTCUSDT", "BTCUSDT"],
+            "funding_rate": [0.01, 0.02, 0.03],
+            "mark_price_at_funding": [pd.NA, pd.NA, pd.NA],
+        }
+    )
+
+    validate_before_commit(funding, "funding", "1m")
+
+
+def test_bybit_funding_validator_rejects_malformed_event_precision() -> None:
+    funding = pd.DataFrame(
+        {
+            "ts": [pd.Timestamp("2021-01-01 00:00:30", tz="UTC")],
+            "exchange": ["bybit"],
+            "symbol": ["BTCUSDT"],
+            "funding_rate": [0.01],
+            "mark_price_at_funding": [pd.NA],
+        }
+    )
+
+    with pytest.raises(ValueError, match="minute event boundaries"):
+        validate_before_commit(funding, "funding", "1m")
+
+
 def test_execute_fetch_job_validates_persists_state_coverage_and_log(tmp_path, monkeypatch) -> None:
     store = ResearchDataStore(tmp_path / "research_data")
     state = FetchStateStore(store)
     coverage = CoverageStore(store)
     frame = _ohlcv("BTCUSDT", rows=2)
     job = FetchJob(
+        "perp",
         "binance",
         "BTCUSDT",
         "ohlcv",
@@ -141,6 +178,44 @@ def test_execute_fetch_job_validates_persists_state_coverage_and_log(tmp_path, m
     payload = json.loads(Path(log_path).read_text().strip())
     assert payload["rows_fetched"] == 2
     assert payload["status"] == "success"
+
+
+def test_spot_fetch_job_writes_to_spot_namespace(tmp_path, monkeypatch) -> None:
+    store = ResearchDataStore(tmp_path / "research_data")
+    state = FetchStateStore(store)
+    coverage = CoverageStore(store)
+    frame = _ohlcv("BTCUSDT", rows=2)
+    job = FetchJob(
+        "spot",
+        "binance",
+        "BTCUSDT",
+        "ohlcv",
+        "1m",
+        next(iter_chunks("2021-01-01", "2021-01-01 00:02", "ohlcv", "1m")),
+    )
+    log_path = tmp_path / "logs" / "research_data_fetch.log"
+
+    import bt.research_data.fetching.fetch_jobs as fetch_jobs
+
+    logger = fetch_jobs.fetch_logger(log_path)
+    monkeypatch.setattr(fetch_jobs, "fetch_logger", lambda: logger)
+
+    execute_fetch_job(
+        job,
+        FakeAdapter(frame),
+        store,
+        state,
+        coverage,
+        RetryPolicy(max_attempts=1),
+        ExchangeRateLimiter(0),
+    )
+
+    saved = store.read(store.raw_path("binance", "BTCUSDT", "ohlcv", "1m", market="spot"))
+    assert len(saved) == 2
+    assert (store.raw_path("binance", "BTCUSDT", "ohlcv", "1m", market="spot").parent / "chunks").exists()
+    assert not store.legacy_raw_path("binance", "BTCUSDT", "ohlcv", "1m").exists()
+    state_df = state.read()
+    assert state_df.loc[0, "market"] == "spot"
 
 
 def test_coverage_tracks_missing_rows_and_largest_gap() -> None:

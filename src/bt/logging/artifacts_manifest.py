@@ -88,6 +88,22 @@ def _artifact_definitions() -> list[ArtifactEntry]:
             conditional_on=None,
         ),
         ArtifactEntry(
+            name="decision_logging_summary.json",
+            required=False,
+            present=False,
+            description="Decision logging profile and deterministic count of written/skipped diagnostic decisions.",
+            schema_version=1,
+            conditional_on="outputs.decision_logging_profile != full",
+        ),
+        ArtifactEntry(
+            name="candidate_event_summary.json",
+            required=False,
+            present=False,
+            description="Sparse candidate-event scheduler counters for columnar research-panel fast paths.",
+            schema_version=1,
+            conditional_on="data.candidate_event_mode != off",
+        ),
+        ArtifactEntry(
             name="equity.csv",
             required=True,
             present=False,

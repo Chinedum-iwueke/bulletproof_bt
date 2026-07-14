@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+import csv
 from pathlib import Path
 from typing import Any
 
@@ -46,35 +47,52 @@ def write_signal_feature_artifact(run_dir: str | Path) -> Path | None:
         "volatility_20",
         "state_vector",
     }
-    rows: list[dict[str, Any]] = []
-    with decisions_path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            if not line.strip():
-                continue
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            metadata = _metadata_from_decision(payload)
-            if not feature_keys.intersection(metadata):
-                continue
-            signal = payload.get("signal") if isinstance(payload.get("signal"), dict) else {}
-            row = {
-                "ts": payload.get("ts"),
-                "symbol": payload.get("symbol") or signal.get("symbol"),
-                "signal_type": signal.get("signal_type"),
-                "approved": payload.get("approved"),
-                "reason": payload.get("reason"),
-            }
-            for key, value in metadata.items():
-                if key in feature_keys or key.startswith(("entry_state_", "csi_component_")):
-                    row[key] = value if isinstance(value, (str, int, float, bool)) or value is None else json.dumps(value, sort_keys=True, default=str)
-            rows.append(row)
+    def iter_rows():
+        with decisions_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                metadata = _metadata_from_decision(payload)
+                if not feature_keys.intersection(metadata):
+                    continue
+                signal = payload.get("signal") if isinstance(payload.get("signal"), dict) else {}
+                row = {
+                    "ts": payload.get("ts"),
+                    "symbol": payload.get("symbol") or signal.get("symbol"),
+                    "signal_type": signal.get("signal_type"),
+                    "approved": payload.get("approved"),
+                    "reason": payload.get("reason"),
+                }
+                for key, value in metadata.items():
+                    if key in feature_keys or key.startswith(("entry_state_", "csi_component_")):
+                        row[key] = (
+                            value
+                            if isinstance(value, (str, int, float, bool)) or value is None
+                            else json.dumps(value, sort_keys=True, default=str)
+                        )
+                yield row
 
-    if not rows:
+    base_columns = ["ts", "symbol", "signal_type", "approved", "reason"]
+    extra_columns: set[str] = set()
+    row_count = 0
+    for row in iter_rows():
+        row_count += 1
+        extra_columns.update(key for key in row if key not in base_columns)
+
+    if row_count == 0:
         return None
+
     out = run_path / "signal_features.csv"
-    pd.DataFrame(rows).to_csv(out, index=False)
+    fieldnames = base_columns + sorted(extra_columns)
+    with out.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for row in iter_rows():
+            writer.writerow(row)
     return out
 
 

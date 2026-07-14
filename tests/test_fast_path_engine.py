@@ -16,6 +16,7 @@ from bt.engine.fast_path.l7_h1_kernel import L7H1KernelParams, build_l7_h1_featu
 from bt.engine.fast_path import run_fast_path_if_supported
 from bt.engine.fast_path.family_kernels import kernel_for_strategy
 from bt.engine.fast_path.timing import TimingRecorder
+from bt.experiments.hypothesis_runner import apply_runtime_data_memory_controls
 from bt.strategy.base import Strategy
 from bt.strategy.htf_context import HTFContextStrategyAdapter, PrecomputedHTFContextStrategyAdapter
 from bt.strategy.l7_h1_csi_gated_displacement_trend import L7H1CSIGatedDisplacementTrendStrategy
@@ -149,6 +150,84 @@ def test_fast_path_status_attaches_l7h1_compiled_feature_kernel(tmp_path: Path) 
     assert "L7-H1" in status["reason"]
 
 
+def test_volatile_l7h1_compiled_guard_enables_online_event_adapter(tmp_path: Path, monkeypatch) -> None:
+    profile = tmp_path / "volatile.yaml"
+    profile.write_text(
+        yaml.safe_dump({"data": {"dataset_kind": "research_panel", "universe": "volatile"}}),
+        encoding="utf-8",
+    )
+    runtime = {
+        "data": {"extra_column_prefixes": ["l7h1_15m_"], "requires_htf_context": False},
+        "strategy": {
+            "name": "l7_h1_csi_gated_displacement_trend",
+            "use_compiled_features": True,
+            "use_compiled_event_kernel": True,
+        },
+        "state_features": {"enabled": False, "profile": "full"},
+    }
+
+    monkeypatch.setenv("BT_ALLOW_VOLATILE_L7H1_COMPILED", "1")
+    apply_runtime_data_memory_controls(runtime, [str(profile)])
+
+    assert runtime["strategy"]["use_compiled_features"] is True
+    assert runtime["strategy"]["use_compiled_event_kernel"] is True
+    assert runtime["strategy"]["compiled_event_source"] == "online"
+    assert "extra_column_prefixes" not in runtime["data"]
+    assert runtime["data"]["requires_htf_context"] is False
+    assert runtime["state_features"] == {"enabled": True, "profile": "full"}
+
+
+def test_volatile_l7h1_static_guard_keeps_column_event_adapter(tmp_path: Path, monkeypatch) -> None:
+    profile = tmp_path / "volatile.yaml"
+    profile.write_text(
+        yaml.safe_dump({"data": {"dataset_kind": "research_panel", "universe": "volatile"}}),
+        encoding="utf-8",
+    )
+    runtime = {
+        "data": {"extra_column_prefixes": ["l7h1_15m_"], "requires_htf_context": False},
+        "strategy": {
+            "name": "l7_h1_csi_gated_displacement_trend",
+            "use_compiled_features": True,
+            "use_compiled_event_kernel": True,
+        },
+    }
+
+    monkeypatch.setenv("BT_ALLOW_VOLATILE_L7H1_STATIC", "1")
+    monkeypatch.delenv("BT_ALLOW_VOLATILE_L7H1_COMPILED", raising=False)
+    apply_runtime_data_memory_controls(runtime, [str(profile)])
+
+    assert runtime["strategy"]["use_compiled_features"] is True
+    assert runtime["strategy"]["use_compiled_event_kernel"] is True
+    assert runtime["strategy"]["compiled_event_source"] == "columns"
+    assert runtime["data"]["extra_column_prefixes"] == ["l7h1_15m_"]
+    assert runtime["data"]["requires_htf_context"] is False
+
+
+def test_volatile_l7h1_without_guard_forces_classic_feature_path(tmp_path: Path, monkeypatch) -> None:
+    profile = tmp_path / "volatile.yaml"
+    profile.write_text(
+        yaml.safe_dump({"data": {"dataset_kind": "research_panel", "universe": "volatile"}}),
+        encoding="utf-8",
+    )
+    runtime = {
+        "data": {"extra_column_prefixes": ["l7h1_15m_"], "requires_htf_context": False},
+        "strategy": {
+            "name": "l7_h1_csi_gated_displacement_trend",
+            "use_compiled_features": True,
+            "use_compiled_event_kernel": True,
+        },
+        "indicator_profile": "none",
+    }
+
+    monkeypatch.delenv("BT_ALLOW_VOLATILE_L7H1_COMPILED", raising=False)
+    apply_runtime_data_memory_controls(runtime, [str(profile)])
+
+    assert runtime["strategy"]["use_compiled_features"] is False
+    assert runtime["strategy"]["use_compiled_event_kernel"] is False
+    assert runtime["indicator_profile"] == "default"
+    assert "extra_column_prefixes" not in runtime["data"]
+
+
 def test_fast_path_status_attaches_generic_htf_event_kernel(tmp_path: Path) -> None:
     run_dir = tmp_path / "run_h11"
     run_dir.mkdir()
@@ -169,6 +248,8 @@ def test_fast_path_status_attaches_generic_htf_event_kernel(tmp_path: Path) -> N
     assert result.mode == "classic_with_compiled_htf_event_kernel_precomputed"
     status = json.loads((run_dir / "fast_path_status.json").read_text(encoding="utf-8"))
     assert "htf_event_schedule_kernel" in status["reason"]
+    assert status["metadata"]["kernel_name"] == "htf_event_schedule"
+    assert status["metadata"]["active_path"] == "htf_event_schedule_kernel"
 
 
 def test_current_hypothesis_strategies_have_registered_family_kernels() -> None:

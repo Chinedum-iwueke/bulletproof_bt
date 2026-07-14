@@ -1,0 +1,173 @@
+{
+  "report": "RESEARCH_ENGINE_SPEED_PROBLEM_REPORT.md",
+  "date": "2026-07-02",
+  "first_principle": "Backtest truth is the product. Speed is useful only after deterministic, causal, auditable classic-path equivalence is preserved.",
+  "primary_problem": "The research engine is slow because each grid row repeats too much data loading, feature computation, state traversal, and bar-by-bar Python work across large stable and volatile panels.",
+  "compute_context": {
+    "vcpus": 36,
+    "ram_gib_reported_by_proxmox": 73,
+    "constraint": "Worker count scaling is limited by memory duplication, disk IO, page cache pressure, volatile universe size, and Python object overhead."
+  },
+  "classic_path_reference": {
+    "status": "source_of_truth",
+    "flow": [
+      "hypothesis_yaml",
+      "grid_manifest",
+      "per_row_config_resolution",
+      "research_panel_loader",
+      "causal_state_feature_availability",
+      "bar_by_bar_strategy_decisions",
+      "classic_execution_accounting_engine",
+      "streamed_decisions_fills_trades_equity_artifacts",
+      "performance_and_sanity_checks",
+      "post_run_analysis",
+      "dataset_extraction",
+      "state_discovery",
+      "verdict_and_terminal_cards",
+      "research_memory_ingestion"
+    ],
+    "rule": "Every accelerated path must match the classic path before daemon production enablement."
+  },
+  "truth_constraints": {
+    "market_data_truth": [
+      "strict_utc_timestamps",
+      "monotonic_symbol_bars",
+      "no_duplicate_timestamps",
+      "missing_bars_remain_missing",
+      "no_silent_interpolation",
+      "funding_and_oi_backward_asof_only",
+      "mark_index_exact_candle_alignment",
+      "source_ts_never_greater_than_decision_ts",
+      "volatile_membership_timestamp_gated"
+    ],
+    "decision_truth": [
+      "no_lookahead",
+      "completed_htf_bars_only",
+      "causal_rolling_features",
+      "explicit_warmup_and_start_window",
+      "missing_features_not_silently_substituted"
+    ],
+    "execution_truth": [
+      "fees_slippage_spread_delay_preserved",
+      "intrabar_assumptions_explicit",
+      "risk_model_and_notional_caps_respected",
+      "margin_and_liquidation_accounting_consistent",
+      "open_positions_receive_continuation_bars",
+      "volatile_inactive_symbols_no_new_entries_but_existing_positions_managed"
+    ],
+    "artifact_truth": [
+      "config_used_yaml",
+      "decisions_jsonl",
+      "fills_jsonl",
+      "trades_csv",
+      "equity_csv",
+      "performance_json",
+      "run_status_json",
+      "post_run_summaries",
+      "state_findings",
+      "verdict_cards",
+      "terminal_cards",
+      "research_memory_ingestion_after_truth_gates"
+    ],
+    "determinism_and_resume_truth": [
+      "same_config_data_code_same_result",
+      "stale_or_missing_completed_artifacts_not_skipped",
+      "failed_runs_visible_and_recoverable",
+      "cleanup_after_extraction_only"
+    ]
+  },
+  "fast_path_acceptance": [
+    "same_metrics",
+    "same_equity_curve",
+    "same_semantic_trades",
+    "same_causal_state_availability",
+    "same_execution_accounting_behavior",
+    "same_required_artifacts",
+    "documented_parity_certificate"
+  ],
+  "attempted_architectures": [
+    {
+      "name": "more_workers",
+      "status": "partially_useful",
+      "finding": "Improves throughput only until memory and IO duplication dominate."
+    },
+    {
+      "name": "resource_controls_and_resume_safety",
+      "status": "production_safe",
+      "finding": "Improves stability and recovery but does not materially reduce algorithmic work."
+    },
+    {
+      "name": "research_panel_loader",
+      "status": "production_safe",
+      "finding": "Improves data quality and rich feature availability but increases panel width and load cost."
+    },
+    {
+      "name": "volatile_active_materialized_panel",
+      "status": "production_safe_with_continuation_care",
+      "finding": "Correctly gates active membership but does not eliminate continuation and dynamic universe costs."
+    },
+    {
+      "name": "online_l7h1_adapter",
+      "status": "production_safe",
+      "finding": "Passed metrics/equity parity with classic but delivered only modest speedup."
+    },
+    {
+      "name": "static_l7h1_columns_stable",
+      "status": "not_production_safe",
+      "finding": "Coverage rebuilt successfully and produced 2x-4x speedups, but parity failed."
+    },
+    {
+      "name": "static_l7h1_columns_volatile",
+      "status": "not_production_safe",
+      "finding": "Produced large speedups but failed parity because volatile membership and continuation windows are harder to reproduce."
+    },
+    {
+      "name": "sparse_context_candidate_paths",
+      "status": "promising",
+      "finding": "Some stable tests passed parity with about 2x speedup; volatile benefits were limited."
+    },
+    {
+      "name": "columnar_candidate_event_framework",
+      "status": "framework_step",
+      "finding": "Current implementation proved architecture hooks but did not yet remove dominant duplicated work."
+    }
+  ],
+  "current_bottlenecks": [
+    "repeated_full_panel_traversal_per_grid_row",
+    "per_worker_dataset_duplication",
+    "volatile_universe_membership_and_continuation_complexity",
+    "repeated_rich_state_feature_computation",
+    "large_truth_artifact_io",
+    "python_object_overhead",
+    "memory_bandwidth_and_cache_locality"
+  ],
+  "recommended_architecture": {
+    "name": "certified_compiled_candidate_engine",
+    "principle": "Move repeated feature and candidate work into one causal columnar grid-level pass, then let the classic engine remain authoritative for execution/accounting/artifacts.",
+    "components": [
+      "market_snapshot_object",
+      "feature_registry",
+      "strategy_family_compiler",
+      "parameter_grid_vectorization",
+      "continuation_stream_builder",
+      "classic_execution_replay",
+      "parity_certificate_gate"
+    ]
+  },
+  "expected_speed_impact": {
+    "resource_controls": "stability_more_than_speed",
+    "online_adapters": "roughly_1_0x_to_1_1x_observed",
+    "safe_sparse_stable_paths": "up_to_about_2x_observed",
+    "unsafe_static_paths": "2x_to_4x_observed_but_not_usable_without_parity",
+    "grid_level_vectorized_candidate_generation": "plausibly_3x_to_10x_for_parameter_heavy_families_if_correctly_implemented"
+  },
+  "next_steps": [
+    "add_per_stage_timing_breakdown",
+    "build_shared_read_only_market_snapshot",
+    "precompute_grid_level_causal_features",
+    "vectorize_candidate_generation_across_parameter_rows",
+    "build_sparse_continuation_streams",
+    "replay_through_classic_execution",
+    "require_parity_certificates_before_daemon_enablement"
+  ]
+}

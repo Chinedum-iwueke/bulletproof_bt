@@ -81,6 +81,7 @@ VOLATILE_UNIVERSE_COLUMNS = (
 )
 
 INSTRUMENT_COLUMNS = (
+    "market",
     "exchange",
     "native_symbol",
     "canonical_symbol",
@@ -152,6 +153,8 @@ def normalize_frame(df: pd.DataFrame, columns: Iterable[str] | None = None) -> p
     if columns is not None:
         for col in columns:
             if col not in out.columns:
-                out[col] = pd.NA
+                out[col] = "perp" if col == "market" else pd.NA
+            elif col == "market":
+                out[col] = out[col].fillna("perp")
         out = out[list(columns)]
     return out

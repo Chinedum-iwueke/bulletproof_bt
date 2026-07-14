@@ -11,6 +11,10 @@ from bt.core.errors import DataError
 from bt.core.types import Bar
 from bt.data.feed import HistoricalDataFeed
 from bt.data.parquet_io import ensure_pyarrow_parquet
+from bt.engine.fast_path.candidate_events import (
+    CandidateEventStats,
+    candidate_event_reasons_for_bars,
+)
 
 FEATURE_COLUMNS = (
     "mark_close",
@@ -116,11 +120,17 @@ def _is_present(value: object) -> bool:
 
 
 def research_panel_path(root: str | Path, exchange: str, symbol: str, timeframe: str = "1m") -> Path:
-    return Path(root) / "canonical" / exchange / symbol / f"timeframe={timeframe}" / "research_panel.parquet"
+    root_path = Path(root)
+    namespaced = root_path / "canonical" / "perp" / exchange / symbol / f"timeframe={timeframe}" / "research_panel.parquet"
+    legacy = root_path / "canonical" / exchange / symbol / f"timeframe={timeframe}" / "research_panel.parquet"
+    return namespaced if namespaced.exists() else legacy
 
 
 def volatile_materialized_panel_path(root: str | Path, exchange: str, timeframe: str = "1m") -> Path:
-    return Path(root) / "canonical" / exchange / "_volatile_active" / f"timeframe={timeframe}" / "research_panel.parquet"
+    root_path = Path(root)
+    namespaced = root_path / "canonical" / "perp" / exchange / "_volatile_active" / f"timeframe={timeframe}" / "research_panel.parquet"
+    legacy = root_path / "canonical" / exchange / "_volatile_active" / f"timeframe={timeframe}" / "research_panel.parquet"
+    return namespaced if namespaced.exists() else legacy
 
 
 def load_research_panels(
@@ -311,6 +321,9 @@ def build_streaming_research_panel_feed_from_config(config: dict[str, object]) -
     chunksize = _optional_int(config.get("chunksize")) or 5_000
     extra_columns = _symbols_from_config(config.get("extra_columns"))
     extra_column_prefixes = _symbols_from_config(config.get("extra_column_prefixes"))
+    candidate_event_mode = str(config.get("candidate_event_mode", "off") or "off").strip().lower()
+    if bool(config.get("columnar_candidate_events", False)) and candidate_event_mode == "off":
+        candidate_event_mode = "auto"
 
     if universe == "stable":
         stable_manifest = config.get("stable_manifest")
@@ -332,6 +345,7 @@ def build_streaming_research_panel_feed_from_config(config: dict[str, object]) -
             chunksize=chunksize,
             extra_columns=extra_columns,
             extra_column_prefixes=extra_column_prefixes,
+            candidate_event_mode=candidate_event_mode,
         )
 
     if universe == "volatile":
@@ -347,6 +361,7 @@ def build_streaming_research_panel_feed_from_config(config: dict[str, object]) -
                 chunksize=chunksize,
                 extra_columns=extra_columns,
                 extra_column_prefixes=extra_column_prefixes,
+                candidate_event_mode=candidate_event_mode,
             )
         membership = _volatile_membership(
             exchange=exchange,
@@ -369,6 +384,7 @@ def build_streaming_research_panel_feed_from_config(config: dict[str, object]) -
             membership=membership,
             extra_columns=extra_columns,
             extra_column_prefixes=extra_column_prefixes,
+            candidate_event_mode=candidate_event_mode,
         )
 
     symbols = config.get("symbols")
@@ -390,6 +406,7 @@ def build_streaming_research_panel_feed_from_config(config: dict[str, object]) -
         chunksize=chunksize,
         extra_columns=extra_columns,
         extra_column_prefixes=extra_column_prefixes,
+        candidate_event_mode=candidate_event_mode,
     )
 
 
@@ -466,6 +483,7 @@ class ResearchPanelStreamingFeed:
         membership: pd.DataFrame | None = None,
         extra_columns: Iterable[str] | None = None,
         extra_column_prefixes: Iterable[str] | None = None,
+        candidate_event_mode: str = "off",
     ) -> None:
         if chunksize <= 0:
             raise DataError("Research panel chunksize must be positive")
@@ -482,6 +500,15 @@ class ResearchPanelStreamingFeed:
         self._membership = _dedupe_volatile_membership(membership) if membership is not None else None
         self._extra_columns = tuple(str(col) for col in (extra_columns or ()))
         self._extra_column_prefixes = tuple(str(prefix) for prefix in (extra_column_prefixes or ()))
+        self._candidate_event_mode = str(candidate_event_mode or "off").strip().lower()
+        if self._candidate_event_mode not in {"off", "auto"}:
+            raise DataError("candidate_event_mode must be one of: off, auto")
+        self._candidate_event_stats = CandidateEventStats(
+            enabled=self._candidate_event_mode != "off",
+            mode=self._candidate_event_mode,
+        )
+        self._has_execution_exposure = False
+        self._skipped_flat_ts: list[pd.Timestamp] = []
         self._membership_intervals = _membership_intervals(self._membership) if self._membership is not None else None
         self._membership_schedule: dict[pd.Timestamp, set[str]] = {}
         self._rebalance_ts: list[pd.Timestamp] = []
@@ -496,6 +523,17 @@ class ResearchPanelStreamingFeed:
 
     def symbols(self) -> list[str]:
         return list(self._symbols)
+
+    def set_execution_state(self, *, has_exposure: bool) -> None:
+        self._has_execution_exposure = bool(has_exposure)
+
+    def candidate_event_stats(self) -> dict[str, Any]:
+        return self._candidate_event_stats.to_json()
+
+    def drain_skipped_flat_timestamps(self) -> list[pd.Timestamp]:
+        out = list(self._skipped_flat_ts)
+        self._skipped_flat_ts.clear()
+        return out
 
     def reset(self) -> None:
         ensure_pyarrow_parquet()
@@ -639,9 +677,18 @@ class ResearchPanelStreamingFeed:
         return min(bar.ts for bar in self._buf_by_symbol.values())
 
     def next(self) -> list[Bar] | None:
-        self._advance_pending_symbols()
-        if self._membership is not None:
-            return self._next_volatile()
+        while True:
+            self._advance_pending_symbols()
+            if self._membership is not None:
+                bars = self._next_volatile_raw()
+            else:
+                bars = self._next_stable_raw()
+            if bars is None:
+                return None
+            if self._should_emit_candidate_group(bars):
+                return bars
+
+    def _next_stable_raw(self) -> list[Bar] | None:
         if self._next_ts is None:
             return None
         current_ts = self._next_ts
@@ -657,7 +704,7 @@ class ResearchPanelStreamingFeed:
         self._next_ts = self._compute_next_ts()
         return bars
 
-    def _next_volatile(self) -> list[Bar] | None:
+    def _next_volatile_raw(self) -> list[Bar] | None:
         while True:
             buffered_ts = self._compute_next_ts()
             rebalance_ts = self._next_rebalance_ts()
@@ -689,6 +736,38 @@ class ResearchPanelStreamingFeed:
         self._next_ts = self._compute_next_ts()
         return bars
 
+    def _should_emit_candidate_group(self, bars: list[Bar]) -> bool:
+        if self._candidate_event_mode == "off":
+            return True
+        candidate_reasons = candidate_event_reasons_for_bars(bars)
+        has_candidate = bool(candidate_reasons)
+        if self._has_execution_exposure or self._required_symbols:
+            dense_reasons: list[str] = []
+            if self._has_execution_exposure:
+                dense_reasons.append("dense:execution_exposure")
+            if self._required_symbols:
+                dense_reasons.append("dense:required_symbols")
+            dense_reasons.extend(f"candidate:{reason}" for reason in candidate_reasons)
+            self._candidate_event_stats.record_emit(
+                rows=len(bars),
+                dense=True,
+                candidate=has_candidate,
+                reasons=dense_reasons,
+            )
+            return True
+        if has_candidate:
+            self._candidate_event_stats.record_emit(
+                rows=len(bars),
+                dense=False,
+                candidate=True,
+                reasons=[f"candidate:{reason}" for reason in candidate_reasons],
+            )
+            return True
+        self._candidate_event_stats.record_skip(rows=len(bars), reason="skip:flat_no_candidate_event")
+        if bars:
+            self._skipped_flat_ts.append(pd.Timestamp(bars[0].ts))
+        return False
+
     def _advance_pending_symbols(self) -> None:
         if not self._symbols_to_advance:
             return
@@ -719,6 +798,7 @@ class MaterializedResearchPanelStreamingFeed:
         chunksize: int = 50_000,
         extra_columns: Iterable[str] | None = None,
         extra_column_prefixes: Iterable[str] | None = None,
+        candidate_event_mode: str = "off",
     ) -> None:
         if chunksize <= 0:
             raise DataError("Materialized research panel chunksize must be positive")
@@ -728,6 +808,15 @@ class MaterializedResearchPanelStreamingFeed:
         self._chunksize = chunksize
         self._extra_columns = tuple(str(col) for col in (extra_columns or ()))
         self._extra_column_prefixes = tuple(str(prefix) for prefix in (extra_column_prefixes or ()))
+        self._candidate_event_mode = str(candidate_event_mode or "off").strip().lower()
+        if self._candidate_event_mode not in {"off", "auto"}:
+            raise DataError("candidate_event_mode must be one of: off, auto")
+        self._candidate_event_stats = CandidateEventStats(
+            enabled=self._candidate_event_mode != "off",
+            mode=self._candidate_event_mode,
+        )
+        self._has_execution_exposure = False
+        self._skipped_flat_ts: list[pd.Timestamp] = []
         self._batch_iter: Iterator[Any] | None = None
         self._groups: deque[tuple[pd.Timestamp, list[Bar]]] = deque()
         self._carry = pd.DataFrame()
@@ -768,6 +857,17 @@ class MaterializedResearchPanelStreamingFeed:
         self._last_emitted_ts = None
         self._finished = False
 
+    def set_execution_state(self, *, has_exposure: bool) -> None:
+        self._has_execution_exposure = bool(has_exposure)
+
+    def candidate_event_stats(self) -> dict[str, Any]:
+        return self._candidate_event_stats.to_json()
+
+    def drain_skipped_flat_timestamps(self) -> list[pd.Timestamp]:
+        out = list(self._skipped_flat_ts)
+        self._skipped_flat_ts.clear()
+        return out
+
     def set_required_symbols(self, symbols: Iterable[str]) -> None:
         """Keep inactive volatile symbols visible while positions/orders need bars."""
         self._required_symbols = {str(symbol) for symbol in symbols}
@@ -777,34 +877,73 @@ class MaterializedResearchPanelStreamingFeed:
             self._ensure_required_symbol_iterator(symbol, start_ts=start_ts)
 
     def next(self) -> list[Bar] | None:
-        self._advance_required_symbols()
-        while not self._groups and not self._finished:
-            self._load_next_batch()
-        if not self._groups:
-            return None
-        current_ts, bars = self._groups.popleft()
-        by_symbol = {bar.symbol: bar for bar in bars}
-        required_to_advance: list[str] = []
-        for symbol in sorted(self._required_symbols):
-            bar = self._required_buf_by_symbol.get(symbol)
-            while bar is not None and bar.ts < current_ts:
-                self._advance_one_required_symbol(symbol)
+        while True:
+            self._advance_required_symbols()
+            while not self._groups and not self._finished:
+                self._load_next_batch()
+            if not self._groups:
+                return None
+            current_ts, bars = self._groups.popleft()
+            by_symbol = {bar.symbol: bar for bar in bars}
+            required_to_advance: list[str] = []
+            for symbol in sorted(self._required_symbols):
                 bar = self._required_buf_by_symbol.get(symbol)
-            if bar is None or bar.ts != current_ts or symbol in by_symbol:
-                continue
-            bar.extra["volatile_active"] = False
-            bar.extra["universe_active"] = False
-            by_symbol[symbol] = bar
-            required_to_advance.append(symbol)
-        self._required_symbols_to_advance = required_to_advance
-        self._last_emitted_ts = current_ts
-        return [by_symbol[symbol] for symbol in sorted(by_symbol)]
+                while bar is not None and bar.ts < current_ts:
+                    self._advance_one_required_symbol(symbol)
+                    bar = self._required_buf_by_symbol.get(symbol)
+                if bar is None or bar.ts != current_ts or symbol in by_symbol:
+                    continue
+                bar.extra["volatile_active"] = False
+                bar.extra["universe_active"] = False
+                by_symbol[symbol] = bar
+                required_to_advance.append(symbol)
+            out = [by_symbol[symbol] for symbol in sorted(by_symbol)]
+            self._required_symbols_to_advance = required_to_advance
+            self._last_emitted_ts = current_ts
+            if self._should_emit_candidate_group(out):
+                return out
+
+    def _should_emit_candidate_group(self, bars: list[Bar]) -> bool:
+        if self._candidate_event_mode == "off":
+            return True
+        candidate_reasons = candidate_event_reasons_for_bars(bars)
+        has_candidate = bool(candidate_reasons)
+        if self._has_execution_exposure or self._required_symbols:
+            dense_reasons: list[str] = []
+            if self._has_execution_exposure:
+                dense_reasons.append("dense:execution_exposure")
+            if self._required_symbols:
+                dense_reasons.append("dense:required_symbols")
+            dense_reasons.extend(f"candidate:{reason}" for reason in candidate_reasons)
+            self._candidate_event_stats.record_emit(
+                rows=len(bars),
+                dense=True,
+                candidate=has_candidate,
+                reasons=dense_reasons,
+            )
+            return True
+        if has_candidate:
+            self._candidate_event_stats.record_emit(
+                rows=len(bars),
+                dense=False,
+                candidate=True,
+                reasons=[f"candidate:{reason}" for reason in candidate_reasons],
+            )
+            return True
+        self._candidate_event_stats.record_skip(rows=len(bars), reason="skip:flat_no_candidate_event")
+        if bars:
+            self._skipped_flat_ts.append(pd.Timestamp(bars[0].ts))
+        return False
 
     def _materialized_context(self) -> tuple[Path, str, str]:
         timeframe_dir = self._path.parent
         symbol_dir = timeframe_dir.parent
         exchange_dir = symbol_dir.parent
-        canonical_dir = exchange_dir.parent
+        parent = exchange_dir.parent
+        if parent.name == "perp":
+            canonical_dir = parent.parent
+        else:
+            canonical_dir = parent
         if canonical_dir.name != "canonical":
             raise DataError(f"Cannot infer research_data root from materialized path: {self._path}")
         timeframe = timeframe_dir.name.removeprefix("timeframe=")

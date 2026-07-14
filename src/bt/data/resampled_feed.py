@@ -1,6 +1,7 @@
 """Feed wrappers for deterministic timeframe resampling."""
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from bt.core.types import Bar
@@ -74,6 +75,26 @@ class EntryTimeframeGate:
     def __init__(self, *, inner: Any, entry_timeframe: str) -> None:
         self._inner = inner
         self._entry_timeframe = normalize_timeframe(entry_timeframe, key_path="data.entry_timeframe")
+        self._allowed_entry_signals = 0
+        self._blocked_entry_signals = 0
+        self._exit_signals_preserved = 0
+
+    def _annotate_signal(self, signal, *, allow_entries: bool, blocked: bool = False):
+        metadata = dict(getattr(signal, "metadata", {}) or {})
+        metadata.update(
+            {
+                "entry_timeframe_gate_applied": True,
+                "entry_timeframe": self._entry_timeframe,
+                "allow_entries": bool(allow_entries),
+                "entry_timeframe_boundary": bool(allow_entries),
+                "entry_timeframe_gate_blocked": bool(blocked),
+            }
+        )
+        try:
+            return replace(signal, metadata=metadata)
+        except TypeError:
+            signal.metadata = metadata
+            return signal
 
     def on_bars(self, ts, bars_by_symbol, tradeable, ctx):
         from bt.risk.risk_engine import RiskEngine
@@ -82,10 +103,37 @@ class EntryTimeframeGate:
         allow_entries = is_timeframe_boundary(ts, self._entry_timeframe)
         emitted = self._inner.on_bars(ts, bars_by_symbol, tradeable, ctx)
         if allow_entries:
-            return emitted
+            out = []
+            for signal in emitted:
+                if RiskEngine._is_exit_signal(signal):
+                    self._exit_signals_preserved += 1
+                else:
+                    self._allowed_entry_signals += 1
+                out.append(self._annotate_signal(signal, allow_entries=True))
+            return out
 
         filtered = []
         for signal in emitted:
             if RiskEngine._is_exit_signal(signal):
-                filtered.append(signal)
+                self._exit_signals_preserved += 1
+                filtered.append(self._annotate_signal(signal, allow_entries=False))
+            else:
+                self._blocked_entry_signals += 1
+                self._annotate_signal(signal, allow_entries=False, blocked=True)
         return filtered
+
+    def strategy_artifacts(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if hasattr(self._inner, "strategy_artifacts") and callable(getattr(self._inner, "strategy_artifacts")):
+            inner_payload = self._inner.strategy_artifacts()
+            if isinstance(inner_payload, dict):
+                payload.update(inner_payload)
+        payload["entry_timeframe_gate"] = {
+            "enabled": True,
+            "entry_timeframe": self._entry_timeframe,
+            "allowed_entry_signals": self._allowed_entry_signals,
+            "blocked_entry_signals": self._blocked_entry_signals,
+            "exit_signals_preserved": self._exit_signals_preserved,
+            "contract": "entry signals are boundary-gated; exit signals remain evaluated every engine bar",
+        }
+        return payload

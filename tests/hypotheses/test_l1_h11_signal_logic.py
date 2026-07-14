@@ -20,10 +20,21 @@ def _bar(i: int, close: float, *, high: float | None = None, low: float | None =
     )
 
 
-def _ctx(tf: str, signal_bar: Bar | None, side: Side | None = None) -> dict:
+def _ctx(tf: str, signal_bar: Bar | None, side: Side | None = None, state: dict | None = None) -> dict:
     payload = {tf: {"BTCUSDT": signal_bar} if signal_bar is not None else {}}
     positions = {} if side is None else {"BTCUSDT": {"side": side.name.lower()}}
-    return {"htf": payload, "positions": positions}
+    return {"htf": payload, "positions": positions, "state": state or {}}
+
+
+def _matching_midvol_state() -> dict:
+    return {
+        "BTCUSDT": {
+            "entry_state_vol_regime": "vol_mid",
+            "entry_state_liquidity_regime": "liquid",
+            "entry_state_displacement_regime": "mild_impulse",
+            "entry_state_csi_bucket": "csi_low",
+        }
+    }
 
 
 def test_h11_requires_two_clock_context() -> None:
@@ -57,10 +68,12 @@ def test_h11a_entry_and_frozen_stop_logging_fields() -> None:
     assert out and out[0].side == Side.BUY
     meta = out[0].metadata
     for key in [
-        "setup_type", "signal_timeframe", "exit_monitoring_timeframe", "trend_dir", "ema_fast_entry", "ema_slow_entry",
-        "adx_entry", "atr_entry", "impulse_strength_atr", "swing_distance_atr", "pullback_depth_atr", "pull_entry_atr_low",
-        "pull_entry_atr_high", "entry_position_metric", "reclaim_position_metric", "entry_reference_price", "stop_distance",
-        "stop_price", "continuation_trigger_state", "risk_accounting",
+        "strategy", "strategy_id", "family_variant", "family_pattern", "setup_type", "signal_timeframe",
+        "execution_timeframe", "exit_monitoring_timeframe", "entry_price", "intended_entry_price", "trend_dir",
+        "ema_fast_entry", "ema_slow_entry", "adx_entry", "atr_entry", "impulse_strength_atr", "swing_distance_atr",
+        "pullback_depth_atr", "pull_entry_atr_low", "pull_entry_atr_high", "entry_position_metric",
+        "reclaim_position_metric", "entry_reference_price", "stop_distance", "stop_price", "entry_stop_price",
+        "continuation_trigger_state", "risk_accounting", "r_per_trade",
     ]:
         assert key in meta
     frozen = meta["stop_distance"]
@@ -105,4 +118,102 @@ def test_h11c_lock_and_vwap_giveback_exit() -> None:
     drop = _bar(93, 98.0, high=98.2, low=97.8)
     exits = strategy.on_bars(drop.ts, {"BTCUSDT": drop}, {"BTCUSDT"}, _ctx("15m", drop, Side.BUY))
     assert exits
-    assert exits[0].metadata["exit_reason"] in {"vwap_giveback", "stop_loss"}
+    assert exits[0].metadata["exit_reason"] in {"vwap_giveback", "protected_stop", "stop_loss"}
+
+
+def test_h11a_refined_profile_gates_entry_on_causal_state() -> None:
+    strategy = L1H11QualityFilteredContinuationStrategy(
+        timeframe="15m",
+        family_variant="L1-H11A",
+        h11a_tuning_profile="h11a_15m_liquid_midvol_runner",
+    )
+    for i in range(80):
+        b = _bar(i, 100 + (0.08 * i), high=100 + (0.08 * i) + 0.4, low=100 + (0.08 * i) - 0.3)
+        strategy.on_bars(b.ts, {"BTCUSDT": b}, {"BTCUSDT"}, _ctx("15m", b, state=_matching_midvol_state()))
+
+    pull = _bar(90, 102.0, high=102.3, low=100.8)
+    strategy.on_bars(pull.ts, {"BTCUSDT": pull}, {"BTCUSDT"}, _ctx("15m", pull, state=_matching_midvol_state()))
+    st = strategy._state_for("BTCUSDT")
+    ema_fast = float(st.ema_fast.value or 104.0)
+    atr_v = float(st.atr_signal.value or 1.0)
+    st.trend_dir = Side.BUY
+    st.trend_anchor_price = 100.0
+    st.trend_extreme_price = 106.0
+    st.pullback_active = True
+    st.pullback_extreme_low = ema_fast - (0.6 * atr_v)
+    st.pullback_extreme_high = 106.0
+
+    entry = _bar(91, 105.0, high=105.3, low=104.9)
+    blocked = strategy.on_bars(entry.ts, {"BTCUSDT": entry}, {"BTCUSDT"}, _ctx("15m", entry, state={
+        "BTCUSDT": {
+            "entry_state_vol_regime": "vol_high",
+            "entry_state_liquidity_regime": "fragile",
+            "entry_state_displacement_regime": "strong_impulse",
+            "entry_state_csi_bucket": "csi_mid",
+        }
+    }))
+    assert blocked == []
+
+    st.pullback_active = True
+    st.pullback_extreme_low = ema_fast - (0.6 * atr_v)
+    st.pullback_extreme_high = 106.0
+    entry2 = _bar(106, 106.0, high=106.3, low=105.9)
+    allowed = strategy.on_bars(entry2.ts, {"BTCUSDT": entry2}, {"BTCUSDT"}, _ctx("15m", entry2, state=_matching_midvol_state()))
+    assert allowed and allowed[0].side == Side.BUY
+    assert allowed[0].metadata["h11a_tuning_profile"] == "h11a_15m_liquid_midvol_runner"
+    assert allowed[0].metadata["loss_cap_r"] == 0.75
+
+
+def test_h11a_concentration_guard_blocks_excluded_symbol() -> None:
+    strategy = L1H11QualityFilteredContinuationStrategy(
+        timeframe="15m",
+        family_variant="L1-H11A",
+        adx_min=0.0,
+        impulse_min_atr_fixed=0.1,
+        excluded_symbols="BTCUSDT",
+    )
+    for i in range(80):
+        b = _bar(i, 100 + (0.08 * i), high=100 + (0.08 * i) + 0.4, low=100 + (0.08 * i) - 0.3)
+        strategy.on_bars(b.ts, {"BTCUSDT": b}, {"BTCUSDT"}, _ctx("15m", b))
+    st = strategy._state_for("BTCUSDT")
+    st.trend_dir = Side.BUY
+    st.trend_anchor_price = 100.0
+    st.trend_extreme_price = 106.0
+    st.pullback_active = True
+    st.pullback_extreme_low = 103.5
+    st.pullback_extreme_high = 106.0
+
+    entry = _bar(91, 105.0, high=105.3, low=104.9)
+
+    assert strategy.on_bars(entry.ts, {"BTCUSDT": entry}, {"BTCUSDT"}, _ctx("15m", entry)) == []
+
+
+def test_h11a_runner_trail_protects_large_winner() -> None:
+    strategy = L1H11QualityFilteredContinuationStrategy(
+        timeframe="15m",
+        family_variant="L1-H11A",
+        break_even_trigger_r=1.0,
+        profit_lock_trigger_r=2.0,
+        profit_lock_r=1.0,
+        runner_trail_trigger_r=3.0,
+        runner_trail_distance_r=1.5,
+    )
+    st = strategy._state_for("BTCUSDT")
+    st.position = Side.BUY
+    st.entry_price = 100.0
+    st.atr_entry = 5.0
+    st.stop_distance_frozen = 10.0
+    st.stop_price_frozen = 90.0
+    st.favorable_extreme_price = 100.0
+
+    run = _bar(1, 130.0, high=132.0, low=128.0)
+    assert strategy.on_bars(run.ts, {"BTCUSDT": run}, {"BTCUSDT"}, _ctx("15m", None, Side.BUY)) == []
+    assert st.runner_trail_armed is True
+    assert st.stop_price_frozen == 117.0
+
+    giveback = _bar(2, 116.5, high=118.0, low=116.0)
+    exits = strategy.on_bars(giveback.ts, {"BTCUSDT": giveback}, {"BTCUSDT"}, _ctx("15m", None, Side.BUY))
+    assert exits and exits[0].side == Side.SELL
+    assert exits[0].metadata["exit_reason"] == "runner_trail_stop"
+    assert exits[0].metadata["close_only"] is True
+    assert exits[0].metadata["is_exit"] is True

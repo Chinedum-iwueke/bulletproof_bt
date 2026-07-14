@@ -66,7 +66,7 @@ def resolve_existing_experiment_root_from_path(path: str | Path) -> Path:
     root = Path(path)
     if root.exists():
         return root
-    if root.parent.name in {"tier2", "tier3"}:
+    if root.parent.name in {"tier2", "tier2a", "tier2b", "tier3"}:
         legacy_root = root.parent.parent / root.name
         if legacy_root.exists():
             return legacy_root

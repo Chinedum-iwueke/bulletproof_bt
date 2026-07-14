@@ -15,6 +15,12 @@ def canonical_perp_symbol(base_asset: str | None, quote_asset: str | None = "USD
     return f"{base}-{quote}-PERP"
 
 
+def canonical_spot_symbol(base_asset: str | None, quote_asset: str | None = "USDT") -> str:
+    base = (base_asset or "").upper()
+    quote = (quote_asset or "USDT").upper()
+    return f"{base}-{quote}-SPOT"
+
+
 def _precision_from_step(value: object) -> int | None:
     if value is None or value == "" or pd.isna(value):
         return None
@@ -30,11 +36,21 @@ def normalize_instrument_frame(rows: list[dict[str, object]] | pd.DataFrame) -> 
         return pd.DataFrame(columns=INSTRUMENT_COLUMNS)
     if "native_symbol" not in df.columns and "symbol" in df.columns:
         df["native_symbol"] = df["symbol"]
+    if "market" not in df.columns:
+        df["market"] = "perp"
     if "canonical_symbol" not in df.columns:
-        df["canonical_symbol"] = [
-            canonical_perp_symbol(base, quote)
-            for base, quote in zip(df.get("base_asset", pd.Series(dtype=object)), df.get("quote_asset", pd.Series(dtype=object)))
-        ]
+        canonical = []
+        for market, base, quote in zip(
+            df.get("market", pd.Series(dtype=object)),
+            df.get("base_asset", pd.Series(dtype=object)),
+            df.get("quote_asset", pd.Series(dtype=object)),
+        ):
+            canonical.append(
+                canonical_spot_symbol(base, quote)
+                if str(market).lower() == "spot"
+                else canonical_perp_symbol(base, quote)
+            )
+        df["canonical_symbol"] = canonical
     if "first_seen_ts" not in df.columns and "onboard_ts" in df.columns:
         df["first_seen_ts"] = df["onboard_ts"]
     if "settle_asset" not in df.columns and "margin_asset" in df.columns:
@@ -47,18 +63,24 @@ def normalize_instrument_frame(rows: list[dict[str, object]] | pd.DataFrame) -> 
     return normalize_frame(df, INSTRUMENT_COLUMNS)
 
 
-def canonical_for_native(instruments: pd.DataFrame, exchange: str, native_symbol: str) -> str:
+def canonical_for_native(instruments: pd.DataFrame, exchange: str, native_symbol: str, market: str = "perp") -> str:
     if instruments.empty:
-        return native_to_canonical_symbol(native_symbol)
+        return native_to_canonical_symbol(native_symbol, market=market)
     native_col = "native_symbol" if "native_symbol" in instruments.columns else "symbol"
     mask = instruments["exchange"].eq(exchange) & instruments[native_col].astype(str).eq(native_symbol)
+    if "market" in instruments.columns:
+        mask &= instruments["market"].fillna("perp").astype(str).str.lower().eq(str(market).lower())
     if mask.any() and "canonical_symbol" in instruments.columns:
         return str(instruments.loc[mask, "canonical_symbol"].iloc[0])
-    return native_to_canonical_symbol(native_symbol)
+    return native_to_canonical_symbol(native_symbol, market=market)
 
 
-def native_to_canonical_symbol(native_symbol: str) -> str:
+def native_to_canonical_symbol(native_symbol: str, market: str = "perp") -> str:
     symbol = native_symbol.upper()
+    if str(market).lower() == "spot":
+        if symbol.endswith("USDT"):
+            return canonical_spot_symbol(symbol.removesuffix("USDT"), "USDT")
+        return f"{symbol}-SPOT"
     if symbol.endswith("-SWAP"):
         parts = symbol.split("-")
         if len(parts) >= 2:
@@ -68,7 +90,7 @@ def native_to_canonical_symbol(native_symbol: str) -> str:
     return symbol
 
 
-def reconcile_stable_symbols(instruments: pd.DataFrame, exchange: str | None = None) -> pd.DataFrame:
+def reconcile_stable_symbols(instruments: pd.DataFrame, exchange: str | None = None, market: str = "perp") -> pd.DataFrame:
     """Map configured stable symbols onto exchange listings without failing on late listings."""
     rows: list[dict[str, object]] = []
     native_col = "native_symbol" if "native_symbol" in instruments.columns else "symbol"
@@ -86,13 +108,14 @@ def reconcile_stable_symbols(instruments: pd.DataFrame, exchange: str | None = N
         candidates = STABLE_SYMBOL_ALIASES.get(configured, (configured,))
         selected = next((candidate for candidate in candidates if candidate in available), None)
         if selected is None and not canonical_indexed.empty:
-            canonical_candidates = [native_to_canonical_symbol(candidate) for candidate in candidates]
+            canonical_candidates = [native_to_canonical_symbol(candidate, market=market) for candidate in candidates]
             selected_canonical = next((candidate for candidate in canonical_candidates if candidate in canonical_indexed.index), None)
             if selected_canonical is not None:
                 matched = canonical_indexed.loc[selected_canonical, native_col]
                 selected = str(matched.iloc[0] if hasattr(matched, "iloc") else matched)
         row = {
             "configured_symbol": configured,
+            "market": market,
             "symbol": selected or candidates[0],
             "native_symbol": selected or candidates[0],
             "exchange": exchange_name,
@@ -115,17 +138,23 @@ def write_instrument_manifest(store: ResearchDataStore, instruments: pd.DataFram
     store.upsert_parquet(
         store.manifest_path("instruments"),
         normalized,
-        key=("exchange", "native_symbol"),
+        key=("market", "exchange", "native_symbol"),
         columns=INSTRUMENT_COLUMNS,
     )
 
 
-def write_stable_universe(store: ResearchDataStore, instruments: pd.DataFrame, exchange: str | None = None) -> pd.DataFrame:
-    stable = reconcile_stable_symbols(instruments, exchange)
+def write_stable_universe(
+    store: ResearchDataStore,
+    instruments: pd.DataFrame,
+    exchange: str | None = None,
+    market: str = "perp",
+) -> pd.DataFrame:
+    stable = reconcile_stable_symbols(instruments, exchange, market=market)
     stable["created_ts"] = utc_ts("now")
+    manifest_name = "stable_universe" if market == "perp" else f"stable_universe_{market}"
     store.upsert_parquet(
-        store.manifest_path("stable_universe"),
+        store.manifest_path(manifest_name),
         stable,
-        key=("exchange", "configured_symbol"),
+        key=("market", "exchange", "configured_symbol"),
     )
     return stable

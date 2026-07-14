@@ -88,6 +88,69 @@ def test_truth_validation_fails_requested_budget_used_as_actual_risk(tmp_path: P
     assert any(issue.check == "actual_stop_risk" for issue in report.issues)
 
 
+def test_truth_validation_accepts_dust_risk_budget_roundtrip_residue(tmp_path: Path) -> None:
+    _write_run(
+        tmp_path,
+        mutate={
+            "entry_qty": 0.00000040145,
+            "qty": 0.00000040145,
+            "entry_price": 92.25,
+            "risk_amount": 0.000000560683,
+            "risk_budget": 0.000000560682,
+            "entry_stop_distance": 1.396644,
+            "pnl_net": 0.000000246701,
+            "r_multiple_net": 0.44,
+        },
+    )
+
+    report = validate_experiment_root(tmp_path)
+
+    assert report.status == "PASS"
+    assert not any(issue.check == "risk_budget" for issue in report.issues)
+
+
+def test_truth_validation_fails_material_risk_budget_breach(tmp_path: Path) -> None:
+    _write_run(
+        tmp_path,
+        mutate={
+            "entry_qty": 4.1,
+            "qty": 4.1,
+            "risk_amount": 102.5,
+            "risk_budget": 100.0,
+            "entry_stop_distance": 25.0,
+            "r_multiple_net": 0.039024390244,
+        },
+    )
+
+    report = validate_experiment_root(tmp_path)
+
+    assert report.status == "FAIL"
+    assert any(issue.check == "risk_budget" for issue in report.issues)
+
+
+def test_truth_validation_accepts_zero_trade_run_without_trade_row_fields(tmp_path: Path) -> None:
+    run_dir = _write_run(tmp_path)
+    pd.DataFrame(
+        columns=[
+            "entry_ts",
+            "exit_ts",
+            "symbol",
+            "side",
+            "entry_price",
+            "exit_price",
+            "pnl_net",
+            "risk_amount",
+        ]
+    ).to_csv(run_dir / "trades.csv", index=False)
+    (run_dir / "performance.json").write_text(json.dumps({"total_trades": 0, "win_rate": 0.0}), encoding="utf-8")
+
+    report = validate_experiment_root(tmp_path)
+
+    assert report.status == "PASS"
+    assert report.hard_failures == 0
+    assert any(issue.check == "zero_trades" for issue in report.issues)
+
+
 def test_truth_validation_writes_reports(tmp_path: Path) -> None:
     _write_run(tmp_path)
     report = validate_experiment_root(tmp_path)

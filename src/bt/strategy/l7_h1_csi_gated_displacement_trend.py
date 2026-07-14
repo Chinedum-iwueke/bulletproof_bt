@@ -640,6 +640,10 @@ class L7H1CSIGatedDisplacementTrendStrategy(Strategy):
         if not isinstance(htf_for_tf, Mapping):
             raise RuntimeError(f"L7-H1 requires mapping ctx['htf']['{self._timeframe}'] for two-clock semantics.")
 
+        if bool(ctx.get("warmup")):
+            self._warmup_feature_state(bars_by_symbol=bars_by_symbol, htf_for_tf=htf_for_tf)
+            return []
+
         signals: list[Signal] = []
         for symbol in sorted(tradeable):
             bar = bars_by_symbol.get(symbol)
@@ -716,6 +720,33 @@ class L7H1CSIGatedDisplacementTrendStrategy(Strategy):
             signals.append(Signal(ts=ts, symbol=symbol, side=side, signal_type="l7_h1_entry", confidence=1.0, metadata=metadata))
 
         return signals
+
+    def _warmup_feature_state(self, *, bars_by_symbol: dict[str, Bar], htf_for_tf: Mapping[str, Any]) -> None:
+        """Warm causal L7-H1 feature state without emitting entries/exits.
+
+        Engine warmup intentionally passes an empty tradeable set so strategies
+        cannot create pre-start orders. L7-H1 still needs the same passive
+        funding/OI/basis/spread/HTF state it would have accumulated online.
+        """
+        for symbol in sorted(bars_by_symbol):
+            bar = bars_by_symbol.get(symbol)
+            if bar is None:
+                continue
+            state = self._state_for(symbol)
+            if not self._compiled_features_available(bar):
+                self._update_base_features(state, bar)
+            signal_bar = htf_for_tf.get(symbol)
+            has_new_signal_bar = signal_bar is not None and signal_bar.ts != state.last_signal_ts
+            if has_new_signal_bar and signal_bar is not None:
+                state.last_signal_ts = signal_bar.ts
+                features = self._precomputed_features_for_signal_bar(
+                    state=state,
+                    decision_bar=bar,
+                    signal_bar=signal_bar,
+                )
+                if features is None:
+                    features = self._features_for_signal_bar(state=state, signal_bar=signal_bar)
+                state.last_features = features
 
     def _on_bars_compiled_event(
         self,

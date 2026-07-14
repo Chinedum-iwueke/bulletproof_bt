@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+from bisect import bisect_left, bisect_right, insort
 from collections import deque
 from typing import Any
 
@@ -129,6 +130,46 @@ def _classic_pctile(values: deque[float], value: float | None, *, min_count: int
     return sum(1 for v in vals if v <= float(value)) / len(vals)
 
 
+class _RollingSortedWindow:
+    """Exact causal rolling percentile helper.
+
+    This preserves the classic definition used above: percentile is
+    ``count(window_values <= value) / len(window_values)`` over finite values
+    only. Keeping a sorted side-car avoids repeatedly scanning multi-day
+    funding/basis windows while stamping L7-H1 columns.
+    """
+
+    def __init__(self, maxlen: int) -> None:
+        self._order: deque[float] = deque()
+        self._sorted: list[float] = []
+        self._maxlen = int(maxlen)
+
+    def __len__(self) -> int:
+        return len(self._order)
+
+    def append(self, value: float) -> None:
+        value = float(value)
+        if not math.isfinite(value):
+            return
+        if len(self._order) >= self._maxlen:
+            old = self._order.popleft()
+            idx = bisect_left(self._sorted, old)
+            if idx < len(self._sorted):
+                self._sorted.pop(idx)
+        self._order.append(value)
+        insort(self._sorted, value)
+
+    def latest(self) -> float | None:
+        return self._order[-1] if self._order else None
+
+    def pctile(self, value: float | None = None, *, min_count: int = 5) -> float:
+        if value is None:
+            value = self.latest()
+        if value is None or not math.isfinite(float(value)) or len(self._sorted) < min_count:
+            return float("nan")
+        return bisect_right(self._sorted, float(value)) / len(self._sorted)
+
+
 def _classic_z(values: deque[float], value: float | None, *, min_count: int = 5) -> float:
     if value is None or not math.isfinite(float(value)):
         return float("nan")
@@ -153,14 +194,14 @@ def _exact_classic_symbol_features(work: pd.DataFrame, agg: pd.DataFrame, *, par
     compiled columns causal while matching the classic 1m state cadence.
     """
     aux_window = max(5, int(params.basis_lookback_days) * 24 * 60)
-    funding_values: deque[float] = deque(maxlen=aux_window)
-    basis_values: deque[float] = deque(maxlen=aux_window)
+    funding_values = _RollingSortedWindow(aux_window)
+    basis_values = _RollingSortedWindow(aux_window)
     oi_values: deque[float] = deque(maxlen=240)
     oi_returns: deque[float] = deque(maxlen=240)
     oi_return_zs: deque[float] = deque(maxlen=240)
     volume_values: deque[float] = deque(maxlen=240)
     volume_returns: deque[float] = deque(maxlen=240)
-    spread_values: deque[float] = deque(maxlen=240)
+    spread_values = _RollingSortedWindow(240)
     csi_raw_values: deque[float] = deque(maxlen=240)
     close_values: deque[float] = deque(maxlen=240)
 
@@ -244,10 +285,8 @@ def _exact_classic_symbol_features(work: pd.DataFrame, agg: pd.DataFrame, *, par
                     atr_value = ((atr_value * (int(params.atr_period) - 1)) + tr_for_atr) / int(params.atr_period)
             d_t = (float(tr) / float(prev_atr)) if tr is not None and prev_atr is not None and prev_atr > 0 else float("nan")
 
-            funding_latest = funding_values[-1] if funding_values else None
-            funding_pct = _classic_pctile(funding_values, funding_latest)
-            basis_latest = basis_values[-1] if basis_values else None
-            basis_pct = _classic_pctile(basis_values, basis_latest)
+            funding_pct = funding_values.pctile()
+            basis_pct = basis_values.pctile()
             funding_component = funding_pct if math.isfinite(funding_pct) else basis_pct
             if not math.isfinite(funding_component):
                 funding_component = 0.5
@@ -257,7 +296,7 @@ def _exact_classic_symbol_features(work: pd.DataFrame, agg: pd.DataFrame, *, par
             oi_component = _norm_z(float(oi_z) if math.isfinite(float(oi_z)) else volume_z)
 
             signal_spread = 0.5 * (htf_high - htf_low) / htf_close if htf_close else 0.0
-            spread_pct = _classic_pctile(spread_values, signal_spread)
+            spread_pct = spread_values.pctile(signal_spread)
             spread_component = 1.0 - float(spread_pct) if math.isfinite(spread_pct) else 0.5
             comp_d = _norm_displacement(d_t, float(params.d0))
             raw_csi = 0.35 * funding_component + 0.25 * oi_component + 0.30 * comp_d + 0.10 * spread_component

@@ -1,0 +1,201 @@
+hypothesis_id: "L2-H1"
+title: "HTF Trend Filter Upgrades LTF Pullbacks"
+description: "LTF EMA20 pullback-recovery entries have higher net EV and lower drawdowns when conditioned on fully closed 1h EMA50/EMA200 trend direction."
+research_layer: "L2"
+hypothesis_family: "htf_trend_filtered_pullback"
+version: "1.0.0"
+author: "bulletproof_bt"
+created_at: "2026-07-10T00:00:00Z"
+
+required_indicators:
+  - ema
+  - atr
+
+indicator_defaults:
+  htf_timeframe: "1h"
+  htf_ema_fast_period: 50
+  htf_ema_slow_period: 200
+  ltf_ema_period: 20
+  atr_period: 14
+  base_execution_timeframe: "1m"
+
+gates:
+  - field: "dir_htf"
+    op: "in"
+    value: [-1, 1]
+  - field: "pullback_bars"
+    op: "<="
+    param: "K"
+  - field: "ltf_recovered_ema20"
+    op: "=="
+    value: true
+
+parameter_grid:
+  timeframe: ["1m", "5m"]
+  K: [3, 5]
+  k_atr: [2.0, 2.5]
+  use_htf_filter: [true, false]
+  T_hold: [48]
+  htf_timeframe: ["1h"]
+  ltf_ema_period: [20]
+  htf_ema_fast_period: [50]
+  htf_ema_slow_period: [200]
+  atr_period: [14]
+  family_variant: ["L2-H1"]
+
+entry:
+  strategy: "l2_h1_htf_trend_filter_pullback"
+  signal_timeframe: "5m"
+  timeframe: "5m"
+  base_execution_timeframe: "1m"
+  order_timing: "bar_close_submit_next_bar_execution"
+  disallow_flip: true
+  no_pyramiding: true
+
+exit:
+  stop_kind: "atr_multiple"
+  stop_model: "fixed_atr_multiple"
+  stop_atr_param: "k_atr"
+  stop_update_policy: "frozen_at_entry"
+  atr_source_timeframe: "signal_timeframe"
+  time_stop_param: "T_hold"
+  hold_time_unit: "signal_bars"
+  exit_monitoring_timeframe: "1m"
+  take_profit:
+    enabled: false
+
+execution_semantics:
+  signal_timeframe: "5m"
+  htf_timeframes: ["1h"]
+  base_execution_timeframe: "1m"
+  exit_monitoring_timeframe: "1m"
+  base_data_frequency_expected: "1m"
+  strategy_family: "htf_trend_filtered_pullback"
+  family_pattern: "ltf_ema20_pullback_recovery_with_closed_1h_trend_filter"
+  stop_model: "fixed_atr_multiple"
+  stop_update_policy: "frozen_at_entry"
+  tp_update_policy: "disabled"
+  hold_time_unit: "signal_bars"
+  atr_source_timeframe: "signal_timeframe"
+  risk_accounting: "engine_canonical_R"
+  no_pyramiding: true
+
+sizing:
+  mode: risk_at_stop
+  r_per_trade: 0.005
+  cap_policy: allow_clip_with_truth
+  min_risk_utilization_pct: 0.10
+  report_under_risked_trades: true
+
+risk_controls:
+  max_positions: 5
+  max_leverage: 1.0
+  max_notional_pct_equity: 0.5
+  max_gross_notional_pct_equity: 0.5
+  disallow_flip: true
+  no_countertrend_entries: true
+  unresolved_stops: reject
+  forced_liquidation_expected: false
+
+data_assumptions:
+  dataset_kind: research_panel
+  universes: ["stable", "volatile"]
+  required_columns: ["ts", "open", "high", "low", "close", "volume"]
+  optional_rich_columns:
+    - funding_rate
+    - funding_source_ts
+    - open_interest
+    - oi_source_ts
+    - mark_close
+    - index_close
+    - premium_mark_vs_index
+    - basis_close_vs_index
+  rich_data_role: "logging_only_context"
+  ohlcv_only_fallback: true
+  htf_context: "1h closed bars via strict causal resample"
+
+evaluation:
+  required_tiers: ["Tier2", "Tier3"]
+  metrics:
+    - ev_r_net
+    - ev_r_gross
+    - max_drawdown
+    - drawdown_duration
+    - trade_count_reduction_vs_no_filter
+    - ev_uplift_vs_no_filter
+    - win_rate
+    - tail_r_multiple
+
+logging:
+  schema_version: "1.0"
+  required_fields:
+    - run_id
+    - hypothesis_id
+    - tier
+    - ev_r_gross
+    - ev_r_net
+    - status
+    - dir_htf
+    - htf_ready
+    - htf_ema_fast
+    - htf_ema_slow
+    - htf_source_ts
+    - ltf_ema20
+    - ltf_close
+    - pullback_bars
+    - K
+    - k_atr
+    - T_hold
+    - use_htf_filter
+    - entry_reason
+    - stop_distance
+    - risk_amount
+    - risk_budget
+    - requested_risk_amount
+    - risk_utilization_pct
+    - under_risked_trade
+    - entry_state_dir_htf
+    - entry_state_htf_ema_fast
+    - entry_state_htf_ema_slow
+    - entry_state_htf_ready
+    - entry_state_htf_source_ts
+    - entry_state_ltf_ema20
+    - entry_state_mark_price
+    - entry_state_index_price
+    - entry_state_funding_raw
+    - entry_state_oi_level
+    - entry_state_basis_raw
+    - entry_decision_conditions_json
+    - entry_decision_gate_values_json
+
+runtime_controls:
+  enabled: true
+  tags: ["htf", "pullback", "trend_filter", "research_panel"]
+  notes: "Includes use_htf_filter true/false variants so the experiment can measure EV uplift and drawdown change versus no-filter baseline."
+
+falsification_criteria:
+  - "If use_htf_filter=true reduces trades but does not improve net EV or drawdown duration versus use_htf_filter=false, the HTF trend filter is not adding value."
+  - "If positive EV exists only in broad bull-market states and disappears in neutral/down states, classify as beta filter rather than portable edge."
+  - "If trade count collapses below usable sample size without tail improvement, refine or scrap."
+
+expected_failure_modes:
+  - "1h EMA50/EMA200 trend becomes a slow beta filter that enters too late."
+  - "LTF EMA20 pullback trigger over-trades chop near the moving average."
+  - "The no-filter baseline outperforms after costs because filter removes both winners and losers equally."
+  - "Warmup for EMA200 delays early-sample readiness; this is expected and must be logged as htf_ready=false rather than interpolated."
+
+truth_contract:
+  version: "1.0"
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  parity_required_for_fast_path: true
+  research_memory_requires_certification: true

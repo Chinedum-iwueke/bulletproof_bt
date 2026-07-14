@@ -232,6 +232,7 @@ def run_pipeline_command(
     dry_run: bool,
     capture_logs: bool,
     failure_tail_lines: int,
+    env: dict | None = None,
 ) -> CommandResult:
     """Compatibility wrapper for legacy pipeline runner API."""
     logger = logging.getLogger("orchestrator.process_logging.pipeline")
@@ -262,6 +263,7 @@ def run_pipeline_command(
         log_dir=command_log_dir,
         logger=logger,
         cwd=cwd,
+        env=env,
         tail_lines=failure_tail_lines,
         check=False,
     )

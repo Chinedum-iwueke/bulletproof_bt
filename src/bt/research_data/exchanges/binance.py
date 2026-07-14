@@ -11,7 +11,7 @@ from typing import Any
 
 import pandas as pd
 
-from bt.research_data.config import BINANCE_FAPI_BASE_URL
+from bt.research_data.config import BINANCE_FAPI_BASE_URL, BINANCE_SPOT_BASE_URL
 from bt.research_data.instruments import native_to_canonical_symbol, normalize_instrument_frame
 from bt.research_data.schemas import FUNDING_COLUMNS, INDEX_COLUMNS, MARK_COLUMNS, OHLCV_COLUMNS, OI_COLUMNS
 from bt.research_data.time import ms, utc_series, utc_ts
@@ -277,3 +277,96 @@ def get_adapter(exchange: str) -> BinanceUSDMPerpAdapter:
     if exchange != "binance":
         raise ValueError("Phase 1 supports only Binance")
     return BinanceUSDMPerpAdapter()
+
+
+@dataclass
+class BinanceSpotClient(BinanceFuturesClient):
+    base_url: str = BINANCE_SPOT_BASE_URL
+
+
+class BinanceSpotAdapter:
+    exchange = "binance"
+    market = "spot"
+
+    def __init__(self, client: BinanceSpotClient | None = None) -> None:
+        self.client = client or BinanceSpotClient()
+
+    def fetch_spot_instruments(self) -> pd.DataFrame:
+        payload = self.client.get("/api/v3/exchangeInfo")
+        rows = []
+        for item in payload.get("symbols", []):
+            if item.get("quoteAsset") != "USDT":
+                continue
+            permissions = {str(value).upper() for value in item.get("permissions", [])}
+            if permissions and "SPOT" not in permissions:
+                continue
+            rows.append(
+                {
+                    "market": "spot",
+                    "exchange": self.exchange,
+                    "native_symbol": item["symbol"],
+                    "canonical_symbol": native_to_canonical_symbol(item["symbol"], market="spot"),
+                    "base_asset": item.get("baseAsset"),
+                    "quote_asset": item.get("quoteAsset"),
+                    "settle_asset": item.get("quoteAsset"),
+                    "status": item.get("status"),
+                    "contract_type": "SPOT",
+                    "first_seen_ts": pd.NaT,
+                    "last_seen_ts": pd.Timestamp.now(tz="UTC"),
+                    "price_precision": item.get("quotePrecision") or item.get("pricePrecision"),
+                    "qty_precision": item.get("baseAssetPrecision"),
+                }
+            )
+        return normalize_instrument_frame(rows).sort_values("native_symbol").reset_index(drop=True)
+
+    def _fetch_klines(self, symbol: str, start: pd.Timestamp, end: pd.Timestamp, timeframe: str) -> list[list[Any]]:
+        start_ts = utc_ts(start)
+        end_ts = utc_ts(end)
+        rows: list[list[Any]] = []
+        cursor = start_ts
+        step_ms = 60_000 if timeframe == "1m" else 60_000
+        while cursor < end_ts:
+            chunk = self.client.get(
+                "/api/v3/klines",
+                {
+                    "symbol": symbol,
+                    "interval": timeframe,
+                    "startTime": ms(cursor),
+                    "endTime": ms(end_ts),
+                    "limit": 1000,
+                },
+            )
+            if not chunk:
+                break
+            rows.extend(chunk)
+            last_open_ms = int(chunk[-1][0])
+            next_ms = last_open_ms + step_ms
+            if next_ms <= ms(cursor):
+                break
+            cursor = pd.to_datetime(next_ms, unit="ms", utc=True)
+            if len(chunk) < 1000:
+                break
+        return rows
+
+    def fetch_spot_ohlcv(self, symbol: str, start: pd.Timestamp, end: pd.Timestamp, timeframe: str = "1m") -> pd.DataFrame:
+        rows = self._fetch_klines(symbol, start, end, timeframe)
+        df = pd.DataFrame(
+            [
+                {
+                    "ts": pd.to_datetime(row[0], unit="ms", utc=True),
+                    "exchange": self.exchange,
+                    "symbol": symbol,
+                    "canonical_symbol": native_to_canonical_symbol(symbol, market="spot"),
+                    "open": float(row[1]),
+                    "high": float(row[2]),
+                    "low": float(row[3]),
+                    "close": float(row[4]),
+                    "volume": float(row[5]),
+                    "quote_volume": float(row[7]),
+                    "trade_count": int(row[8]),
+                }
+                for row in rows
+            ],
+            columns=OHLCV_COLUMNS,
+        )
+        return df[df["ts"] < utc_ts(end)].reset_index(drop=True)

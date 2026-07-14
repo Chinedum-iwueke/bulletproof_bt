@@ -10,6 +10,7 @@ from bt.research_data.storage import ResearchDataStore
 from bt.research_data.time import utc_ts
 
 FETCH_STATE_COLUMNS = (
+    "market",
     "exchange",
     "symbol",
     "dataset",
@@ -23,6 +24,7 @@ FETCH_STATE_COLUMNS = (
 )
 
 COVERAGE_COLUMNS = (
+    "market",
     "exchange",
     "symbol",
     "dataset",
@@ -39,6 +41,7 @@ COVERAGE_COLUMNS = (
 
 @dataclass(frozen=True)
 class FetchKey:
+    market: str
     exchange: str
     symbol: str
     dataset: str
@@ -60,7 +63,7 @@ class FetchStateStore:
             return pd.DataFrame(columns=FETCH_STATE_COLUMNS)
         for col in FETCH_STATE_COLUMNS:
             if col not in df.columns:
-                df[col] = pd.NA
+                df[col] = "perp" if col == "market" else pd.NA
         for col in ("last_successful_ts", "last_attempt_ts", "updated_at"):
             df[col] = pd.to_datetime(df[col], utc=True, errors="coerce")
         return df[list(FETCH_STATE_COLUMNS)]
@@ -70,7 +73,8 @@ class FetchStateStore:
         if df.empty:
             return None
         mask = (
-            df["exchange"].eq(key.exchange)
+            df["market"].fillna("perp").astype(str).eq(key.market)
+            & df["exchange"].eq(key.exchange)
             & df["symbol"].eq(key.symbol)
             & df["dataset"].eq(key.dataset)
             & df["timeframe"].eq(key.timeframe)
@@ -97,6 +101,7 @@ class FetchStateStore:
                 last_row_count = int(previous["last_row_count"])
         row = {
             "exchange": key.exchange,
+            "market": key.market,
             "symbol": key.symbol,
             "dataset": key.dataset,
             "timeframe": key.timeframe,
@@ -110,7 +115,7 @@ class FetchStateStore:
         return self.store.upsert_parquet(
             self.path,
             pd.DataFrame([row], columns=FETCH_STATE_COLUMNS),
-            key=("exchange", "symbol", "dataset", "timeframe"),
+            key=("market", "exchange", "symbol", "dataset", "timeframe"),
             columns=FETCH_STATE_COLUMNS,
         )
 
@@ -124,15 +129,15 @@ class CoverageStore:
     def path(self):
         return self.store.manifest_path("coverage")
 
-    def update_from_dataset(self, exchange: str, symbol: str, dataset: str, timeframe: str) -> pd.DataFrame:
+    def update_from_dataset(self, exchange: str, symbol: str, dataset: str, timeframe: str, market: str = "perp") -> pd.DataFrame:
         raw_timeframe = "5m" if dataset == "oi" else timeframe
-        path = self.store.raw_path(exchange, symbol, dataset, raw_timeframe)
+        path = self.store.raw_path(exchange, symbol, dataset, raw_timeframe, market=market)
         df = self.store.read(path)
-        row = compute_coverage_row(exchange, symbol, dataset, raw_timeframe, df)
+        row = compute_coverage_row(exchange, symbol, dataset, raw_timeframe, df, market=market)
         return self.store.upsert_parquet(
             self.path,
             pd.DataFrame([row], columns=COVERAGE_COLUMNS),
-            key=("exchange", "symbol", "dataset", "timeframe"),
+            key=("market", "exchange", "symbol", "dataset", "timeframe"),
             columns=COVERAGE_COLUMNS,
         )
 
@@ -155,11 +160,13 @@ def compute_coverage_row(
     dataset: str,
     timeframe: str,
     df: pd.DataFrame,
+    market: str = "perp",
 ) -> dict[str, object]:
     freq = expected_frequency(dataset, timeframe)
     if df.empty or "ts" not in df.columns:
         return {
             "exchange": exchange,
+            "market": market,
             "symbol": symbol,
             "dataset": dataset,
             "timeframe": timeframe,
@@ -185,6 +192,7 @@ def compute_coverage_row(
         largest_gap_minutes = float(max_gap / pd.Timedelta(minutes=1)) if pd.notna(max_gap) else 0.0
     return {
         "exchange": exchange,
+        "market": market,
         "symbol": symbol,
         "dataset": dataset,
         "timeframe": timeframe,

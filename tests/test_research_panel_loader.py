@@ -114,6 +114,62 @@ def test_research_panel_config_applies_date_and_symbol_scope(tmp_path) -> None:
     assert third is None
 
 
+def test_candidate_event_feed_skips_flat_non_candidate_rows_then_goes_dense_on_exposure(tmp_path) -> None:
+    root = tmp_path / "research_data"
+    panel = _panel(root, "BTCUSDT", [1.0, 2.0, 3.0, 4.0])
+    panel["htf_15m_ready"] = [False, True, False, False]
+    panel["htf_15m_ts"] = panel["ts"]
+    panel["htf_15m_open"] = panel["open"]
+    panel["htf_15m_high"] = panel["high"]
+    panel["htf_15m_low"] = panel["low"]
+    panel["htf_15m_close"] = panel["close"]
+    panel["htf_15m_volume"] = panel["volume"]
+    panel["htf_15m_n_bars"] = 15
+    panel["htf_15m_expected_bars"] = 15
+    panel["htf_15m_is_complete"] = True
+    path = root / "canonical" / "binance" / "BTCUSDT" / "timeframe=1m" / "research_panel.parquet"
+    panel.to_parquet(path, index=False)
+    manifest_path = root / "manifests" / "stable_universe.parquet"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        {"exchange": ["binance"], "native_symbol": ["BTCUSDT"], "available": [True]}
+    ).to_parquet(manifest_path, index=False)
+
+    feed = build_streaming_research_panel_feed_from_config(
+        {
+            "root": str(root),
+            "exchange": "binance",
+            "universe": "stable",
+            "stable_manifest": str(manifest_path),
+            "timeframe": "1m",
+            "extra_column_prefixes": ["htf_15m_"],
+            "candidate_event_mode": "auto",
+            "columnar_candidate_events": True,
+        }
+    )
+
+    first = feed.next()
+    assert first is not None
+    assert first[0].ts == pd.Timestamp("2021-01-01 00:01", tz="UTC")
+
+    feed.set_execution_state(has_exposure=True)
+    second = feed.next()
+    assert second is not None
+    assert second[0].ts == pd.Timestamp("2021-01-01 00:02", tz="UTC")
+    third = feed.next()
+    assert third is not None
+    assert third[0].ts == pd.Timestamp("2021-01-01 00:03", tz="UTC")
+
+    summary = feed.candidate_event_stats()
+    assert summary["enabled"] is True
+    assert summary["skipped_timestamps"] == 1
+    assert summary["candidate_timestamps"] == 1
+    assert summary["dense_timestamps"] == 2
+    assert summary["emitted_by_reason"]["candidate:htf_15m_ready"] == 1
+    assert summary["emitted_by_reason"]["dense:execution_exposure"] == 2
+    assert summary["skipped_by_reason"]["skip:flat_no_candidate_event"] == 1
+
+
 def test_volatile_loader_changes_active_universe_by_timestamp(tmp_path) -> None:
     root = tmp_path / "research_data"
     _panel(root, "BTCUSDT", [1.0, 2.0, 3.0])
@@ -177,6 +233,40 @@ def test_materialized_volatile_panel_contains_only_active_intervals(tmp_path) ->
     ]
     assert materialized["volatile_active"].all()
     assert "funding_rate" in materialized.columns
+
+
+def test_materialized_volatile_panel_preserves_l7h1_kernel_columns(tmp_path) -> None:
+    root = tmp_path / "research_data"
+    panel = _panel(root, "BTCUSDT", [1.0, 2.0])
+    panel["l7h1_15m_compiled_feature_ready"] = [False, True]
+    panel["l7h1_15m_CSI"] = [0.0, 0.8]
+    path = root / "canonical" / "binance" / "BTCUSDT" / "timeframe=1m" / "research_panel.parquet"
+    panel.to_parquet(path, index=False)
+    membership = pd.DataFrame(
+        {
+            "ts": [pd.Timestamp("2021-01-01 00:00", tz="UTC")],
+            "exchange": ["binance"],
+            "symbol": ["BTCUSDT"],
+            "universe": ["volatile_data_1m_canonical"],
+        }
+    )
+    membership_path = root / "manifests" / "volatile_universe_membership.parquet"
+    membership_path.parent.mkdir(parents=True, exist_ok=True)
+    membership.to_parquet(membership_path, index=False)
+
+    materialized_path = materialize_volatile_panel(
+        "binance",
+        "1m",
+        membership_path=membership_path,
+        start="2021-01-01T00:00:00Z",
+        end="2021-01-01T00:02:00Z",
+        store=ResearchDataStore(root),
+    )
+
+    materialized = pd.read_parquet(materialized_path)
+    assert "l7h1_15m_compiled_feature_ready" in materialized.columns
+    assert "l7h1_15m_CSI" in materialized.columns
+    assert materialized["l7h1_15m_CSI"].tolist() == [0.0, 0.8]
 
 
 def test_volatile_streaming_feed_prefers_materialized_panel(tmp_path) -> None:

@@ -24,6 +24,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import sys
 from typing import Any
@@ -48,6 +49,7 @@ from bt.paths import (
     resolve_pipeline_log_path,
     resolve_verdict_bundle_root,
 )
+from bt.research_tiers import research_metadata_for_phase
 from bt.validation.strategy_admission import (
     validate_hypothesis_admission,
     write_strategy_admission_report,
@@ -66,7 +68,7 @@ def parse_args() -> argparse.Namespace:
         help="Optional worker cap for volatile research-panel runs; defaults to min(max-workers, 4).",
     )
 
-    parser.add_argument("--phase", default="tier2")
+    parser.add_argument("--phase", default="tier2b")
     parser.add_argument("--config", default="configs/engine.yaml")
     parser.add_argument("--local-config", default="configs/local/engine.lab.yaml")
     parser.add_argument(
@@ -135,6 +137,7 @@ def run_command(
     command_log_dir: Path | None,
     failure_tail_lines: int,
     capture_logs: bool,
+    env: dict[str, str] | None = None,
 ) -> None:
     printable = " ".join(cmd)
     print(f"$ {printable}")
@@ -149,6 +152,7 @@ def run_command(
         dry_run=dry_run,
         capture_logs=capture_logs,
         failure_tail_lines=failure_tail_lines,
+        env=env,
     )
     commands_log.append({
         "step": result.step,
@@ -294,7 +298,14 @@ def run_backtest(
             cmd.extend(["--stable-manifest", stable_manifest])
         if universe == "volatile" and membership_path:
             cmd.extend(["--membership-path", membership_path])
-    run_command(cmd, step=step, dry_run=dry_run, log_path=log_path, commands_log=commands_log, command_log_dir=command_log_dir, failure_tail_lines=failure_tail_lines, capture_logs=capture_logs)
+    env = None
+    if universe == "volatile" and "l7_h1_csi_gated_displacement_trend" in experiment_root.name:
+        # L7-H1 volatile parity passed for the guarded online event adapter.
+        # The adapter keeps the classic risk/execution/accounting/logging path
+        # and only replaces duplicated strategy-family event work.
+        env = os.environ.copy()
+        env["BT_ALLOW_VOLATILE_L7H1_COMPILED"] = "1"
+    run_command(cmd, step=step, dry_run=dry_run, log_path=log_path, commands_log=commands_log, command_log_dir=command_log_dir, failure_tail_lines=failure_tail_lines, capture_logs=capture_logs, env=env)
 
 
 def run_truth_validation(
@@ -481,6 +492,7 @@ def create_verdict_bundle(
 ) -> Path:
     bundle_dir = resolve_verdict_bundle_root(outputs_root=outputs_root, phase=phase, experiment_name=name)
     bundle_dir.mkdir(parents=True, exist_ok=True)
+    research_meta = research_metadata_for_phase(phase)
 
     stable_summary_files = collect_summary_files(stable_root)
     volatile_summary_files = collect_summary_files(volatile_root)
@@ -494,6 +506,7 @@ def create_verdict_bundle(
         "name": name,
         "hypothesis": str(hypothesis.resolve()),
         "phase": phase,
+        **research_meta,
         "created_at": utc_now_iso(),
         "stable": {
             "experiment_root": str(stable_root.resolve()),
@@ -593,6 +606,7 @@ def db_register_artifact(
 def main() -> int:
     args = parse_args()
     project_root = Path(__file__).resolve().parents[1]
+    research_meta = research_metadata_for_phase(args.phase)
 
     hypothesis = Path(args.hypothesis)
     if not hypothesis.exists() or not hypothesis.is_file():
@@ -651,7 +665,7 @@ def main() -> int:
             name=args.name,
             yaml_path=hypothesis,
             status="IMPLEMENTED",
-            metadata={"phase": args.phase},
+            metadata={"phase": args.phase, **research_meta},
         )
         print(f"[db] Created/upserted hypothesis: {hypothesis_id}")
         stable_experiment_id = db.create_experiment(

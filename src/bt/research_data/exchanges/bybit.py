@@ -17,6 +17,22 @@ from bt.research_data.schemas import FUNDING_COLUMNS, INDEX_COLUMNS, MARK_COLUMN
 from bt.research_data.time import ms, utc_ts
 
 
+def normalize_bybit_event_ts(value: object) -> pd.Timestamp:
+    """Normalize Bybit event timestamps without changing event ordering.
+
+    Bybit funding timestamps are exchange-published event times, and some
+    instruments use non-8h funding schedules. We preserve the published instant
+    but snap harmless sub-second transport jitter to exact seconds so downstream
+    validators can treat the row as a clean causal event.
+    """
+
+    ts = pd.to_datetime(int(value), unit="ms", utc=True)
+    rounded = ts.round("s")
+    if abs(ts - rounded) <= pd.Timedelta(milliseconds=500):
+        return rounded
+    return ts
+
+
 @dataclass
 class BybitV5Client:
     base_url: str = BYBIT_V5_BASE_URL
@@ -211,14 +227,14 @@ class BybitUSDTPerpAdapter:
             if not chunk:
                 break
             rows.extend(chunk)
-            latest = max(pd.to_datetime(int(row["fundingRateTimestamp"]), unit="ms", utc=True) for row in chunk)
+            latest = max(normalize_bybit_event_ts(row["fundingRateTimestamp"]) for row in chunk)
             cursor = latest + pd.Timedelta(milliseconds=1)
             if len(chunk) < 200:
                 break
         df = pd.DataFrame(
             [
                 {
-                    "ts": pd.to_datetime(int(row["fundingRateTimestamp"]), unit="ms", utc=True),
+                    "ts": normalize_bybit_event_ts(row["fundingRateTimestamp"]),
                     "exchange": self.exchange,
                     "symbol": symbol,
                     "canonical_symbol": native_to_canonical_symbol(symbol),
@@ -266,3 +282,114 @@ class BybitUSDTPerpAdapter:
             columns=OI_COLUMNS,
         ).sort_values("ts")
         return df[df["ts"] < end_ts].reset_index(drop=True)
+
+
+class BybitSpotAdapter:
+    exchange = "bybit"
+    market = "spot"
+
+    def __init__(self, client: BybitV5Client | None = None) -> None:
+        self.client = client or BybitV5Client()
+
+    def fetch_spot_instruments(self) -> pd.DataFrame:
+        rows: list[dict[str, Any]] = []
+        cursor = ""
+        while True:
+            params = {"category": "spot", "limit": 1000}
+            if cursor:
+                params["cursor"] = cursor
+            payload = self.client.get("/v5/market/instruments-info", params)
+            rows.extend(payload.get("result", {}).get("list", []))
+            cursor = payload.get("result", {}).get("nextPageCursor") or ""
+            if not cursor:
+                break
+        normalized = []
+        for item in rows:
+            if item.get("quoteCoin") != "USDT":
+                continue
+            normalized.append(
+                {
+                    "market": "spot",
+                    "exchange": self.exchange,
+                    "native_symbol": item.get("symbol"),
+                    "canonical_symbol": native_to_canonical_symbol(str(item.get("symbol", "")), market="spot"),
+                    "base_asset": item.get("baseCoin"),
+                    "quote_asset": item.get("quoteCoin"),
+                    "settle_asset": item.get("quoteCoin"),
+                    "contract_type": "SPOT",
+                    "status": item.get("status"),
+                    "first_seen_ts": pd.to_datetime(
+                        pd.to_numeric(item.get("launchTime"), errors="coerce"),
+                        unit="ms",
+                        utc=True,
+                        errors="coerce",
+                    ),
+                    "last_seen_ts": pd.Timestamp.now(tz="UTC"),
+                    "tick_size": item.get("priceFilter", {}).get("tickSize"),
+                    "qty_step": item.get("lotSizeFilter", {}).get("basePrecision"),
+                }
+            )
+        return normalize_instrument_frame(normalized).sort_values("native_symbol").reset_index(drop=True)
+
+    def _fetch_spot_kline(self, symbol: str, start: pd.Timestamp, end: pd.Timestamp, timeframe: str) -> list[list[Any]]:
+        interval = timeframe.removesuffix("m") if timeframe.endswith("m") else timeframe
+        rows: list[list[Any]] = []
+        cursor_end = utc_ts(end)
+        start_ts = utc_ts(start)
+        end_ts = utc_ts(end)
+        while cursor_end > start_ts:
+            payload = self.client.get(
+                "/v5/market/kline",
+                {
+                    "category": "spot",
+                    "symbol": symbol,
+                    "interval": interval,
+                    "start": ms(start_ts),
+                    "end": ms(cursor_end),
+                    "limit": 1000,
+                },
+            )
+            chunk = payload.get("result", {}).get("list", [])
+            if not chunk:
+                break
+            rows.extend(chunk)
+            oldest = min(pd.to_datetime(int(row[0]), unit="ms", utc=True) for row in chunk)
+            if oldest <= start_ts or oldest >= cursor_end:
+                break
+            cursor_end = oldest
+            if len(chunk) < 1000:
+                break
+        deduped = {
+            int(row[0]): row
+            for row in rows
+            if start_ts <= pd.to_datetime(int(row[0]), unit="ms", utc=True) < end_ts
+        }
+        return [deduped[key] for key in sorted(deduped)]
+
+    def fetch_spot_ohlcv(self, symbol: str, start: pd.Timestamp, end: pd.Timestamp, timeframe: str = "1m") -> pd.DataFrame:
+        rows = self._fetch_spot_kline(symbol, start, end, timeframe)
+        df = pd.DataFrame(
+            [
+                {
+                    "ts": pd.to_datetime(int(row[0]), unit="ms", utc=True),
+                    "exchange": self.exchange,
+                    "symbol": symbol,
+                    "canonical_symbol": native_to_canonical_symbol(symbol, market="spot"),
+                    "open": float(row[1]),
+                    "high": float(row[2]),
+                    "low": float(row[3]),
+                    "close": float(row[4]),
+                    "volume": float(row[5]),
+                    "quote_volume": float(row[6]),
+                    "trade_count": pd.NA,
+                }
+                for row in rows
+            ],
+            columns=OHLCV_COLUMNS,
+        )
+        if not df.empty:
+            valid = df["high"].ge(df[["open", "close", "low"]].max(axis=1)) & df["low"].le(
+                df[["open", "close", "high"]].min(axis=1)
+            )
+            df = df.loc[valid]
+        return df[df["ts"] < utc_ts(end)].reset_index(drop=True)

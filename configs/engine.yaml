@@ -30,8 +30,19 @@ execution:
 
 # Risk sizing and margin guardrails.
 risk:
+  # Sizing modes:
+  # - risk_at_stop / equity_pct / r_fixed: risk.r_per_trade is the intended
+  #   loss if the initial stop is hit. Position notional is derived from stop
+  #   distance, then notional/margin caps may clip it.
+  # - fixed_notional_pct_equity: risk.notional_pct_equity is the entry exposure
+  #   itself. The stop still controls exits and R metrics, but the actual stop
+  #   risk varies with stop distance.
   mode: equity_pct
   r_per_trade: 0.005
+  # notional_pct_equity: 0.05
+  cap_policy: allow_clip_with_truth
+  min_risk_utilization_pct: 0.0
+  report_under_risked_trades: true
   max_positions: 5
   max_leverage: 1.0
   stop_resolution: safe         # safe | strict

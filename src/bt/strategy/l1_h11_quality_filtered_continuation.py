@@ -38,7 +38,9 @@ class _State:
     atr_entry: float | None = None
     stop_price_frozen: float | None = None
     stop_distance_frozen: float | None = None
+    favorable_extreme_price: float | None = None
     lock_armed: bool = False
+    runner_trail_armed: bool = False
     signal_bars_held: int = 0
 
 
@@ -58,6 +60,29 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
         stop_padding_atr: float = 0.0,
         lock_r: float = 1.0,
         vwap_giveback: str = "off",
+        h11_tuning_profile: str = "",
+        h11a_tuning_profile: str = "baseline",
+        allowed_sides: str = "both",
+        allowed_vol_regimes: str = "",
+        blocked_vol_regimes: str = "",
+        allowed_liquidity_regimes: str = "",
+        blocked_liquidity_regimes: str = "",
+        allowed_displacement_regimes: str = "",
+        blocked_displacement_regimes: str = "",
+        allowed_csi_buckets: str = "",
+        blocked_csi_buckets: str = "",
+        allowed_basis_regimes: str = "",
+        blocked_basis_regimes: str = "",
+        allowed_funding_regimes: str = "",
+        blocked_funding_regimes: str = "",
+        excluded_symbols: str = "",
+        entry_cooldown_hours: float = 0.0,
+        break_even_trigger_r: float = 0.0,
+        profit_lock_trigger_r: float = 0.0,
+        profit_lock_r: float = 0.0,
+        runner_trail_trigger_r: float = 0.0,
+        runner_trail_distance_r: float = 0.0,
+        loss_cap_r: float = 0.0,
         family_variant: str = "L1-H11A",
         setup_type: str = "quality_filtered_continuation",
     ) -> None:
@@ -72,9 +97,35 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
         self._stop_padding_atr = float(stop_padding_atr)
         self._lock_r = float(lock_r)
         self._vwap_giveback = str(vwap_giveback).lower()
+        self._h11a_tuning_profile = str(h11_tuning_profile or h11a_tuning_profile or "baseline")
+        self._allowed_sides = str(allowed_sides or "both").lower()
+        self._allowed_vol_regimes = self._parse_set(allowed_vol_regimes)
+        self._blocked_vol_regimes = self._parse_set(blocked_vol_regimes)
+        self._allowed_liquidity_regimes = self._parse_set(allowed_liquidity_regimes)
+        self._blocked_liquidity_regimes = self._parse_set(blocked_liquidity_regimes)
+        self._allowed_displacement_regimes = self._parse_set(allowed_displacement_regimes)
+        self._blocked_displacement_regimes = self._parse_set(blocked_displacement_regimes)
+        self._allowed_csi_buckets = self._parse_set(allowed_csi_buckets)
+        self._blocked_csi_buckets = self._parse_set(blocked_csi_buckets)
+        self._allowed_basis_regimes = self._parse_set(allowed_basis_regimes)
+        self._blocked_basis_regimes = self._parse_set(blocked_basis_regimes)
+        self._allowed_funding_regimes = self._parse_set(allowed_funding_regimes)
+        self._blocked_funding_regimes = self._parse_set(blocked_funding_regimes)
+        self._excluded_symbols = self._parse_set(excluded_symbols)
+        self._entry_cooldown_hours = float(entry_cooldown_hours or 0.0)
+        self._last_entry_ts_by_symbol: dict[str, pd.Timestamp] = {}
+        self._break_even_trigger_r = float(break_even_trigger_r or 0.0)
+        self._profit_lock_trigger_r = float(profit_lock_trigger_r or 0.0)
+        self._profit_lock_r = float(profit_lock_r or 0.0)
+        self._runner_trail_trigger_r = float(runner_trail_trigger_r or 0.0)
+        self._runner_trail_distance_r = float(runner_trail_distance_r or 0.0)
+        self._loss_cap_r = float(loss_cap_r or 0.0)
         self._family_variant = str(family_variant)
         self._setup_type = str(setup_type)
         self._state: dict[str, _State] = {}
+        if self._family_variant == "L1-H11C" and self._break_even_trigger_r <= 0:
+            self._break_even_trigger_r = self._lock_r
+        self._apply_h11a_tuning_profile()
 
     def _state_for(self, symbol: str) -> _State:
         st = self._state.get(symbol)
@@ -114,7 +165,9 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
         st.atr_entry = None
         st.stop_price_frozen = None
         st.stop_distance_frozen = None
+        st.favorable_extreme_price = None
         st.lock_armed = False
+        st.runner_trail_armed = False
         st.signal_bars_held = 0
 
     @staticmethod
@@ -128,6 +181,358 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
         if self._family_variant == "L1-H11B":
             return self._swing_distance_atr
         return self._impulse_min_atr_fixed
+
+    @staticmethod
+    def _parse_set(raw: str | None) -> set[str]:
+        if raw is None:
+            return set()
+        return {part.strip() for part in str(raw).replace("|", ",").split(",") if part.strip()}
+
+    def _apply_h11a_tuning_profile(self) -> None:
+        profile = self._h11a_tuning_profile.strip().lower()
+        if profile in {"", "baseline", "none"}:
+            return
+        profiles: dict[str, dict[str, Any]] = {
+            "h11a_1h_core_protected": {
+                "adx_min": 20.0,
+                "pull_entry_atr_low": 0.65,
+                "pull_entry_atr_high": 1.0,
+                "allowed_sides": "long",
+                "allowed_liquidity_regimes": "liquid,moderate",
+                "blocked_basis_regimes": "basis_positive,basis_very_positive",
+                "blocked_funding_regimes": "funding_negative,funding_very_negative",
+                "break_even_trigger_r": 1.0,
+                "profit_lock_trigger_r": 2.0,
+                "profit_lock_r": 1.0,
+                "runner_trail_trigger_r": 3.0,
+                "runner_trail_distance_r": 1.5,
+                "loss_cap_r": 0.75,
+            },
+            "h11a_1h_quality_balanced": {
+                "adx_min": 20.0,
+                "pull_entry_atr_low": 0.65,
+                "pull_entry_atr_high": 1.0,
+                "blocked_liquidity_regimes": "fragile,broken",
+                "blocked_basis_regimes": "basis_positive,basis_very_positive",
+                "blocked_funding_regimes": "funding_negative,funding_very_negative",
+                "allowed_csi_buckets": "csi_low,csi_mid",
+                "break_even_trigger_r": 1.0,
+                "profit_lock_trigger_r": 2.0,
+                "profit_lock_r": 1.0,
+                "runner_trail_trigger_r": 3.0,
+                "runner_trail_distance_r": 1.5,
+                "loss_cap_r": 0.75,
+            },
+            "h11a_15m_liquid_midvol_runner": {
+                "adx_min": 20.0,
+                "pull_entry_atr_low": 0.5,
+                "pull_entry_atr_high": 0.8,
+                "allowed_sides": "long",
+                "allowed_vol_regimes": "vol_mid",
+                "allowed_liquidity_regimes": "liquid",
+                "allowed_displacement_regimes": "mild_impulse,no_impulse",
+                "allowed_csi_buckets": "csi_low",
+                "break_even_trigger_r": 1.0,
+                "profit_lock_trigger_r": 1.5,
+                "profit_lock_r": 0.5,
+                "runner_trail_trigger_r": 2.5,
+                "runner_trail_distance_r": 1.25,
+                "loss_cap_r": 0.75,
+            },
+            "h11a_15m_explosive_moderate": {
+                "adx_min": 20.0,
+                "pull_entry_atr_low": 0.65,
+                "pull_entry_atr_high": 0.8,
+                "allowed_sides": "long",
+                "allowed_vol_regimes": "vol_extreme",
+                "allowed_liquidity_regimes": "moderate",
+                "allowed_displacement_regimes": "strong_impulse,extreme_impulse",
+                "blocked_basis_regimes": "basis_positive,basis_very_positive",
+                "break_even_trigger_r": 1.0,
+                "profit_lock_trigger_r": 2.0,
+                "profit_lock_r": 1.0,
+                "runner_trail_trigger_r": 3.0,
+                "runner_trail_distance_r": 1.75,
+                "loss_cap_r": 0.75,
+            },
+            "h11b_1h_core_geometry": {
+                "adx_min_fixed": 20.0,
+                "pull_entry_atr_low": 0.5,
+                "pull_entry_atr_high": 1.0,
+                "swing_distance_atr": 1.5,
+                "allowed_sides": "long",
+                "blocked_liquidity_regimes": "fragile,broken",
+                "allowed_csi_buckets": "csi_low,csi_mid",
+                "blocked_basis_regimes": "basis_very_positive",
+                "blocked_funding_regimes": "funding_very_negative",
+                "break_even_trigger_r": 1.0,
+                "profit_lock_trigger_r": 2.0,
+                "profit_lock_r": 1.0,
+                "runner_trail_trigger_r": 3.0,
+                "runner_trail_distance_r": 1.5,
+                "loss_cap_r": 0.75,
+            },
+            "h11b_1h_mild_basis_runner": {
+                "adx_min_fixed": 20.0,
+                "pull_entry_atr_low": 0.5,
+                "pull_entry_atr_high": 1.0,
+                "swing_distance_atr": 1.5,
+                "allowed_sides": "long",
+                "allowed_displacement_regimes": "mild_impulse",
+                "allowed_basis_regimes": "basis_positive",
+                "allowed_funding_regimes": "funding_neutral",
+                "break_even_trigger_r": 1.0,
+                "profit_lock_trigger_r": 2.0,
+                "profit_lock_r": 1.0,
+                "runner_trail_trigger_r": 3.0,
+                "runner_trail_distance_r": 1.75,
+                "loss_cap_r": 0.75,
+            },
+            "h11b_15m_midvol_funding_squeeze": {
+                "adx_min_fixed": 20.0,
+                "pull_entry_atr_low": 0.35,
+                "pull_entry_atr_high": 0.8,
+                "swing_distance_atr": 1.0,
+                "allowed_sides": "long",
+                "allowed_vol_regimes": "vol_mid",
+                "allowed_liquidity_regimes": "liquid",
+                "allowed_funding_regimes": "funding_negative",
+                "break_even_trigger_r": 1.0,
+                "profit_lock_trigger_r": 1.5,
+                "profit_lock_r": 0.5,
+                "runner_trail_trigger_r": 2.5,
+                "runner_trail_distance_r": 1.25,
+                "loss_cap_r": 0.75,
+            },
+            "h11b_15m_liquid_mild_squeeze": {
+                "adx_min_fixed": 20.0,
+                "pull_entry_atr_low": 0.35,
+                "pull_entry_atr_high": 0.8,
+                "swing_distance_atr": 1.0,
+                "allowed_sides": "long",
+                "allowed_liquidity_regimes": "liquid",
+                "allowed_displacement_regimes": "mild_impulse",
+                "allowed_funding_regimes": "funding_negative",
+                "break_even_trigger_r": 1.0,
+                "profit_lock_trigger_r": 1.5,
+                "profit_lock_r": 0.5,
+                "runner_trail_trigger_r": 2.5,
+                "runner_trail_distance_r": 1.25,
+                "loss_cap_r": 0.75,
+            },
+            "h11c_1h_core_protected": {
+                "adx_min_fixed": 20.0,
+                "pull_entry_atr_low": 0.5,
+                "pull_entry_atr_high": 1.0,
+                "impulse_min_atr_fixed": 1.0,
+                "stop_padding_atr": 0.25,
+                "lock_r": 1.5,
+                "vwap_giveback": "on",
+                "allowed_sides": "long",
+                "blocked_liquidity_regimes": "fragile,broken",
+                "allowed_csi_buckets": "csi_low,csi_mid",
+                "blocked_basis_regimes": "basis_positive,basis_very_positive",
+                "blocked_funding_regimes": "funding_negative,funding_very_negative",
+                "break_even_trigger_r": 1.0,
+                "profit_lock_trigger_r": 2.0,
+                "profit_lock_r": 1.0,
+                "runner_trail_trigger_r": 3.0,
+                "runner_trail_distance_r": 1.5,
+            },
+            "h11c_1h_mid_moderate_runner": {
+                "adx_min_fixed": 20.0,
+                "pull_entry_atr_low": 0.5,
+                "pull_entry_atr_high": 1.0,
+                "impulse_min_atr_fixed": 1.0,
+                "stop_padding_atr": 0.25,
+                "lock_r": 1.5,
+                "vwap_giveback": "on",
+                "allowed_sides": "long",
+                "allowed_vol_regimes": "vol_mid",
+                "allowed_liquidity_regimes": "moderate",
+                "allowed_funding_regimes": "funding_neutral",
+                "break_even_trigger_r": 1.0,
+                "profit_lock_trigger_r": 2.0,
+                "profit_lock_r": 1.0,
+                "runner_trail_trigger_r": 3.0,
+                "runner_trail_distance_r": 1.75,
+            },
+            "h11c_15m_fragile_extreme_runner": {
+                "adx_min_fixed": 20.0,
+                "pull_entry_atr_low": 0.5,
+                "pull_entry_atr_high": 1.0,
+                "impulse_min_atr_fixed": 1.0,
+                "stop_padding_atr": 0.25,
+                "lock_r": 1.0,
+                "vwap_giveback": "off",
+                "allowed_sides": "long",
+                "allowed_liquidity_regimes": "fragile",
+                "allowed_displacement_regimes": "extreme_impulse",
+                "allowed_basis_regimes": "basis_very_positive",
+                "break_even_trigger_r": 1.0,
+                "profit_lock_trigger_r": 1.5,
+                "profit_lock_r": 0.5,
+                "runner_trail_trigger_r": 2.5,
+                "runner_trail_distance_r": 1.25,
+            },
+            "h11c_15m_mid_fragile_basis_runner": {
+                "adx_min_fixed": 20.0,
+                "pull_entry_atr_low": 0.5,
+                "pull_entry_atr_high": 1.0,
+                "impulse_min_atr_fixed": 1.0,
+                "stop_padding_atr": 0.25,
+                "lock_r": 1.0,
+                "vwap_giveback": "off",
+                "allowed_sides": "long",
+                "allowed_vol_regimes": "vol_mid",
+                "allowed_liquidity_regimes": "fragile",
+                "allowed_basis_regimes": "basis_very_positive",
+                "break_even_trigger_r": 1.0,
+                "profit_lock_trigger_r": 1.5,
+                "profit_lock_r": 0.5,
+                "runner_trail_trigger_r": 2.5,
+                "runner_trail_distance_r": 1.25,
+            },
+        }
+        payload = profiles.get(profile)
+        if payload is None:
+            raise ValueError(f"unknown h11a_tuning_profile={self._h11a_tuning_profile!r}")
+        self._adx_min = float(payload.get("adx_min", self._adx_min))
+        self._adx_min_fixed = float(payload.get("adx_min_fixed", self._adx_min_fixed))
+        self._pull_entry_atr_low = float(payload.get("pull_entry_atr_low", self._pull_entry_atr_low))
+        self._pull_entry_atr_high = float(payload.get("pull_entry_atr_high", self._pull_entry_atr_high))
+        self._impulse_min_atr_fixed = float(payload.get("impulse_min_atr_fixed", self._impulse_min_atr_fixed))
+        self._swing_distance_atr = float(payload.get("swing_distance_atr", self._swing_distance_atr))
+        self._stop_atr_mult = float(payload.get("stop_atr_mult", self._stop_atr_mult))
+        self._stop_padding_atr = float(payload.get("stop_padding_atr", self._stop_padding_atr))
+        self._lock_r = float(payload.get("lock_r", self._lock_r))
+        self._vwap_giveback = str(payload.get("vwap_giveback", self._vwap_giveback)).lower()
+        if "allowed_sides" in payload:
+            self._allowed_sides = str(payload["allowed_sides"]).lower()
+        for attr, key in (
+            ("_allowed_vol_regimes", "allowed_vol_regimes"),
+            ("_blocked_vol_regimes", "blocked_vol_regimes"),
+            ("_allowed_liquidity_regimes", "allowed_liquidity_regimes"),
+            ("_blocked_liquidity_regimes", "blocked_liquidity_regimes"),
+            ("_allowed_displacement_regimes", "allowed_displacement_regimes"),
+            ("_blocked_displacement_regimes", "blocked_displacement_regimes"),
+            ("_allowed_csi_buckets", "allowed_csi_buckets"),
+            ("_blocked_csi_buckets", "blocked_csi_buckets"),
+            ("_allowed_basis_regimes", "allowed_basis_regimes"),
+            ("_blocked_basis_regimes", "blocked_basis_regimes"),
+            ("_allowed_funding_regimes", "allowed_funding_regimes"),
+            ("_blocked_funding_regimes", "blocked_funding_regimes"),
+        ):
+            if key in payload:
+                setattr(self, attr, self._parse_set(str(payload[key])))
+        self._break_even_trigger_r = float(payload.get("break_even_trigger_r", self._break_even_trigger_r))
+        self._profit_lock_trigger_r = float(payload.get("profit_lock_trigger_r", self._profit_lock_trigger_r))
+        self._profit_lock_r = float(payload.get("profit_lock_r", self._profit_lock_r))
+        self._runner_trail_trigger_r = float(payload.get("runner_trail_trigger_r", self._runner_trail_trigger_r))
+        self._runner_trail_distance_r = float(payload.get("runner_trail_distance_r", self._runner_trail_distance_r))
+        self._loss_cap_r = float(payload.get("loss_cap_r", self._loss_cap_r))
+
+    def _state_gate_ok(self, ctx: Mapping[str, Any], symbol: str) -> bool:
+        gates = (
+            self._allowed_vol_regimes,
+            self._blocked_vol_regimes,
+            self._allowed_liquidity_regimes,
+            self._blocked_liquidity_regimes,
+            self._allowed_displacement_regimes,
+            self._blocked_displacement_regimes,
+            self._allowed_csi_buckets,
+            self._blocked_csi_buckets,
+            self._allowed_basis_regimes,
+            self._blocked_basis_regimes,
+            self._allowed_funding_regimes,
+            self._blocked_funding_regimes,
+        )
+        if not any(gates):
+            return True
+        root = ctx.get("state") if isinstance(ctx, Mapping) else None
+        snapshot = root.get(symbol) if isinstance(root, Mapping) else None
+        if not isinstance(snapshot, Mapping):
+            return False
+
+        def check(key: str, allowed: set[str], blocked: set[str]) -> bool:
+            value = snapshot.get(key)
+            if value is None:
+                return not allowed
+            normalized = str(value)
+            if allowed and normalized not in allowed:
+                return False
+            if blocked and normalized in blocked:
+                return False
+            return True
+
+        return (
+            check("entry_state_vol_regime", self._allowed_vol_regimes, self._blocked_vol_regimes)
+            and check("entry_state_liquidity_regime", self._allowed_liquidity_regimes, self._blocked_liquidity_regimes)
+            and check("entry_state_displacement_regime", self._allowed_displacement_regimes, self._blocked_displacement_regimes)
+            and check("entry_state_csi_bucket", self._allowed_csi_buckets, self._blocked_csi_buckets)
+            and check("entry_state_basis_regime", self._allowed_basis_regimes, self._blocked_basis_regimes)
+            and check("entry_state_funding_regime", self._allowed_funding_regimes, self._blocked_funding_regimes)
+        )
+
+    def _side_gate_ok(self, side: Side) -> bool:
+        if self._allowed_sides in {"both", "all", ""}:
+            return True
+        if self._allowed_sides in {"long", "buy"}:
+            return side == Side.BUY
+        if self._allowed_sides in {"short", "sell"}:
+            return side == Side.SELL
+        raise ValueError(f"unknown allowed_sides={self._allowed_sides!r}")
+
+    def _concentration_gate_ok(self, symbol: str, signal_ts: pd.Timestamp) -> bool:
+        if symbol in self._excluded_symbols:
+            return False
+        if self._entry_cooldown_hours <= 0:
+            return True
+        last_entry_ts = self._last_entry_ts_by_symbol.get(symbol)
+        if last_entry_ts is None:
+            return True
+        elapsed_hours = (pd.Timestamp(signal_ts) - pd.Timestamp(last_entry_ts)).total_seconds() / 3600.0
+        return elapsed_hours >= self._entry_cooldown_hours
+
+    def _protection_enabled(self) -> bool:
+        return self._family_variant == "L1-H11C" or self._break_even_trigger_r > 0 or (
+            self._profit_lock_trigger_r > 0 and self._profit_lock_r > 0
+        ) or (
+            self._runner_trail_trigger_r > 0 and self._runner_trail_distance_r > 0
+        )
+
+    def _apply_profit_protection(self, st: _State, current: Side, bar: Bar) -> None:
+        if st.entry_price is None or not st.stop_distance_frozen or st.stop_distance_frozen <= 0:
+            return
+        if current == Side.BUY:
+            st.favorable_extreme_price = max(float(st.favorable_extreme_price or st.entry_price), float(bar.high))
+            mfe_r = (float(st.favorable_extreme_price) - float(st.entry_price)) / float(st.stop_distance_frozen)
+        else:
+            st.favorable_extreme_price = min(float(st.favorable_extreme_price or st.entry_price), float(bar.low))
+            mfe_r = (float(st.entry_price) - float(st.favorable_extreme_price)) / float(st.stop_distance_frozen)
+
+        target_stop: float | None = None
+        if self._break_even_trigger_r > 0 and mfe_r >= self._break_even_trigger_r:
+            target_stop = float(st.entry_price)
+        if self._profit_lock_trigger_r > 0 and self._profit_lock_r > 0 and mfe_r >= self._profit_lock_trigger_r:
+            if current == Side.BUY:
+                target_stop = float(st.entry_price) + (self._profit_lock_r * float(st.stop_distance_frozen))
+            else:
+                target_stop = float(st.entry_price) - (self._profit_lock_r * float(st.stop_distance_frozen))
+        if self._runner_trail_trigger_r > 0 and self._runner_trail_distance_r > 0 and mfe_r >= self._runner_trail_trigger_r:
+            st.runner_trail_armed = True
+            trail_distance = self._runner_trail_distance_r * float(st.stop_distance_frozen)
+            if current == Side.BUY:
+                target_stop = max(float(target_stop or st.entry_price), float(st.favorable_extreme_price) - trail_distance)
+            else:
+                target_stop = min(float(target_stop or st.entry_price), float(st.favorable_extreme_price) + trail_distance)
+        if target_stop is None:
+            return
+        st.lock_armed = True
+        if current == Side.BUY:
+            st.stop_price_frozen = max(float(st.stop_price_frozen), target_stop)
+        else:
+            st.stop_price_frozen = min(float(st.stop_price_frozen), target_stop)
 
     def on_bars(self, ts: pd.Timestamp, bars_by_symbol: dict[str, Bar], tradeable: set[str], ctx: Mapping[str, Any]) -> list[Signal]:
         signals: list[Signal] = []
@@ -171,9 +576,12 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
                             most_binding_gate=None,
                         ),
                             "close_only": True,
-                            "exit_reason": "stop_loss",
+                            "is_exit": True,
+                            "exit_reason": "runner_trail_stop" if st.runner_trail_armed else "protected_stop" if st.lock_armed else "stop_loss",
                             "stop_price": st.stop_price_frozen,
                             "stop_distance": st.stop_distance_frozen,
+                            "lock_armed": st.lock_armed,
+                            "runner_trail_armed": st.runner_trail_armed,
                             "atr_entry": st.atr_entry,
                             "signal_timeframe": self._timeframe,
                             "exit_monitoring_timeframe": "1m",
@@ -196,9 +604,12 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
                             most_binding_gate=None,
                         ),
                             "close_only": True,
-                            "exit_reason": "stop_loss",
+                            "is_exit": True,
+                            "exit_reason": "runner_trail_stop" if st.runner_trail_armed else "protected_stop" if st.lock_armed else "stop_loss",
                             "stop_price": st.stop_price_frozen,
                             "stop_distance": st.stop_distance_frozen,
+                            "lock_armed": st.lock_armed,
+                            "runner_trail_armed": st.runner_trail_armed,
                             "atr_entry": st.atr_entry,
                             "signal_timeframe": self._timeframe,
                             "exit_monitoring_timeframe": "1m",
@@ -206,18 +617,9 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
                         self._clear_position(st)
                         continue
 
+                if self._protection_enabled():
+                    self._apply_profit_protection(st, current, bar)
                 if self._family_variant == "L1-H11C" and st.entry_price is not None and st.stop_distance_frozen and st.stop_distance_frozen > 0:
-                    if current == Side.BUY:
-                        mfe_r = (float(bar.high) - float(st.entry_price)) / float(st.stop_distance_frozen)
-                    else:
-                        mfe_r = (float(st.entry_price) - float(bar.low)) / float(st.stop_distance_frozen)
-                    if (not st.lock_armed) and mfe_r >= self._lock_r:
-                        st.lock_armed = True
-                        if current == Side.BUY:
-                            st.stop_price_frozen = max(float(st.stop_price_frozen), float(st.entry_price))
-                        else:
-                            st.stop_price_frozen = min(float(st.stop_price_frozen), float(st.entry_price))
-
                     if self._vwap_giveback == "on" and st.lock_armed and st.exec_vwap.value is not None:
                         vwap_v = float(st.exec_vwap.value)
                         if current == Side.BUY and float(bar.close) < vwap_v:
@@ -236,6 +638,7 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
                             most_binding_gate=None,
                         ),
                                 "close_only": True,
+                                "is_exit": True,
                                 "exit_reason": "vwap_giveback",
                                 "vwap_giveback_mode": "on",
                                 "lock_r": self._lock_r,
@@ -261,6 +664,7 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
                             most_binding_gate=None,
                         ),
                                 "close_only": True,
+                                "is_exit": True,
                                 "exit_reason": "vwap_giveback",
                                 "vwap_giveback_mode": "on",
                                 "lock_r": self._lock_r,
@@ -292,6 +696,7 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
                             most_binding_gate=None,
                         ),
                                 "close_only": True,
+                                "is_exit": True,
                                 "exit_reason": "trend_failure",
                                 "signal_timeframe": self._timeframe,
                                 "exit_monitoring_timeframe": "1m",
@@ -320,6 +725,13 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
 
             trend_dir = Side.BUY if ema_fast > ema_slow else Side.SELL if ema_fast < ema_slow else None
             if trend_dir is None:
+                self._clear_pullback(st)
+                continue
+            if (
+                not self._side_gate_ok(trend_dir)
+                or not self._state_gate_ok(ctx, symbol)
+                or not self._concentration_gate_ok(symbol, pd.Timestamp(signal_bar.ts))
+            ):
                 self._clear_pullback(st)
                 continue
 
@@ -394,6 +806,8 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
             else:
                 stop_distance = atr_stop_distance
                 stop_model = "fixed_atr_multiple"
+            if self._loss_cap_r > 0:
+                stop_distance = min(float(stop_distance), float(self._loss_cap_r) * float(atr_stop_distance))
             stop_price = entry_ref - stop_distance if trend_dir == Side.BUY else entry_ref + stop_distance
 
             entry_pos = entry_position_ratio(
@@ -409,8 +823,11 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
             st.atr_entry = float(atr_v)
             st.stop_distance_frozen = float(stop_distance)
             st.stop_price_frozen = float(stop_price)
+            st.favorable_extreme_price = entry_ref
             st.lock_armed = False
+            st.runner_trail_armed = False
             st.signal_bars_held = 0
+            self._last_entry_ts_by_symbol[symbol] = pd.Timestamp(signal_bar.ts)
 
             signals.append(Signal(ts=ts, symbol=symbol, side=trend_dir, signal_type="l1_h11_entry", confidence=1.0, metadata={
                         "decision_trace": make_decision_trace(
@@ -427,12 +844,17 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
                             most_binding_gate=None,
                         ),
                 "strategy": "l1_h11_quality_filtered_continuation",
+                "strategy_id": "l1_h11_quality_filtered_continuation",
                 "family_variant": self._family_variant,
+                "family_pattern": "quality_filtered_continuation",
                 "parent_family": "L1-H11",
                 "setup_type": self._setup_type,
                 "signal_timeframe": self._timeframe,
+                "execution_timeframe": "1m",
                 "exit_monitoring_timeframe": "1m",
                 "entry_ts": str(ts),
+                "entry_price": entry_ref,
+                "intended_entry_price": entry_ref,
                 "trend_dir": trend_key,
                 "ema_fast_entry": float(ema_fast),
                 "ema_slow_entry": float(ema_slow),
@@ -449,16 +871,41 @@ class L1H11QualityFilteredContinuationStrategy(Strategy):
                 "entry_reference_price": entry_ref,
                 "stop_distance": float(stop_distance),
                 "stop_price": float(stop_price),
+                "entry_stop_price": float(stop_price),
                 "stop_padding_atr": self._stop_padding_atr if self._family_variant == "L1-H11C" else None,
                 "lock_r": self._lock_r if self._family_variant == "L1-H11C" else None,
                 "vwap_giveback_mode": self._vwap_giveback if self._family_variant == "L1-H11C" else None,
+                "h11a_tuning_profile": self._h11a_tuning_profile,
+                "h11_tuning_profile": self._h11a_tuning_profile,
+                "allowed_sides": self._allowed_sides,
+                "allowed_vol_regimes": sorted(self._allowed_vol_regimes),
+                "blocked_vol_regimes": sorted(self._blocked_vol_regimes),
+                "allowed_liquidity_regimes": sorted(self._allowed_liquidity_regimes),
+                "blocked_liquidity_regimes": sorted(self._blocked_liquidity_regimes),
+                "allowed_displacement_regimes": sorted(self._allowed_displacement_regimes),
+                "blocked_displacement_regimes": sorted(self._blocked_displacement_regimes),
+                "allowed_csi_buckets": sorted(self._allowed_csi_buckets),
+                "blocked_csi_buckets": sorted(self._blocked_csi_buckets),
+                "allowed_basis_regimes": sorted(self._allowed_basis_regimes),
+                "blocked_basis_regimes": sorted(self._blocked_basis_regimes),
+                "allowed_funding_regimes": sorted(self._allowed_funding_regimes),
+                "blocked_funding_regimes": sorted(self._blocked_funding_regimes),
+                "excluded_symbols": sorted(self._excluded_symbols),
+                "entry_cooldown_hours": self._entry_cooldown_hours,
+                "break_even_trigger_r": self._break_even_trigger_r,
+                "profit_lock_trigger_r": self._profit_lock_trigger_r,
+                "profit_lock_r": self._profit_lock_r,
+                "runner_trail_trigger_r": self._runner_trail_trigger_r,
+                "runner_trail_distance_r": self._runner_trail_distance_r,
+                "loss_cap_r": self._loss_cap_r,
                 "impulse_min_threshold_atr": self._impulse_threshold(),
                 "entry_reason": "quality_filtered_continuation_reclaim",
                 "base_data_frequency_expected": "1m",
                 "risk_accounting": "engine_canonical_R",
+                "r_per_trade": 0.005,
                 "no_pyramiding": True,
                 "stop_model": stop_model,
-                "stop_update_policy": "frozen_at_entry_then_rule_based_protection",
+                "stop_update_policy": "frozen_at_entry_then_breakeven_profit_lock_runner_trail",
                 "atr_source_timeframe": self._timeframe,
             }))
             self._clear_pullback(st)

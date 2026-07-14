@@ -170,6 +170,10 @@ class JsonlWriter:
         self._flush_every = max(int(flush_every), 1)
         self._pending_lines = 0
 
+    @property
+    def path(self) -> Path:
+        return self._path
+
     def write(self, record: dict[str, Any]) -> None:
         """Append one JSON line."""
         _validate_order_record(record, where=f"JsonlWriter.write[{self._path.name}]")

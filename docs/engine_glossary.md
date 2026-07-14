@@ -27,8 +27,15 @@ backtest setting or output field means before trusting a result.
 - **execution.intrabar_mode**: How ambiguous intrabar stop/target paths are resolved. `worst_case` assumes adverse fills first where ordering is unknowable.
 - **execution.spread_mode**: Spread model. `fixed_bps` applies a fixed basis-point spread.
 - **execution.delay_bars**: Number of base bars between signal and market order fill.
-- **risk.mode**: Position sizing mode. `equity_pct` risks a configured fraction of account equity per trade.
-- **risk.r_per_trade**: Fraction of account equity intended to be at risk at the initial stop. Example: `0.005` means 0.5% of equity at stop, before caps and guardrails.
+- **sizing.mode**: Optional user-facing sizing block. When present, it is normalized into `risk.mode` and related `risk.*` keys. This lets configs say `sizing.mode: fixed_notional_pct_equity` or `sizing.mode: risk_at_stop` without changing the engine's internal risk contract.
+- **risk.mode**: Position sizing mode. `risk_at_stop`, `equity_pct`, and `r_fixed` mean the engine targets a configured dollar loss at the initial stop. `fixed_notional_pct_equity` means the engine targets a configured entry notional/exposure instead.
+- **risk_at_stop sizing**: Professional R-normalized sizing. The engine computes `target risk dollars = equity * r_per_trade`, then sizes quantity so the initial stop would lose that amount before caps and guardrails.
+- **fixed_notional_pct_equity sizing**: Exposure-first sizing. The engine computes `entry notional = equity * notional_pct_equity`; the stop still exits the trade, but actual stop-loss dollars vary with stop distance.
+- **risk.r_per_trade**: Fraction of account equity intended to be lost if the initial stop is hit. Example: `0.005` means 0.5% of equity at stop, before caps and guardrails. It does not mean position notional.
+- **risk.notional_pct_equity**: Fraction of account equity used as entry notional in `fixed_notional_pct_equity` mode. Example: `0.05` on a $100 account opens about a $5 position before caps and rounding.
+- **risk.cap_policy**: What to do when notional, gross exposure, or margin caps prevent full target sizing. `allow_clip_with_truth` takes a smaller trade and logs actual risk. `reject_if_clipped` skips the trade when it cannot be sized as requested.
+- **risk.min_risk_utilization_pct**: Minimum acceptable `actual stop risk / requested risk budget`. Example: `0.10` means a $500 target-risk trade must still risk at least $50 after caps or it is rejected as too small.
+- **risk.report_under_risked_trades**: Whether capped trades should be explicitly labeled when actual stop risk is below requested risk. Default true.
 - **risk.max_positions**: Maximum simultaneous open positions.
 - **risk.max_leverage**: Maximum account leverage used for margin math. `1.0` means no leverage.
 - **risk.max_notional_pct_equity**: Maximum entry notional as a fraction of equity. Example: `0.005` means a $100,000 account may open about $500 of notional exposure per entry.
@@ -45,13 +52,18 @@ backtest setting or output field means before trusting a result.
 ## Risk And Position Fields
 
 - **equity_used**: Account equity snapshot used when approving the trade.
-- **risk_budget / risk_amount**: Dollar amount intended to be lost if the initial stop is hit.
+- **risk_budget**: Requested risk dollars for risk-at-stop sizing. In fixed-notional mode this equals the actual stop risk because there is no separate target risk budget.
+- **requested_risk_amount**: Original risk-at-stop target before cap/margin clipping. Null in fixed-notional mode.
+- **risk_amount**: Actual stop risk reconstructed from filled entry quantity and frozen stop distance. This is the R denominator used by trade metrics.
+- **risk_utilization_pct**: `risk_amount / risk_budget`. A value of `1.0` means the trade used the requested risk. Values below `1.0` mean caps, rounding, or margin reduced actual risk.
+- **under_risked_trade**: True when actual stop risk is below requested risk. This is expected when `cap_policy: allow_clip_with_truth` clips a position.
 - **stop_price**: Initial stop price used for R and risk sizing.
 - **stop_distance**: Absolute price distance between entry reference and stop.
 - **entry_stop_distance**: Frozen stop distance stored at entry and used to reconstruct R later.
 - **qty / entry_qty / exit_qty**: Filled quantity. For shorts, side carries direction; quantity is usually positive in trade rows.
 - **entry_price / exit_price**: Actual modeled fill prices after execution assumptions.
 - **sizing_notional**: Raw notional implied by stop-distance sizing before notional caps. Large values here reveal tight-stop pressure.
+- **requested_notional**: Target entry notional in fixed-notional sizing mode.
 - **notional_est**: Order notional estimate at approval time. Prefer actual filled notional for final exposure audits.
 - **actual filled notional**: `abs(entry_qty * entry_price)`. This is the truth exposure used by validation.
 - **max_notional**: True maximum allowed entry notional for that trade after account and gross caps.
@@ -126,6 +138,10 @@ backtest setting or output field means before trusting a result.
 
 - Setting `risk.r_per_trade: 0.005` does not mean each trade uses 0.5% notional. It means the loss at the stop is intended to be 0.5% of equity.
 - Setting `risk.max_notional_pct_equity: 0.005` does mean entry exposure itself is capped near 0.5% of equity.
+- Setting `sizing.mode: fixed_notional_pct_equity` with `notional_pct_equity: 0.05` means "open about 5% of equity as position notional." It does not mean "lose 5% if stopped."
+- Setting `sizing.mode: risk_at_stop` with `r_per_trade: 0.005` means "size the position so the stop loses about 0.5% of equity." The resulting position notional may be much larger or smaller depending on stop distance.
+- With `cap_policy: allow_clip_with_truth`, capped trades are still taken when possible, but `risk_utilization_pct` and `under_risked_trade` reveal that the trade did not use the full requested risk.
+- With `min_risk_utilization_pct: 0.10`, capped trades that would use less than 10% of requested risk are rejected as dust.
 - If `sizing_notional` is much larger than `max_notional`, the stop is tight and the notional cap is protecting the account.
 - If `cap_applied` is always true, the strategy is mostly notional-cap constrained and its raw stop sizing is not deployable at the requested risk.
 - If `free_margin_post` is negative, the run is invalid for production research.

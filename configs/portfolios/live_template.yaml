@@ -1,0 +1,27 @@
+portfolio_id: live_template
+starting_equity: 100000
+base_currency: USDT
+data_path: ../../data/curated/sample.csv
+output_dir: ../../outputs/portfolios
+deployment:
+  mode: live
+  confirm_live_trading: false
+allocation_policy:
+  type: equal_weight
+  rebalance_frequency: daily
+  max_strategy_weight: 1.0
+  max_symbol_exposure: 0.30
+  max_total_gross_exposure: 1.00
+  max_total_net_exposure: 1.00
+  max_drawdown_pct: 0.10
+  conflict_policy: block_conflict
+strategies:
+  - strategy_id: live_sleeve_template
+    hypothesis_id: H001
+    enabled: true
+    config_path: ../engine.yaml
+    overrides:
+      strategy:
+        name: coinflip
+        p_trade: 0.0
+

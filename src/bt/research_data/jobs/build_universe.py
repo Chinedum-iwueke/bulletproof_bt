@@ -41,6 +41,20 @@ def _read_ohlcv_for_universe(path, start: pd.Timestamp, end: pd.Timestamp) -> pd
     return out.drop_duplicates(["exchange", "symbol", "ts"], keep="last").sort_values(["symbol", "ts"]).reset_index(drop=True)
 
 
+def _candidate_raw_paths(
+    store: ResearchDataStore,
+    exchange: str,
+    symbol: str,
+    dataset: str,
+    timeframe: str,
+    market: str,
+) -> list:
+    paths = [store.raw_path(exchange, symbol, dataset, timeframe, market=market)]
+    if market == "perp":
+        paths.append(store.legacy_raw_path(exchange, symbol, dataset, timeframe))
+    return paths
+
+
 def build_volatile_universe(
     exchange: str,
     start: str | pd.Timestamp,
@@ -52,17 +66,20 @@ def build_volatile_universe(
     min_age_days: int,
     min_median_dollar_volume_7d: float,
     store: ResearchDataStore | None = None,
+    market: str = "perp",
 ) -> pd.DataFrame:
     store = store or ResearchDataStore()
-    adapter = get_adapter(exchange)
+    adapter = get_adapter(exchange, market=market)
     try:
-        instruments = adapter.fetch_usdt_perp_instruments()
+        instruments = adapter.fetch_spot_instruments() if market == "spot" else adapter.fetch_usdt_perp_instruments()
         write_instrument_manifest(store, instruments)
     except Exception:
         manifest_path = store.manifest_path("instruments")
         if not manifest_path.exists():
             raise
         instruments = store.read(manifest_path)
+        if "market" in instruments.columns:
+            instruments = instruments[instruments["market"].fillna("perp").astype(str).eq(market)]
         if "exchange" in instruments.columns:
             instruments = instruments[instruments["exchange"].eq(exchange)]
         if instruments.empty:
@@ -70,9 +87,11 @@ def build_volatile_universe(
     start_ts = utc_ts(start)
     end_ts = utc_ts(end)
     stable_symbols: set[str] = set()
-    stable_path = store.manifest_path("stable_universe")
+    stable_path = store.manifest_path("stable_universe" if market == "perp" else f"stable_universe_{market}")
     if stable_path.exists():
         stable = store.read(stable_path)
+        if not stable.empty and "market" in stable.columns:
+            stable = stable[stable["market"].fillna("perp").astype(str).eq(market)]
         if not stable.empty and "exchange" in stable.columns:
             stable = stable[stable["exchange"].eq(exchange)]
         if "available" in stable.columns:
@@ -84,8 +103,10 @@ def build_volatile_universe(
     native_col = "native_symbol" if "native_symbol" in instruments.columns else "symbol"
     symbols = [symbol for symbol in instruments[native_col].astype(str).tolist() if symbol not in stable_symbols]
     for idx, symbol in enumerate(symbols, start=1):
-        path = store.raw_path(exchange, symbol, "ohlcv", "1m")
-        if path.exists() or (path.parent / "chunks").exists():
+        paths = _candidate_raw_paths(store, exchange, symbol, "ohlcv", "1m", market)
+        existing_paths = [path for path in paths if path.exists() or (path.parent / "chunks").exists()]
+        if existing_paths:
+            path = existing_paths[0]
             frame = _read_ohlcv_for_universe(path, start_ts, end_ts)
             if not frame.empty:
                 instrument_row = instruments.loc[instruments[native_col].astype(str).eq(symbol)]
@@ -119,21 +140,28 @@ def build_volatile_universe(
         top_gainers=top_gainers,
         top_losers=top_losers,
     )
+    if not membership.empty:
+        membership["market"] = market
     print(
         f"{exchange} volatile universe membership rows={len(membership)} symbols={membership['symbol'].nunique() if not membership.empty else 0}",
         flush=True,
     )
-    membership_path = store.manifest_path("volatile_universe_membership")
+    membership_path = store.manifest_path(
+        "volatile_universe_membership" if market == "perp" else f"volatile_universe_membership_{market}"
+    )
     with store.write_lock():
         existing = store.read(membership_path)
+        if not existing.empty and "market" in existing.columns:
+            existing = existing[existing["market"].fillna("perp").astype(str).eq(market)]
         if not existing.empty and "exchange" in existing.columns:
             existing = existing[~existing["exchange"].eq(exchange)]
         frames = [frame for frame in (existing, membership) if not frame.empty]
         combined = pd.concat(frames, ignore_index=True) if frames else membership
-        combined = normalize_frame(combined, VOLATILE_UNIVERSE_COLUMNS)
+        columns = tuple(VOLATILE_UNIVERSE_COLUMNS) + (("market",) if "market" in combined.columns else ())
+        combined = normalize_frame(combined, columns)
         if not combined.empty:
             combined = combined.drop_duplicates(
-                subset=["exchange", "ts", "symbol", "universe", "rank_type"],
+                subset=["market", "exchange", "ts", "symbol", "universe", "rank_type"] if "market" in combined.columns else ["exchange", "ts", "symbol", "universe", "rank_type"],
                 keep="last",
             ).sort_values(["exchange", "ts", "symbol", "rank_type"])
         store.write_atomic(combined.reset_index(drop=True), membership_path)

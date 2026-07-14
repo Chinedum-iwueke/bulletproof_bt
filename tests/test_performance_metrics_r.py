@@ -232,3 +232,69 @@ def test_performance_validation_marks_negative_free_margin_invalid(tmp_path: Pat
     assert perf["margin"]["negative_free_margin_bars"] == 1
     assert perf["margin"]["margin_breach"] is True
     assert any("negative_free_margin_margin_call_breach" in error for error in validation["errors"])
+
+
+def test_tier2a_signal_episode_treats_negative_free_margin_as_diagnostic(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run_tier2a_margin_diagnostic"
+    run_dir.mkdir()
+    (run_dir / "config_used.yaml").write_text(
+        "research_mode: signal_episode\nresearch_tier: tier2a\n"
+        "research:\n"
+        "  research_mode: signal_episode\n"
+        "  research_tier: tier2a\n"
+        "  portfolio_constraints_applied: false\n",
+        encoding="utf-8",
+    )
+
+    pd.DataFrame(
+        {
+            "ts": ["2024-01-01T00:00:00+00:00", "2024-01-01T00:01:00+00:00"],
+            "cash": [100000.0, 100000.0],
+            "equity": [100000.0, 100000.0],
+            "realized_pnl": [0.0, 0.0],
+            "unrealized_pnl": [0.0, 0.0],
+            "used_margin": [10000.0, 105000.0],
+            "free_margin": [90000.0, -5000.0],
+        }
+    ).to_csv(run_dir / "equity.csv", index=False)
+    pd.DataFrame(columns=["pnl_net", "pnl_price", "fees_paid", "risk_amount", "r_net"]).to_csv(
+        run_dir / "trades.csv", index=False
+    )
+
+    report = compute_performance(run_dir)
+    write_performance_artifacts(report, run_dir)
+
+    perf = json.loads((run_dir / "performance.json").read_text(encoding="utf-8"))
+    validation = json.loads((run_dir / "performance_validation.json").read_text(encoding="utf-8"))
+    assert perf["metrics_valid"] is True
+    assert validation["passed"] is True
+    assert validation["portfolio_validation_policy"] == "diagnostic_only_for_signal_episode"
+    assert validation["errors"] == []
+    assert any("negative_free_margin_margin_call_breach" in error for error in validation["portfolio_diagnostic_errors"])
+
+
+def test_tier2a_signal_episode_keeps_invalid_r_denominator_fatal(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run_tier2a_bad_r"
+    run_dir.mkdir()
+    (run_dir / "config_used.yaml").write_text(
+        "research_mode: signal_episode\nresearch_tier: tier2a\n"
+        "research:\n"
+        "  research_mode: signal_episode\n"
+        "  research_tier: tier2a\n"
+        "  portfolio_constraints_applied: false\n",
+        encoding="utf-8",
+    )
+    _write_equity(run_dir / "equity.csv", [100000.0, 100000.0])
+    _write_trades(
+        run_dir / "trades.csv",
+        [{"pnl_net": 0.0, "pnl_price": 0.0, "fees_paid": 0.0, "risk_amount": 0.0, "r_net": 1.0}],
+    )
+
+    report = compute_performance(run_dir)
+    write_performance_artifacts(report, run_dir)
+
+    perf = json.loads((run_dir / "performance.json").read_text(encoding="utf-8"))
+    validation = json.loads((run_dir / "performance_validation.json").read_text(encoding="utf-8"))
+    assert perf["metrics_valid"] is False
+    assert validation["passed"] is False
+    assert "r_net_present_when_risk_amount_missing_or_nonpositive" in validation["errors"]

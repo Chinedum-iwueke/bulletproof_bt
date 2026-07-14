@@ -1,0 +1,210 @@
+hypothesis_id: "L2-H5"
+title: "HTF Trend x Funding Stress Interaction Gate"
+description: "HTF trend pullback entries should be higher quality when funding stress is low; high positive funding z-score indicates crowded positioning and higher reversal/liquidation risk."
+research_layer: "L2"
+hypothesis_family: "htf_trend_funding_stress"
+version: "1.0.0"
+author: "bulletproof_bt"
+created_at: "2026-07-10T00:00:00Z"
+
+required_indicators:
+  - ema
+  - atr
+
+indicator_defaults:
+  signal_timeframe: "5m"
+  htf_timeframe: "1h"
+  ltf_ema_period: 20
+  htf_ema_fast_period: 50
+  htf_ema_slow_period: 200
+  atr_period: 14
+  funding_event_cadence_assumption: "8h"
+  base_execution_timeframe: "1m"
+
+gates:
+  - field: "dir_htf"
+    op: "in"
+    value: [-1, 1]
+  - field: "funding_source_valid"
+    op: "=="
+    value: true
+  - field: "fund_z"
+    op: "<="
+    param: "funding_z_threshold"
+  - field: "pullback_bars"
+    op: "<="
+    param: "K"
+
+parameter_grid:
+  funding_z_threshold: [1.0, 1.5]
+  funding_lookback_days: [14, 30]
+  signal_timeframe: ["5m"]
+  htf_timeframe: ["1h"]
+  K: [3]
+  k_atr: [2.0]
+  T_hold: [48]
+  ltf_ema_period: [20]
+  htf_ema_fast_period: [50]
+  htf_ema_slow_period: [200]
+  atr_period: [14]
+  funding_unwind_band: [0.25]
+  family_variant: ["L2-H5"]
+
+entry:
+  strategy: "l2_h5_htf_trend_funding_stress"
+  signal_timeframe: "5m"
+  timeframe: "5m"
+  base_execution_timeframe: "1m"
+  order_timing: "bar_close_submit_next_bar_execution"
+  disallow_flip: true
+  no_pyramiding: true
+  product_type: "perpetual"
+
+exit:
+  stop_kind: "atr_multiple"
+  stop_model: "fixed_atr_multiple"
+  stop_atr_param: "k_atr"
+  stop_update_policy: "frozen_at_entry"
+  atr_source_timeframe: "signal_timeframe"
+  time_stop_param: "T_hold"
+  hold_time_unit: "signal_bars"
+  exit_monitoring_timeframe: "1m"
+  funding_unwind_exit:
+    enabled: true
+    conditions: ["funding_flip", "funding_unwind_inside_band"]
+  take_profit:
+    enabled: false
+
+execution_semantics:
+  signal_timeframe: "5m"
+  htf_timeframes: ["5m", "1h"]
+  base_execution_timeframe: "1m"
+  exit_monitoring_timeframe: "1m"
+  base_data_frequency_expected: "1m"
+  strategy_family: "htf_trend_funding_stress"
+  family_pattern: "l2_h1_htf_trend_ltf_pullback_with_causal_funding_z_gate"
+  product_type: "perpetual"
+  funding_join: "backward_asof"
+  funding_source_ts_rule: "funding_source_ts <= decision_ts"
+  stop_model: "fixed_atr_multiple"
+  stop_update_policy: "frozen_at_entry"
+  tp_update_policy: "disabled"
+  hold_time_unit: "signal_bars"
+  atr_source_timeframe: "signal_timeframe"
+  risk_accounting: "engine_canonical_R"
+  no_pyramiding: true
+
+sizing:
+  mode: risk_at_stop
+  r_per_trade: 0.005
+  cap_policy: allow_clip_with_truth
+  min_risk_utilization_pct: 0.10
+  report_under_risked_trades: true
+
+risk_controls:
+  max_positions: 5
+  max_leverage: 1.0
+  max_notional_pct_equity: 0.5
+  max_gross_notional_pct_equity: 0.5
+  margin_buffer_tier: 2
+  disallow_flip: true
+  no_pyramiding: true
+  unresolved_stops: reject
+  forced_liquidation_expected: false
+
+data_assumptions:
+  dataset_kind: research_panel
+  universes: ["stable", "volatile"]
+  product_type: "perpetual"
+  required_columns: ["ts", "open", "high", "low", "close", "volume", "funding_rate", "funding_source_ts"]
+  optional_rich_columns:
+    - open_interest
+    - oi_source_ts
+    - mark_close
+    - index_close
+    - premium_mark_vs_index
+    - basis_close_vs_index
+  rich_data_role: "gating_and_logging"
+  ohlcv_only_fallback: false
+  funding_contract: "Funding is sampled once per funding_source_ts, z-scored over prior funding events, and rejected if source_ts is later than decision ts."
+
+evaluation:
+  required_tiers: ["Tier2", "Tier3"]
+  metrics:
+    - ev_r_net
+    - ev_r_gross
+    - ev_conditioned_on_funding_stress
+    - tail_risk
+    - forced_liquidation_frequency
+    - funding_stress_trade_count
+    - funding_normal_trade_count
+    - drawdown_duration
+    - under_risked_trade_rate
+
+logging:
+  schema_version: "1.0"
+  required_fields:
+    - run_id
+    - hypothesis_id
+    - tier
+    - ev_r_gross
+    - ev_r_net
+    - status
+    - funding_rate
+    - fund_z
+    - funding_z_threshold
+    - funding_lookback_days
+    - funding_stress
+    - funding_source_ts
+    - funding_source_valid
+    - funding_provenance_hash
+    - funding_history_count
+    - dir_htf
+    - htf_ready
+    - htf_ema_fast
+    - htf_ema_slow
+    - pullback_bars
+    - entry_reason
+    - stop_distance
+    - risk_amount
+    - risk_budget
+    - requested_risk_amount
+    - risk_utilization_pct
+    - under_risked_trade
+    - entry_state_funding_raw
+    - entry_state_funding_z
+    - entry_state_funding_source_ts
+    - entry_decision_conditions_json
+    - entry_decision_gate_values_json
+
+runtime_controls:
+  enabled: true
+  tags: ["funding", "perpetuals", "htf_trend", "derivatives_aware", "research_panel"]
+  notes: "Funding gate blocks stressed entries. Funding unwind exit closes when funding flips sign or z-score reverts inside the configured band."
+
+falsification_criteria:
+  - "If net EV and tail risk are statistically indistinguishable between funding-stressed and normal regimes, remove the gate."
+  - "If apparent improvements disappear after source timestamp validation, classify as funding timing leakage and reject."
+  - "If results are exchange-specific, retain only as venue-specific evidence."
+
+expected_failure_modes:
+  - "Funding data timing errors around funding publication timestamps."
+  - "Exchange-specific funding formula changes or cadence anomalies."
+  - "Funding is correlated with trend strength rather than reversal risk, causing undertrading."
+  - "High funding stress may be profitable in runaway trend regimes and require branch-specific sizing instead of a hard block."
+
+truth_contract:
+  version: "1.0"
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  parity_required_for_fast_path: true
+  research_memory_requires_certification: true

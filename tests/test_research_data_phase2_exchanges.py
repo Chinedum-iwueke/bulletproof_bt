@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import pandas as pd
 
-from bt.research_data.exchanges.binance import BinanceUSDMPerpAdapter
-from bt.research_data.exchanges.bybit import BybitUSDTPerpAdapter, normalize_bybit_instruments
+from bt.research_data.exchanges.binance import BinanceSpotAdapter, BinanceUSDMPerpAdapter
+from bt.research_data.exchanges.bybit import BybitSpotAdapter, BybitUSDTPerpAdapter, normalize_bybit_instruments
 from bt.research_data.exchanges.okx import normalize_okx_instruments
 from bt.research_data.instruments import native_to_canonical_symbol
-from bt.research_data.schemas import INSTRUMENT_COLUMNS, OHLCV_COLUMNS
+from bt.research_data.schemas import FUNDING_COLUMNS, INSTRUMENT_COLUMNS, OHLCV_COLUMNS
 
 
 class BinanceInstrumentClient:
@@ -35,6 +35,46 @@ class BinanceKlineClient:
         return [[1609459200000, "1", "2", "0.5", "1.5", "10", 1609459259999, "15", 42]]
 
 
+class BinanceSpotInstrumentClient:
+    def get(self, path, params=None):
+        assert path == "/api/v3/exchangeInfo"
+        return {
+            "symbols": [
+                {
+                    "symbol": "BTCUSDT",
+                    "quoteAsset": "USDT",
+                    "baseAsset": "BTC",
+                    "status": "TRADING",
+                    "permissions": ["SPOT"],
+                    "quotePrecision": 2,
+                    "baseAssetPrecision": 8,
+                }
+            ]
+        }
+
+
+class BybitSpotInstrumentClient:
+    def get(self, path, params=None):
+        assert path == "/v5/market/instruments-info"
+        assert params["category"] == "spot"
+        return {
+            "retCode": 0,
+            "result": {
+                "list": [
+                    {
+                        "symbol": "BTCUSDT",
+                        "baseCoin": "BTC",
+                        "quoteCoin": "USDT",
+                        "status": "Trading",
+                        "priceFilter": {"tickSize": "0.01"},
+                        "lotSizeFilter": {"basePrecision": "0.000001"},
+                    }
+                ],
+                "nextPageCursor": "",
+            },
+        }
+
+
 class BybitKlineClient:
     def get(self, path, params=None):
         return {
@@ -44,6 +84,21 @@ class BybitKlineClient:
                     ["1609459200000", "1", "2", "0.5", "1.5", "10", "15"],
                     ["1609459260000", "2", "3", "2.5", "2.1", "10", "15"],
                     ["1609459320000", "2", "3", "1.9", "2.2", "10", "15"],
+                ]
+            },
+        }
+
+
+class BybitFundingClient:
+    def get(self, path, params=None):
+        assert path == "/v5/market/funding/history"
+        return {
+            "retCode": 0,
+            "result": {
+                "list": [
+                    {"fundingRateTimestamp": "1609459200250", "fundingRate": "0.0001"},
+                    {"fundingRateTimestamp": "1609473600000", "fundingRate": "0.0002"},
+                    {"fundingRateTimestamp": "1609488000000", "fundingRate": "0.0003"},
                 ]
             },
         }
@@ -114,8 +169,31 @@ def test_okx_instrument_payload_normalizes_to_canonical_schema() -> None:
     assert df.loc[0, "qty_precision"] == 2
 
 
+def test_binance_spot_instrument_payload_uses_spot_canonical_schema() -> None:
+    df = BinanceSpotAdapter(BinanceSpotInstrumentClient()).fetch_spot_instruments()
+
+    assert tuple(df.columns) == INSTRUMENT_COLUMNS
+    assert df.loc[0, "market"] == "spot"
+    assert df.loc[0, "exchange"] == "binance"
+    assert df.loc[0, "native_symbol"] == "BTCUSDT"
+    assert df.loc[0, "canonical_symbol"] == "BTC-USDT-SPOT"
+    assert df.loc[0, "contract_type"] == "SPOT"
+
+
+def test_bybit_spot_instrument_payload_uses_spot_canonical_schema() -> None:
+    df = BybitSpotAdapter(BybitSpotInstrumentClient()).fetch_spot_instruments()
+
+    assert tuple(df.columns) == INSTRUMENT_COLUMNS
+    assert df.loc[0, "market"] == "spot"
+    assert df.loc[0, "exchange"] == "bybit"
+    assert df.loc[0, "native_symbol"] == "BTCUSDT"
+    assert df.loc[0, "canonical_symbol"] == "BTC-USDT-SPOT"
+    assert df.loc[0, "contract_type"] == "SPOT"
+
+
 def test_native_symbol_mapping_examples() -> None:
     assert native_to_canonical_symbol("BTCUSDT") == "BTC-USDT-PERP"
+    assert native_to_canonical_symbol("BTCUSDT", market="spot") == "BTC-USDT-SPOT"
     assert native_to_canonical_symbol("BTC-USDT-SWAP") == "BTC-USDT-PERP"
 
 
@@ -143,3 +221,19 @@ def test_bybit_ohlcv_drops_invalid_exchange_candles() -> None:
         pd.Timestamp("2021-01-01 00:00", tz="UTC"),
         pd.Timestamp("2021-01-01 00:02", tz="UTC"),
     ]
+
+
+def test_bybit_funding_normalizes_exchange_event_timestamps_without_forcing_8h_grid() -> None:
+    df = BybitUSDTPerpAdapter(BybitFundingClient()).fetch_funding(
+        "BTCUSDT",
+        pd.Timestamp("2021-01-01", tz="UTC"),
+        pd.Timestamp("2021-01-01 12:01", tz="UTC"),
+    )
+
+    assert tuple(df.columns) == FUNDING_COLUMNS
+    assert df["ts"].tolist() == [
+        pd.Timestamp("2021-01-01 00:00", tz="UTC"),
+        pd.Timestamp("2021-01-01 04:00", tz="UTC"),
+        pd.Timestamp("2021-01-01 08:00", tz="UTC"),
+    ]
+    assert df["funding_rate"].tolist() == [0.0001, 0.0002, 0.0003]

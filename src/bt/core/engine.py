@@ -1,10 +1,11 @@
 """Backtest engine main event loop."""
 from __future__ import annotations
 
-from pathlib import Path
 from dataclasses import replace
 import csv
+from pathlib import Path
 from typing import Any, Mapping
+import pandas as pd
 
 from bt.core.enums import OrderState, OrderType, PositionState, Side
 from bt.core.reason_codes import FORCED_LIQUIDATION_END_OF_RUN, FORCED_LIQUIDATION_MARGIN
@@ -50,6 +51,27 @@ def _positive_int_option(value: Any, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return parsed if parsed > 0 else default
+
+
+def _decision_logging_options(config: dict[str, Any]) -> tuple[str, int]:
+    outputs_cfg = config.get("outputs") if isinstance(config.get("outputs"), dict) else {}
+    profile = str(
+        config.get(
+            "decision_logging_profile",
+            outputs_cfg.get("decision_logging_profile", "full"),
+        )
+        or "full"
+    ).strip().lower()
+    if profile not in {"full", "research_sparse", "parity_debug"}:
+        raise ValueError("decision_logging_profile must be one of: full, research_sparse, parity_debug")
+    sample_every = _positive_int_option(
+        config.get(
+            "decision_negative_sample_every",
+            outputs_cfg.get("decision_negative_sample_every", 0),
+        ),
+        0,
+    )
+    return profile, sample_every
 
 
 def _is_missing_metadata_value(value: Any) -> bool:
@@ -108,6 +130,39 @@ class BacktestEngine:
             5000,
         )
         self._equity_rows_since_flush = 0
+        self._decision_logging_profile, self._decision_negative_sample_every = _decision_logging_options(config)
+        self._decision_sequence = 0
+        self._decision_summary: dict[str, Any] = {
+            "schema_version": 1,
+            "profile": self._decision_logging_profile,
+            "negative_sample_every": self._decision_negative_sample_every,
+            "written": 0,
+            "skipped": 0,
+            "by_reason": {},
+        }
+        data_cfg = config.get("data") if isinstance(config.get("data"), dict) else {}
+        analysis_start = data_cfg.get("analysis_start_ts") if isinstance(data_cfg, dict) else None
+        self._analysis_start_ts = pd.Timestamp(analysis_start).tz_convert("UTC") if analysis_start else None
+        research_cfg = config.get("research") if isinstance(config.get("research"), dict) else {}
+        self._research_metadata = {
+            "identity_research_tier": research_cfg.get("research_tier"),
+            "identity_research_mode": research_cfg.get("research_mode", "portfolio_backtest"),
+            "identity_evidence_type": research_cfg.get("evidence_type", "portfolio_outcome"),
+            "portfolio_constraints_applied": research_cfg.get("portfolio_constraints_applied", True),
+            "capital_path_valid": research_cfg.get("capital_path_valid", True),
+            "deployability_evidence": research_cfg.get("deployability_evidence", True),
+            "signal_episode_evidence": research_cfg.get("signal_episode_evidence", False),
+        }
+
+    def _is_warmup_ts(self, ts: Any) -> bool:
+        if self._analysis_start_ts is None:
+            return False
+        current = pd.Timestamp(ts)
+        if current.tzinfo is None:
+            current = current.tz_localize("UTC")
+        else:
+            current = current.tz_convert("UTC")
+        return current < self._analysis_start_ts
 
     def _sync_datafeed_required_symbols(self, open_orders: list[Order]) -> None:
         setter = getattr(self._datafeed, "set_required_symbols", None)
@@ -122,6 +177,17 @@ class BacktestEngine:
             if position.state in {PositionState.OPEN, PositionState.OPENING, PositionState.REDUCING}:
                 required.add(symbol)
         setter(required)
+
+    def _sync_datafeed_execution_state(self, open_orders: list[Order]) -> None:
+        setter = getattr(self._datafeed, "set_execution_state", None)
+        if not callable(setter):
+            return
+        has_open_orders = any(
+            order.state not in {OrderState.FILLED, OrderState.CANCELLED, OrderState.REJECTED}
+            for order in open_orders
+        )
+        has_positions = self._portfolio.position_book.open_positions_count() > 0
+        setter(has_exposure=bool(has_open_orders or has_positions))
 
     def _positions_context(self) -> dict[str, dict[str, Any]]:
         positions_ctx: dict[str, dict[str, Any]] = {}
@@ -330,6 +396,7 @@ class BacktestEngine:
 
 
     def _emit_decision_record(self, record: dict[str, Any]) -> None:
+        self._decision_sequence += 1
         order = record.get("order")
         if order is not None:
             order_qty = float(record.get("order_qty", 0.0))
@@ -368,7 +435,101 @@ class BacktestEngine:
                 violation=False,
             )
 
+        if not self._should_write_decision_record(record):
+            reason = str(record.get("reason") or "unknown")
+            self._decision_summary["skipped"] += 1
+            by_reason = self._decision_summary["by_reason"]
+            by_reason[reason] = int(by_reason.get(reason, 0)) + 1
+            return
+
         self._decisions_writer.write(record)
+        self._decision_summary["written"] += 1
+
+    def _should_write_decision_record(self, record: dict[str, Any]) -> bool:
+        profile = self._decision_logging_profile
+        if profile == "full":
+            return True
+        signal = record.get("signal")
+        signal_metadata = getattr(signal, "metadata", None)
+        state_log_only = bool(signal_metadata.get("state_log_only")) if isinstance(signal_metadata, dict) else False
+        if profile == "parity_debug":
+            if bool(record.get("approved")) or record.get("order") is not None:
+                return True
+            if state_log_only:
+                if self._decision_negative_sample_every > 0:
+                    return self._decision_sequence % self._decision_negative_sample_every == 0
+                return False
+            if self._decision_negative_sample_every > 0:
+                return self._decision_sequence % self._decision_negative_sample_every == 0
+            return True
+
+        if bool(record.get("approved")) or record.get("order") is not None:
+            return True
+        if state_log_only:
+            if self._decision_negative_sample_every > 0:
+                return self._decision_sequence % self._decision_negative_sample_every == 0
+            return False
+        reason = str(record.get("reason") or "")
+        # Keep rejected explicit signals: they are evidence for risk gates,
+        # strategy blockers, admission failures, and later diagnosis.
+        if reason.startswith("risk_rejected") or "rejected" in reason:
+            return True
+        if self._decision_negative_sample_every > 0:
+            return self._decision_sequence % self._decision_negative_sample_every == 0
+        return False
+
+    @staticmethod
+    def _is_state_log_only_signal(signal: Any) -> bool:
+        metadata = getattr(signal, "metadata", None)
+        return bool(metadata.get("state_log_only")) if isinstance(metadata, dict) else False
+
+    def _skip_state_log_only_signal_fast(self, signal: Any) -> bool:
+        if self._decision_logging_profile != "research_sparse":
+            return False
+        if not self._is_state_log_only_signal(signal):
+            return False
+        if self._decision_negative_sample_every > 0:
+            self._decision_sequence += 1
+            if self._decision_sequence % self._decision_negative_sample_every == 0:
+                self._decisions_writer.write(
+                    {
+                        "ts": getattr(signal, "ts", None),
+                        "symbol": getattr(signal, "symbol", None),
+                        "signal": signal,
+                        "approved": False,
+                        "reason": "state_log_only_sampled",
+                    }
+                )
+                self._decision_summary["written"] += 1
+                return True
+        self._decision_summary["skipped"] += 1
+        by_reason = self._decision_summary["by_reason"]
+        by_reason["state_log_only_fast_skip"] = int(by_reason.get("state_log_only_fast_skip", 0)) + 1
+        return True
+
+    def _write_decision_logging_summary(self) -> None:
+        path = self._decisions_writer.path.parent / "decision_logging_summary.json"
+        import json
+
+        payload = dict(self._decision_summary)
+        payload["total_seen"] = int(payload.get("written", 0)) + int(payload.get("skipped", 0))
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(path)
+
+    def _write_datafeed_fast_path_artifacts(self) -> None:
+        stats = getattr(self._datafeed, "candidate_event_stats", None)
+        if not callable(stats):
+            return
+        payload = stats()
+        if not isinstance(payload, dict):
+            return
+        import json
+
+        path = self._decisions_writer.path.parent / "candidate_event_summary.json"
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(path)
 
     def _write_equity_header(self, writer: csv.writer) -> None:
         writer.writerow(
@@ -382,6 +543,32 @@ class BacktestEngine:
                 "free_margin",
             ]
         )
+
+    def _drain_datafeed_skipped_flat_timestamps(self) -> list[pd.Timestamp]:
+        drain = getattr(self._datafeed, "drain_skipped_flat_timestamps", None)
+        if not callable(drain):
+            return []
+        values = drain()
+        if not isinstance(values, list):
+            return []
+        return [pd.Timestamp(value) for value in values]
+
+    def _write_flat_equity_rows(self, writer: csv.writer, timestamps: list[pd.Timestamp]) -> None:
+        if not timestamps:
+            return
+        for ts in timestamps:
+            writer.writerow(
+                [
+                    ts.isoformat(),
+                    self._portfolio.cash,
+                    self._portfolio.equity,
+                    self._portfolio.realized_pnl,
+                    self._portfolio.unrealized_pnl,
+                    self._portfolio.used_margin,
+                    self._portfolio.free_margin,
+                ]
+            )
+            self._equity_rows_since_flush += 1
 
     def run(self) -> None:
         """
@@ -398,6 +585,7 @@ class BacktestEngine:
         10) log decisions, fills, trades, and equity per timestamp
         """
         open_orders: list[Order] = []
+        self._sync_datafeed_execution_state(open_orders)
         self._equity_path.parent.mkdir(parents=True, exist_ok=True)
         with self._equity_path.open("a", encoding="utf-8", newline="") as handle:
             writer = csv.writer(handle)
@@ -409,7 +597,10 @@ class BacktestEngine:
             while True:
                 bars = self._datafeed.next()
                 if bars is None:
+                    self._write_flat_equity_rows(writer, self._drain_datafeed_skipped_flat_timestamps())
                     break
+
+                self._write_flat_equity_rows(writer, self._drain_datafeed_skipped_flat_timestamps())
 
                 if isinstance(bars, dict):
                     bars_by_symbol = bars
@@ -443,6 +634,8 @@ class BacktestEngine:
                         )
 
                 tradeable = self._universe.tradeable_at(ts)
+                in_warmup = self._is_warmup_ts(ts)
+                strategy_tradeable = set() if in_warmup else tradeable
                 indicators_snapshot: dict[str, dict[str, tuple[float | None, bool]]] = {}
                 if self._indicator_profile != "none":
                     for symbol in bars_by_symbol:
@@ -453,14 +646,16 @@ class BacktestEngine:
                         }
                 ctx: Mapping[str, Any] = {
                     "indicators": indicators_snapshot,
-                    "tradeable": tradeable,
+                    "tradeable": strategy_tradeable,
                     "state": (
                         {symbol: self._state_layer.snapshot(symbol=symbol) for symbol in bars_by_symbol}
                         if self._state_context_enabled
                         else {}
                     ),
+                    "warmup": in_warmup,
+                    "analysis_start_ts": self._analysis_start_ts,
                 }
-                signals = self._strategy.on_bars(ts, bars_by_symbol, tradeable, self._ctx_with_positions(ctx))
+                signals = self._strategy.on_bars(ts, bars_by_symbol, strategy_tradeable, self._ctx_with_positions(ctx))
                 if self._audit is not None and self._audit.enabled:
                     self._audit.mark_layer_executed("alignment_audit")
                     for violation in inspect_alignment(ts=ts, bars_by_symbol=bars_by_symbol):
@@ -472,12 +667,19 @@ class BacktestEngine:
                 if self._sanity_counters is not None:
                     self._sanity_counters.signals_emitted += len(signals)
 
+                if in_warmup:
+                    self._sync_datafeed_required_symbols(open_orders)
+                    self._sync_datafeed_execution_state(open_orders)
+                    continue
+
                 reserved_open_positions = self._portfolio.position_book.open_positions_count()
                 reserved_free_margin = self._portfolio.free_margin
                 reserved_gross_notional = self._portfolio.gross_notional()
 
                 for signal in signals:
                     signal = self._enrich_signal_metadata(signal=signal, ts=ts)
+                    if self._skip_state_log_only_signal_fast(signal):
+                        continue
                     bar = bars_by_symbol.get(signal.symbol)
                     if bar is None:
                         decision_reason = "risk_rejected:no_bar"
@@ -615,6 +817,7 @@ class BacktestEngine:
 
                 if forced_liquidated:
                     self._sync_datafeed_required_symbols(open_orders)
+                    self._sync_datafeed_execution_state(open_orders)
                     handle.flush()
                     self._equity_rows_since_flush = 0
                     continue
@@ -635,6 +838,7 @@ class BacktestEngine:
                     handle.flush()
                     self._equity_rows_since_flush = 0
                 self._sync_datafeed_required_symbols(open_orders)
+                self._sync_datafeed_execution_state(open_orders)
 
                 if self._audit is not None and self._audit.enabled:
                     self._audit.mark_layer_executed("position_audit")
@@ -662,6 +866,8 @@ class BacktestEngine:
         self._decisions_writer.close()
         self._fills_writer.close()
         self._trades_writer.close()
+        self._write_decision_logging_summary()
+        self._write_datafeed_fast_path_artifacts()
 
     def _enrich_signal_metadata(self, *, signal: Any, ts: Any) -> Any:
         metadata = dict(signal.metadata) if isinstance(signal.metadata, dict) else {}
@@ -670,6 +876,9 @@ class BacktestEngine:
             if key.startswith("entry_state_") and (key not in metadata or _is_missing_metadata_value(metadata.get(key))):
                 metadata[key] = value
         metadata.setdefault("signal_ts", ts)
+        for key, value in self._research_metadata.items():
+            if value is not None:
+                metadata.setdefault(key, value)
         if "decision_trace" not in metadata:
             metadata["decision_trace"] = {
                 "reason_code": metadata.get("entry_reason", signal.signal_type if hasattr(signal, "signal_type") else None),

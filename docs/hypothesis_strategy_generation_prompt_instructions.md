@@ -3,7 +3,7 @@
 Use this document when creating a new Bulletproof_bt hypothesis family from a
 plain-English hypothesis card. The output must be a complete research-ready
 strategy package: hypothesis YAML, strategy Python module, strategy-family
-compiled feature kernel, tests, docs, and daemon-compatible run wiring.
+adapter/feature contract, tests, docs, and daemon-compatible run wiring.
 
 ## Non-Negotiables
 
@@ -38,15 +38,23 @@ must clarify:
   or unavailable fallbacks.
 - Exact stop contract: stop source, stop update policy, and whether unresolved
   stops reject entries.
-- Exact risk contract: `risk.r_per_trade`, maximum positions, maximum entry
-  notional, maximum gross notional, and whether pyramiding/flips are allowed.
+- Exact sizing and risk contract: `sizing.mode`/`risk.mode`,
+  `risk.r_per_trade` for risk-at-stop sizing or
+  `risk.notional_pct_equity` for fixed-notional sizing, maximum positions,
+  maximum entry notional, maximum gross notional, cap policy, minimum risk
+  utilization, and whether pyramiding/flips are allowed.
 - Whether the strategy is expected to be deployable under the production
   guardrails: `risk.r_per_trade: 0.005`,
-  `risk.max_notional_pct_equity: 0.5`,
-  `risk.max_gross_notional_pct_equity: 1.0`, and
-  `risk.max_leverage: 1.0`. Risk-at-stop is the sizing target; notional,
-  aggregate exposure, margin, liquidity, and minimum-stop rules remain
-  independent safety constraints.
+  `risk.max_notional_pct_equity`, `risk.max_gross_notional_pct_equity`, and
+  `risk.max_leverage: 1.0`. Risk-at-stop is the default production sizing
+  target; notional, aggregate exposure, margin, liquidity, and minimum-stop
+  rules remain independent safety constraints.
+- Whether capped risk-at-stop trades should be kept truthfully or rejected:
+  `risk.cap_policy: allow_clip_with_truth` keeps capped trades while logging
+  actual stop risk, while `risk.cap_policy: reject_if_clipped` rejects any
+  trade that cannot use the requested risk. If kept, specify
+  `risk.min_risk_utilization_pct` and keep
+  `risk.report_under_risked_trades: true`.
 - Expected run artifact fields needed for post-run learning.
 - Falsification conditions that should scrap or refine the hypothesis.
 
@@ -60,19 +68,61 @@ Given a hypothesis card, generate:
 
 - `research/hypotheses/<hypothesis_id>.yaml`
 - `src/bt/strategy/<strategy_name>.py`
-- `src/bt/engine/fast_path/<strategy_family>_kernel.py`
+- `src/bt/engine/fast_path/<strategy_family>_kernel.py` only if the family
+  needs a genuinely new vectorized causal feature builder. Prefer registering
+  features through `FeatureSpec` and adapters first.
 - `docs/hypotheses/<hypothesis_id>.md`
 - Contract and integration tests under `tests/hypotheses/` and `tests/`
 
 Update:
 
 - `src/bt/strategy/__init__.py` to import/register the strategy.
-- `src/bt/engine/fast_path/signal_compiler.py` to advertise the compiled
-  feature kernel when the strategy and data shape are supported.
+- `src/bt/engine/fast_path/family_kernels.py` with a `StrategyAdapterSpec`
+  declaring requested feature families and the generic sparse scheduler.
+- `src/bt/engine/fast_path/feature_registry.py` only when a new reusable
+  causal feature family is required. Each feature must declare required inputs,
+  lookback/warmup, causality contract, version/hash, output dtype, readiness
+  rule, and candidate marker columns.
+- `src/bt/engine/fast_path/signal_compiler.py` only if support detection needs
+  a new mode. It should report the adapter and feature requests, not hide
+  unsupported behavior.
 - `src/bt/engine/fast_path/batch_runner.py` to report the selected safe mode.
 - `src/bt/research_data/jobs/state_features.py` and
   `src/bt/research_data/cli.py` if the kernel needs materialized feature
   columns.
+
+## Shared Feature And Sparse Event Architecture
+
+Do not build one-off fast-path plumbing for a hypothesis. New families must fit
+the shared architecture:
+
+- The engine loads data through `DataSession` / `MarketDataSnapshot`, which
+  exposes integer symbol ids, contiguous OHLCV arrays, rich feature arrays,
+  active universe masks, and a `FeatureBank`.
+- Strategy code asks for normal `Bar.extra` fields and remains valid on the
+  classic path. It must not require future rows or full-sample statistics.
+- Reusable features are registered as `FeatureSpec` objects. A feature may be
+  materialized into research panels with:
+
+```bash
+PYTHONPATH=src python3 -m bt.research_data.cli build-registered-features \
+  --exchange binance \
+  --universe stable \
+  --timeframe 1m \
+  --features engine_state,htf_context,l7h1_csi_displacement \
+  --signal-timeframes 5m,15m,1h
+```
+
+- Candidate scheduling uses generic causal markers such as `*_ready`,
+  `*_entry_candidate`, `*_exit_candidate`, `*_continuation_required`, and
+  `*_stop_check_required`.
+- Sparse execution may skip flat no-candidate timestamps only when the classic
+  engine has no exposure or required symbols. Once exposure exists, the feed
+  must emit dense bars needed for exits, mark-to-market, fills, and liquidation
+  checks.
+- Every adapter remains parity-gated. Classic execution stays the source of
+  truth for fills, PnL, fees, slippage, spread, delay, margin, liquidation, and
+  all research artifacts.
 
 ## Hypothesis YAML Contract
 
@@ -91,6 +141,7 @@ The YAML must define:
 - `expected_failure_modes`
 - logging requirements for required state fields and decision trace
 - risk assumptions and deployment constraints
+- sizing intent, expressed with one of the two explicit forms below
 - data availability assumptions and OHLCV-only fallback behavior
 - truth-gate expectations, including whether forced liquidations are expected
   or should invalidate the run
@@ -121,6 +172,49 @@ truth_contract:
 Do not reinterpret these values. A hypothesis requiring different semantics is
 a separate non-production research profile and must not enter the normal SaaS
 or daemon queue.
+
+## Research Tier Selection
+
+Use the explicit research tiers:
+
+- `tier2a`: signal-episode evidence. Use this to learn whether the setup has
+  state-conditioned edge. It is labelled `research_mode: signal_episode` and
+  must not be described as deployable portfolio evidence.
+- `tier2b`: portfolio-simulation evidence. Use this to test account-path,
+  capital, margin, and concurrency realism. Legacy `tier2` is treated as
+  `tier2b`.
+- `tier3`: stricter promotion/robustness testing after Tier 2 evidence.
+
+Generated strategies must not change behavior between Tier 2A and Tier 2B.
+The tier changes the research question and artifact labels, not the signal
+definition. ML extraction and research memory consume both tiers, but consumers
+must filter by `research_mode` or `evidence_type`.
+
+Every generated hypothesis should use one of these sizing blocks:
+
+```yaml
+sizing:
+  mode: risk_at_stop
+  r_per_trade: 0.005
+  cap_policy: allow_clip_with_truth
+  min_risk_utilization_pct: 0.10
+  report_under_risked_trades: true
+```
+
+or, only when the hypothesis is intentionally exposure-first:
+
+```yaml
+sizing:
+  mode: fixed_notional_pct_equity
+  notional_pct_equity: 0.05
+```
+
+Do not describe `r_per_trade` as position size. `r_per_trade` means intended
+loss at the initial stop. `notional_pct_equity` means position exposure. When a
+notional, gross, or margin cap clips a risk-at-stop trade, the engine must log
+`requested_risk_amount`, actual `risk_amount`, `risk_utilization_pct`, and
+`under_risked_trade` so post-run analysis can learn from the trade without
+pretending it used the full risk budget.
 
 ```bash
 PYTHONPATH=src python3 scripts/run_parallel_hypothesis_grid.py \
@@ -175,9 +269,11 @@ Every strategy must:
 - Never compute future values inside strategy state.
 - Never override engine risk sizing, margin, fees, slippage, spread, delay, or
   intrabar semantics inside strategy code.
-- Never size directly from desired notional unless the hypothesis explicitly
-  documents a notional-sizing model and the engine risk layer still applies
-  `max_notional_pct_equity` and `max_gross_notional_pct_equity`.
+- Never size directly inside strategy code. If the hypothesis requires
+  exposure-first sizing, express that through
+  `sizing.mode: fixed_notional_pct_equity`; the engine remains the only
+  authority for quantity, caps, margin, fees, slippage, spread, delay, and
+  intrabar semantics.
 
 Entry metadata must include:
 
@@ -193,6 +289,11 @@ Entry metadata must include:
 - `execution_timeframe`
 - `risk_accounting`
 - `r_per_trade`
+- `sizing_mode`
+- `cap_policy`
+- `requested_risk_amount`
+- `risk_utilization_pct` when available
+- `under_risked_trade` when available
 - `stop_model`
 - `stop_price`
 - `entry_stop_price`
@@ -247,6 +348,29 @@ must survive extraction if they use approved prefixes:
 Every new family must include a kernel module under `src/bt/engine/fast_path/`.
 The first safe kernel target is a compiled causal feature kernel, not a full
 execution engine replacement.
+
+Fast-path kernels must be written against the reusable market snapshot contract
+in `src/bt/engine/fast_path/data_session.py` whenever possible:
+
+- Load canonical research panels through `DataSession.from_config(...)`.
+- Use `MarketDataSnapshot.symbol_to_id` and integer `symbol_id` values instead
+  of repeatedly string-indexing large DataFrames.
+- Read OHLCV from contiguous `SymbolArrays.open/high/low/close/volume`.
+- Read optional rich research columns from `SymbolArrays.extras`.
+- Use `SymbolArrays.active_mask` for volatile membership gating; do not infer
+  active symbols from today's universe or from a full-sample symbol list.
+- Use `SymbolArrays.candidate_ready` and the family-specific readiness columns
+  to build sparse candidate schedules.
+- Treat the snapshot as read-only. A strategy or kernel must never mutate these
+  arrays in place.
+- Do not add future-derived columns to the snapshot. All arrays must be causal:
+  row `i` may only contain information available at or before `ts[i]`.
+
+This snapshot layer is a system-wide data access foundation. It does not replace
+the classic engine, risk engine, execution engine, portfolio accounting, or rich
+artifact writers. A generated strategy may use snapshot-backed compiled feature
+or candidate-event adapters only after parity tests prove that classic decisions,
+fills, trades, equity, and metrics are unchanged.
 
 A feature kernel must:
 

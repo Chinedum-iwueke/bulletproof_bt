@@ -61,7 +61,7 @@ def validate_manifest_row(row: dict[str, str]) -> None:
         raise ValueError(f"Unsupported expected_status={row['expected_status']!r}")
     if row["enabled"] not in {"true", "false"}:
         raise ValueError(f"enabled must be 'true' or 'false', got {row['enabled']!r}")
-    if row["phase"] not in {"tier2", "tier3", "validate"}:
+    if row["phase"] not in {"tier2a", "tier2b", "tier2", "tier3", "validate"}:
         raise ValueError(f"Unsupported phase={row['phase']!r}")
     if row["tier"] not in {"Tier1", "Tier2", "Tier3"}:
         raise ValueError(f"Unsupported tier={row['tier']!r}")

@@ -97,6 +97,13 @@ RUN_DATASET_COLUMNS_V1 = [
     "experiment_root",
     "hypothesis_id",
     "dataset_tag",
+    "research_tier",
+    "research_mode",
+    "evidence_type",
+    "portfolio_constraints_applied",
+    "capital_path_valid",
+    "deployability_evidence",
+    "signal_episode_evidence",
     "run_id",
     "manifest_row_index",
     "variant_id",
@@ -136,6 +143,16 @@ RUN_DATASET_COLUMNS_V1 = [
     "run_rank_by_sharpe",
     "run_is_top_decile",
     "run_is_bottom_decile",
+]
+
+RESEARCH_CONTEXT_COLUMNS = [
+    "research_tier",
+    "research_mode",
+    "evidence_type",
+    "portfolio_constraints_applied",
+    "capital_path_valid",
+    "deployability_evidence",
+    "signal_episode_evidence",
 ]
 
 TRADES_DATASET_COLUMNS_V1 = [
@@ -711,6 +728,29 @@ def _parse_run(
     required_artifacts_present = not missing_required
 
     summary_row = summary_row or {}
+    research_cfg = config.get("research") if isinstance(config.get("research"), dict) else {}
+    status_research_cfg = run_status.get("research") if isinstance(run_status.get("research"), dict) else {}
+    research_context = {
+        "research_tier": _pick(research_cfg.get("research_tier"), status_research_cfg.get("research_tier")),
+        "research_mode": _pick(research_cfg.get("research_mode"), status_research_cfg.get("research_mode"), "portfolio_backtest"),
+        "evidence_type": _pick(research_cfg.get("evidence_type"), status_research_cfg.get("evidence_type"), "portfolio_outcome"),
+        "portfolio_constraints_applied": _pick(
+            research_cfg.get("portfolio_constraints_applied"),
+            status_research_cfg.get("portfolio_constraints_applied"),
+            True,
+        ),
+        "capital_path_valid": _pick(research_cfg.get("capital_path_valid"), status_research_cfg.get("capital_path_valid"), True),
+        "deployability_evidence": _pick(
+            research_cfg.get("deployability_evidence"),
+            status_research_cfg.get("deployability_evidence"),
+            True,
+        ),
+        "signal_episode_evidence": _pick(
+            research_cfg.get("signal_episode_evidence"),
+            status_research_cfg.get("signal_episode_evidence"),
+            False,
+        ),
+    }
 
     fees_total = _pick(
         _safe_float(cost_breakdown.get("totals", {}).get("fees_total") if isinstance(cost_breakdown.get("totals"), dict) else None),
@@ -726,6 +766,7 @@ def _parse_run(
         "experiment_root": str(experiment_root.resolve()),
         "hypothesis_id": hypothesis_id,
         "dataset_tag": dataset_tag,
+        **research_context,
         "run_id": run_id,
         "manifest_row_index": manifest_row_index,
         "variant_id": variant_id,
@@ -779,6 +820,7 @@ def _parse_run(
         "experiment_id": experiment_id,
         "hypothesis_id": hypothesis_id,
         "dataset_tag": dataset_tag,
+        **research_context,
         "run_id": run_id,
         "manifest_row_index": manifest_row_index,
         "variant_id": variant_id,
@@ -906,7 +948,7 @@ def _enforce_contract_column_order(
         runs_df = pd.concat([runs_df, pd.DataFrame({col: [None] * len(runs_df) for col in missing_run_cols}, index=runs_df.index)], axis=1)
     runs_df = runs_df[run_cols]
 
-    trade_cols = TRADES_DATASET_COLUMNS_V1 + TRADE_OPTIONAL_CONTEXT_COLUMNS + TRADE_SIZING_CONTEXT_COLUMNS + [
+    trade_cols = TRADES_DATASET_COLUMNS_V1 + RESEARCH_CONTEXT_COLUMNS + TRADE_OPTIONAL_CONTEXT_COLUMNS + TRADE_SIZING_CONTEXT_COLUMNS + [
         "actual_entry_notional",
         "actual_notional_pct_equity",
         "requested_notional_pct_equity",

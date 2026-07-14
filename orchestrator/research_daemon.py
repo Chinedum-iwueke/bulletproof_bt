@@ -67,6 +67,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--poll-interval", type=int, default=None)
     parser.add_argument("--locked-by", default=None)
     parser.add_argument("--max-workers", type=int, default=None)
+    parser.add_argument("--queue-id", default=None, help="Lock and run a specific pending queue row.")
     return parser.parse_args()
 
 
@@ -120,7 +121,7 @@ def merge_payload_with_defaults(payload: dict[str, Any], config: dict[str, Any],
     merged: dict[str, Any] = {
         "hypothesis": payload.get("hypothesis"),
         "name": payload.get("name"),
-        "phase": payload.get("phase", config.get("default_phase", "tier2")),
+        "phase": payload.get("phase", config.get("default_phase", "tier2b")),
         "max_workers": payload.get("max_workers", cli_max_workers if cli_max_workers is not None else config.get("default_max_workers", 6)),
         "volatile_max_workers": payload.get("volatile_max_workers", config.get("volatile_max_workers")),
         "config": payload.get("config", config.get("default_config", "configs/engine.yaml")),
@@ -233,7 +234,7 @@ def build_pipeline_command(db_path: Path, merged_payload: dict[str, Any]) -> lis
     return cmd
 
 
-def _daemon_command_log_dir(queue_id: str, name: str, outputs_root: str, phase: str = "tier2") -> Path:
+def _daemon_command_log_dir(queue_id: str, name: str, outputs_root: str, phase: str = "tier2b") -> Path:
     return resolve_daemon_command_log_dir(outputs_root=outputs_root, phase=phase, experiment_name=name)
 
 
@@ -322,7 +323,7 @@ def queue_counts(db: ResearchDB, queue_name: str) -> dict[str, int]:
 def build_interpret_command(db_path: Path, merged_payload: dict[str, Any], config: dict[str, Any]) -> list[str]:
     name = str(merged_payload["name"])
     outputs_root = str(merged_payload["outputs_root"])
-    phase = str(merged_payload.get("phase", "tier2"))
+    phase = str(merged_payload.get("phase", "tier2b"))
     stable_root = resolve_existing_experiment_root(
         outputs_root=outputs_root,
         phase=phase,
@@ -386,7 +387,7 @@ def build_state_discovery_command(
 ) -> list[str]:
     name = str(merged_payload["name"])
     outputs_root = Path(str(merged_payload["outputs_root"]))
-    phase = str(merged_payload.get("phase", "tier2"))
+    phase = str(merged_payload.get("phase", "tier2b"))
     out_dir = str(resolve_phase_artifact_dir(artifact_root=config.get("state_discovery_output_dir", "research/state_findings"), phase=phase))
     min_trades = int(config.get("state_discovery_min_trades", 30))
     min_bucket = int(config.get("state_discovery_min_bucket_trades", 10))
@@ -439,7 +440,7 @@ def build_state_discovery_command(
 
 
 def build_research_memory_command(db_path: Path, merged_payload: dict[str, Any], config: dict[str, Any]) -> list[str]:
-    phase = str(merged_payload.get("phase", "tier2"))
+    phase = str(merged_payload.get("phase", "tier2b"))
     outputs_root = Path(str(merged_payload.get("outputs_root", config.get("outputs_root", "outputs"))))
     name = str(merged_payload.get("name", "")).strip()
     cmd = [
@@ -474,7 +475,7 @@ def refresh_terminal_cards(
     command_log_dir: Path,
 ) -> Path:
     outputs_root = Path(str(merged_payload.get("outputs_root", "outputs")))
-    phase = str(merged_payload.get("phase", "tier2"))
+    phase = str(merged_payload.get("phase", "tier2b"))
     name = str(merged_payload["name"])
     result = build_and_write_intelligence_cards(
         name=name,
@@ -564,8 +565,14 @@ def main() -> int:
                 logger.info("[dry-run] Command: %s", " ".join(cmd))
                 break
 
-            row = db.dequeue_next(queue_name, locked_by)
+            if args.queue_id:
+                row = db.dequeue_by_id(queue_name, str(args.queue_id), locked_by)
+            else:
+                row = db.dequeue_next(queue_name, locked_by)
             if row is None:
+                if args.queue_id:
+                    logger.info("Queue item %s is not pending/available; exiting.", args.queue_id)
+                    break
                 logger.info("No pending jobs; sleeping %ss", poll_interval)
                 if args.once:
                     break
@@ -594,7 +601,7 @@ def main() -> int:
                 current_queue_id,
                 current_job_name,
                 str(merged_payload.get("outputs_root", "outputs")),
-                str(merged_payload.get("phase", "tier2")),
+                str(merged_payload.get("phase", "tier2b")),
             )
             post_agent_warnings: list[dict[str, Any]] = []
             return_code, _ = _run_daemon_stage(

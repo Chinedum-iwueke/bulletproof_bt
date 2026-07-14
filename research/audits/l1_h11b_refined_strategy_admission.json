@@ -1,0 +1,12 @@
+{
+  "contract_version": "1.0",
+  "hard_failures": 0,
+  "hypothesis_path": "research/hypotheses/l1_h11b_refined.yaml",
+  "hypothesis_sha256": "7252e0bacd541e0776ddb885966d0e784e90995b071d1dddc5e040edc9428c09",
+  "issues": [],
+  "status": "PASS",
+  "strategy_name": "l1_h11_quality_filtered_continuation",
+  "strategy_path": "/home/omenka/Projects/bulletproof_bt/src/bt/strategy/l1_h11_quality_filtered_continuation.py",
+  "strategy_sha256": "15442b36dcf07e61ed99cb2a3ce51b5547b129384eeb3639567433c5e0a8b8f7",
+  "warnings": 0
+}

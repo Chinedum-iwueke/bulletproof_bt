@@ -6575,6 +6575,274 @@ authorize user/program
 
 LLM output can propose a card or spec, but deterministic schemas, rule validators, compiler capabilities, and approval state decide whether it can progress.
 
+#### Cx Assistant Provider Layer
+
+The assistant layer should let Invariance Research provide the governed research workflow while allowing users to bring the model they already trust. The strategic split is:
+
+```text
+Invariance owns:
+  research memory
+  source ingestion
+  artifact retrieval
+  tool authorization
+  hypothesis/spec schemas
+  deterministic validators
+  experiment queueing
+  approval gates
+  audit logs
+
+The selected LLM owns:
+  language reasoning
+  synthesis
+  critique
+  structured proposal drafting
+```
+
+The model provider must never directly own experiment execution, deployment, exchange credentials, tenant access, or approval state.
+
+Implementation sequence:
+
+1. **Cx.1 - Hosted Invariance inference.**
+   - Keep the current server-side hosted inference path controlled by `LLM_RESEARCH_ASSISTANT_ENABLED`, `LLM_PROVIDER`, `OPENAI_API_KEY`, `OPENAI_MODEL`, and provider circuit breakers.
+   - Use hosted inference when the account has no BYOK connector and the plan/environment permits platform-paid inference.
+   - Keep deterministic rescue available when hosted inference is disabled or fails.
+2. **Cx.2 - OpenAI BYOK connector.**
+   - Add an account-level OpenAI connector in Settings.
+   - Store encrypted API-key ciphertext, key hint, provider, model, status, last check, last use, and audit events.
+   - Verify the key before activation.
+   - Route Research Desk copilot turns through the user's OpenAI key when active.
+   - Record turn provider as `openai_byok` so cost/provenance are visible.
+   - Do not expose the raw key after save.
+3. **Cx.3 - Claude, Kimi, and OpenRouter adapters.**
+   - Add adapters only after OpenAI BYOK has been proven in production.
+   - Normalize model capability differences: JSON mode, tool calling, context window, latency, and refusal/error behavior.
+   - Keep the same account-level encrypted credential and audit model.
+4. **Cx.4 - Local Ollama/vLLM endpoint connector.**
+   - Let advanced users register a reachable self-hosted inference endpoint.
+   - Require endpoint allowlisting, TLS, timeout limits, and account-scoped health checks.
+   - Never let the model endpoint fetch arbitrary URLs or access server internals.
+5. **Cx.5 - Desktop/local research connector.**
+   - Provide a local companion connector for users who want keys and local model traffic to remain on their own machine.
+   - The cloud app sends bounded context/tool requests; the local connector performs model calls and returns structured responses.
+   - This is the strongest privacy posture but should follow server-side BYOK once the core provider contract is stable.
+
+Release rule: Cx.2 is considered usable when a user can add an OpenAI key in Settings, pass a connection test, start a Research Program, send a Research Desk message, and see the turn logged as `openai_byok` while all proposals still pass deterministic validation and approval gates.
+
+#### Open-Source Trading Agent Review: What To Integrate
+
+This review covers six heavily starred trading/research-agent repositories:
+
+- `TauricResearch/TradingAgents`;
+- `HKUDS/AI-Trader`;
+- `k-dense-ai/scientific-agent-skills`;
+- `ZhuLinsen/daily_stock_analysis`;
+- `brokermr810/quantdinger`;
+- `HKUDS/Vibe-Trading`.
+
+The useful lesson is not that Invariance should copy their surfaces. The useful lesson is that the market is converging on the same shape: agents, market-data tools, backtests, memory, reports, and execution connectors. Invariance wins only if it combines that shape with stricter research truth: deterministic engine contracts, no-lookahead discipline, explicit approval gates, crypto-specific state memory, and governed movement from intuition to backtest to demo/live.
+
+For `scientific-agent-skills`, the important finding is the skill taxonomy rather than any single implementation. The relevant families for Invariance are `experimental-design`, `hypothesis-generation`, `literature-review`, `scientific-critical-thinking`, `exploratory-data-analysis`, `statistical-analysis`, `statistical-power`, `citation-management`, `database-lookup`, `paper/pdf` processing, `dask`/`polars` scale-out analysis, `statsmodels`, and `matplotlib`/scientific visualization. These map cleanly to research design, data quality, evidence grading, falsification, reproducible reports, and hypothesis-to-experiment discipline.
+
+##### Repo-specific lessons
+
+| Repository | What it proves | What Invariance should integrate |
+| --- | --- | --- |
+| `TradingAgents` | Role-specialized agents, bull/bear debate, risk committee, portfolio-manager decision, provider-neutral LLM support, checkpoint resume, and persistent decision reflection are compelling for research workflows. | Add a Research Council inside the copilot: thesis builder, data auditor, falsifier, execution realist, regime skeptic, risk reviewer, and portfolio/deployment reviewer. Use debate as critique, not authority. Final progression still depends on deterministic specs, tests, and user approval. |
+| `AI-Trader` | Agent-facing skill files, registration APIs, heartbeat/polling, signal feeds, copy-trading surfaces, and market-intel endpoints are strong distribution primitives. | Publish an Invariance agent-readable skill/API guide for external agents. Add heartbeat-style job/event polling for program agents. Defer social/copy trading; use the pattern for integrations, not for early product positioning. |
+| `scientific-agent-skills` | The scientific skill taxonomy is strongest where it forces method before computation: experimental design, hypothesis generation, literature review, critical thinking, EDA, statistical analysis, power, citation management, database lookup, and reproducible reporting. | Convert the relevant scientific protocols into Research Desk playbooks: hypothesis quality scoring, falsification design, nuisance/confounder checklist, EDA/data quality reports, literature-to-hypothesis extraction, statistical validity checks, and citation-backed claims. Do not import the whole skill catalog into the product UI. |
+| `daily_stock_analysis` | Multi-provider data fallback, context packs, data-quality visibility, decision-signal records, alerts, provider diagnostics, and LLM configuration docs reduce operational ambiguity. | Add a crypto Data Doctor and Research Context Pack for every program: data source, fallback, stale/missing state, provider health, snapshot ID, and what each data block can support. Keep user-facing conclusions tied to context quality. |
+| `quantdinger` | A self-hosted trading OS with Agent Gateway, MCP, scoped tokens, risk classes, audit logs, paper-only defaults, idempotency, and signal/execution standards is a strong agent-integration model. | Build Invariance's external agent surface as a scoped Research Gateway/MCP wrapper over existing services. Use capability classes for read, workspace write, backtest, deployment, credentials, and trading. Paper/demo remains default; live requires explicit policy. |
+| `Vibe-Trading` | Natural-language research, MCP tools, local data bridge, alpha library, shadow account, multi-agent teams, research autopilot, post-backtest attribution, run library, and communication adapters show where trading research tools are heading. | Borrow the ambition but narrow it to crypto. Add an Alpha/Template Library, shadow-account-style trade-journal learning, post-run attribution, scheduled research, and report library inside Invariance. Keep every generated strategy under the stricter `bulletproof_bt` truth certification path. |
+
+##### Supercharge for personal crypto edge research
+
+The founder's personal research loop already has the strongest base ingredient: deterministic `bulletproof_bt` experiments, artifact lineage, state discovery, daemon/orchestrator discipline, and crypto-specific data. The integration opportunity is to make that loop more like a scientific lab with agents around it, not to let an LLM become the engine.
+
+Highest-value upgrades:
+
+1. **Research Council before queueing.** Every serious hypothesis should pass through a role-based critique before compute is spent: mechanism reviewer, data-availability reviewer, leakage reviewer, execution-cost reviewer, falsification reviewer, and portfolio-memory reviewer. The output is a compact `research_council_review_v1`, not prose floating in chat.
+2. **Scientific design gate.** Adapt `experimental-design`, `hypothesis-generation`, `scientific-critical-thinking`, and `statistical-analysis` into deterministic checklists: unit of observation, causal claim, nuisance factors, holdout plan, multiple-testing risk, confounders, minimum evidence, and falsification criteria.
+3. **Reflection memory after every run.** TradingAgents' decision log is valuable, but Invariance needs a richer version: after each run, record expected mechanism, actual verdict, failure mode, data quality, state bucket, cost survival, and the next experiment. Later prompts retrieve these structured reflections.
+4. **Data Doctor for crypto panels.** Daily Stock Analysis' provider-health model should become a crypto panel doctor: Binance/Bybit coverage, mark/index/funding/OI availability, stale blocks, missing intervals, panel hash, and snapshot age. A strategy cannot be promoted if the data doctor disagrees with the conclusion.
+5. **Alpha/idea library with truth labels.** Vibe-Trading's Alpha Zoo is useful, but Invariance should not become a generic alpha zoo. Build a crypto idea library where every template has required data, engine support, known failure modes, benchmark runs, and `alive/fragile/dead/untested` status under current crypto panels.
+6. **Shadow-account learning.** Use the Shadow Account idea for the founder's own crypto trading history: extract recurring profitable/losing patterns, replay them causally, and feed closed-trade state snapshots into memory. This makes memory useful for both discretionary and systematic decisions.
+7. **Agent Gateway for the internal daemon.** QuantDinger's MCP/Agent Gateway pattern is directly useful: expose safe research status, queue, run summaries, artifacts, memory search, and next-experiment creation to external coding agents without giving them raw DB, filesystem, or exchange authority.
+
+Personal rule: the agent may propose research, summarize evidence, compare runs, and prepare implementation tasks. It may not mutate engine semantics, promote memory, or queue expensive sweeps without a typed approval object.
+
+##### Supercharge for the product
+
+For users, the strongest product path is still the crypto Research Desk loop:
+
+```text
+intuition / transcript / paper / template
+  -> Research Council critique
+  -> confirmed Hypothesis Card
+  -> deterministic Strategy Spec
+  -> managed-data experiment
+  -> post-run attribution
+  -> demo qualification
+  -> demo/live memory
+  -> next experiment
+```
+
+Add these product capabilities in order:
+
+1. **Research Council cards in the chat.** After the assistant understands a strategy idea, show a compact council result: what is testable, what data is needed, what can leak, what execution assumption matters, and what would falsify it.
+2. **Program Context Pack.** Every program should have one low-sensitive context pack summarizing sources, data availability, current card/spec, run artifacts, decisions, connector state, memory maturity, and unresolved blockers.
+3. **External Agent Skill.** Publish `/skill/invariance-research` or an equivalent agent-readable guide that explains auth, scopes, allowed tools, Research Program objects, and safe workflows. This mirrors AI-Trader's skill-file distribution without adopting copy-trading.
+4. **Research Gateway / MCP.** Offer scoped tools for external agents: list programs, read cards/specs, query run metrics, compare runs, propose notes, create implementation tasks, and poll jobs. No credentials, deployment mutation, or order routing through ordinary agent tools.
+5. **Scientific-source pipeline.** For papers and transcripts, use source chunking, citation anchors, hypothesis extraction, evidence grading, and candidate ranking. This should feel like a quant research assistant, not generic summarization.
+6. **Post-run attribution packet.** After every experiment, automatically produce a typed attribution: failure cause, sensitivity, data limits, state dependence if supported, rare-trade dependence, memory comparison, and next decisive test.
+7. **Template/Alpha Library.** Provide safe starting points: breakout continuation, funding/basis mean reversion, liquidation follow-through, volatility compression breakout, trend continuation, mean reversion, and risk-off filters. Each template must declare data needs, engine support, caveats, and falsification tests.
+8. **Scheduled research and report library.** Borrow the Vibe-Trading run-library pattern: scheduled experiments, searchable reports, compare views, and stale-result warnings. Keep this bounded by grid caps and managed data snapshots.
+
+##### What not to copy
+
+- Do not copy broad stock/macro positioning while the wedge is crypto.
+- Do not copy copy-trading or social leaderboards before the research product is trusted.
+- Do not let agent debate generate a trade order or deployment approval.
+- Do not present LLM committee output as evidence. Evidence is source, artifact, metric, fill, run, or approved memory.
+- Do not expose raw agent filesystem/API power to user-connected models.
+- Do not build a generic alpha zoo before Invariance has a small number of crypto templates tested to institutional honesty.
+- Do not treat TradingView, Pine exports, or alerts as execution authority.
+
+##### Differentiated position after integration
+
+After these integrations, Invariance should not position itself as "TradingAgents for crypto" or "Vibe-Trading with a nicer UI." The sharper claim is:
+
+> Invariance is a governed crypto research companion that turns intuition into falsifiable experiments, remembers what every run and trade taught, and only lets strategies progress when the evidence contract is satisfied.
+
+The moat is the chain: research object -> deterministic spec -> managed crypto data snapshot -> truth-certified backtest -> demo/live lineage -> state-aware memory. The LLM improves navigation through that chain. It does not replace the chain.
+
+#### Agentic-Era Product Doctrine
+
+The risk is not that trading software will disappear. The risk is that static SaaS dashboards become commodities while agents dynamically assemble workflows around the user's immediate goal. In that world, the durable company is not the prettiest fixed interface. The durable company owns the trusted state, governed tools, domain contracts, memory, and execution rails that agents must use when the stakes are real.
+
+OpenAI's Agents SDK direction is instructive: agent systems need managed tool loops, handoffs, sessions, tracing, guardrails, and resumable approval flows. MCP's direction is equally instructive: tools, resources, and prompts are becoming a standard way for agents to connect to external systems. Invariance should be built as an agent-operable research substrate from the beginning, with the web UI as one excellent client, not the whole product.
+
+The product should be judged by a different question:
+
+> If a trader's future AI agent wants to test, audit, deploy, monitor, or explain a crypto strategy, why must it use Invariance as the trusted substrate instead of generating a disposable script?
+
+The answer must be:
+
+```text
+because Invariance owns the verified research object,
+the causal market data snapshot,
+the no-lookahead engine contract,
+the approval and audit trail,
+the exchange-safe deployment rails,
+the state-aware memory,
+and the policy boundary between suggestion and capital.
+```
+
+##### What becomes obsolete
+
+Avoid building these as the center of gravity:
+
+- static dashboards that merely display metrics after a run;
+- upload-only SaaS where every user brings inconsistent artifacts;
+- generic AI chat that produces prose but no durable research object;
+- strategy-code generation without deterministic truth certification;
+- closed UI workflows that agents cannot inspect, resume, or call safely;
+- monolithic pages that assume the human is the only operator;
+- "AI trader" branding where an LLM appears to own trade authority.
+
+These can produce demos, but they will be easy for newer agents to reproduce at use time.
+
+##### What survives
+
+Build the durable layer around things that are hard to regenerate safely:
+
+1. **Domain state.** Research Programs, Hypothesis Cards, Strategy Specs, Experiment Plans, run manifests, verdicts, deployment records, incidents, and memory are durable typed objects, not UI state.
+2. **Truth contracts.** No-lookahead execution, data provenance, causal joins, cost/slippage assumptions, compiler readiness, and qualification criteria are enforced outside the model.
+3. **Agent-operable tools.** Every meaningful action has an authenticated API/tool contract with schemas, idempotency, audit, rate limits, and approval semantics.
+4. **Resources before prompts.** Agents should retrieve canonical program state, data snapshots, cards, specs, artifacts, and memory as resources. Prompt text is a view over resources, not the system of record.
+5. **Generated interfaces.** The web app should increasingly render task-specific workspaces from typed program state: "review this card", "compare these runs", "approve this deployment", "explain this memory block", "debug this failed experiment."
+6. **Policy boundary.** The model can propose, critique, summarize, and draft. Deterministic services authorize queueing, promotion, deployment, risk, and orders.
+7. **Memory as compounding asset.** The product improves because each run, demo fill, live incident, and user decision becomes searchable evidence for future experiments.
+8. **Execution-safe rails.** Exchange connectors, private streams, reconciliation, kill switches, canary policies, and incident records are too high-stakes to be regenerated ad hoc by an agent.
+
+##### The correct mental model
+
+The product is not:
+
+```text
+web dashboard + AI assistant
+```
+
+It is:
+
+```text
+crypto research kernel
+  + governed tool/resource layer
+  + agent/human clients
+  + deterministic backtest/deployment engine
+  + compounding research memory
+```
+
+The UI should feel like ChatGPT only at the entry point. Beneath that, it should behave more like an operating system: objects, permissions, jobs, logs, memory, tools, resources, policies, and audit trails.
+
+##### Design principles for agentic workflows
+
+1. **Every workflow must be callable by a human and by an agent.**
+   The UI action and API/tool action should use the same service contract. No secret UI-only path.
+2. **Every agent action must be replayable.**
+   Persist input, context snapshot, tool version, model/provider, output, validation result, approval state, and side effect.
+3. **Every generated artifact must become typed or be discarded.**
+   Free-form prose can help a user think, but only typed cards/specs/reviews/notes enter the system memory.
+4. **Every approval must bind hashes.**
+   Users approve exact card/spec/run/risk/config hashes, not a vague idea.
+5. **Every result must cite its substrate.**
+   Answers cite source chunks, run artifacts, table rows, data snapshots, state-memory episodes, or connector events.
+6. **Every expensive or risky action must pause.**
+   Queueing broad grids, promoting to demo, changing risk, creating live canary, or mutating orders requires a separate explicit confirmation outside ordinary chat.
+7. **Every surface should be decomposable.**
+   Workbench pages should be generated from reusable evidence instruments, cards, resources, and commands so future agent clients can assemble their own workflow.
+8. **Every product promise must map to a tool contract.**
+   If marketing says "test a hypothesis", there must be a `create_hypothesis_card -> approve_spec -> queue_experiment -> read_verdict` contract behind it.
+
+##### Office-hours conclusion
+
+The desperate user is not looking for another backtester. The desperate user wants a reliable research process that does not let them fool themselves and does not require them to personally glue together data, code, notebooks, bots, and exchange state. The narrow wedge remains "turn crypto intuition into a governed backtest," but the product must expose that wedge as a reusable research protocol agents can operate.
+
+The strongest first user is an independent crypto researcher who already tests ideas but loses time and confidence in translation: intuition -> code -> data -> run -> interpretation -> deployment. Give them an agentic research desk that remembers the chain and enforces the boundary between idea, evidence, and capital.
+
+##### CEO-review conclusion
+
+The 10-star product is not "Bloomberg for strategy validation" and not "ChatGPT for trading." It is closer to:
+
+> The trusted execution environment for crypto research agents.
+
+That means the long-term category is a research kernel, not a SaaS dashboard. Users may arrive through a chat composer, but the value is that Invariance gives their agents a safe, stateful, audited place to do real research work.
+
+The company should therefore optimize for:
+
+- agent-readable contracts over page-specific workflows;
+- memory and lineage over one-off outputs;
+- verified engine results over generated claims;
+- managed crypto data snapshots over ad hoc user uploads;
+- governed deployment rails over "AI can trade for you";
+- composable tools/resources/prompts over a closed UI;
+- object-level approvals over conversational consent;
+- open integration posture over trying to own every possible client.
+
+##### Product direction changes implied
+
+1. **Promote Research Gateway/MCP from optional integration to core architecture.**
+   The web app should be a first-party client over the same research tools that external agents will use.
+2. **Make Program Context Pack the default agent resource.**
+   It should be the canonical compact state any model sees before acting in a program.
+3. **Make Research Council an orchestration primitive.**
+   Specialist roles should be configured tools/agents with explicit outputs, not hidden prompt flavor.
+4. **Make UI generated from state.**
+   Workbench pages should evolve toward task surfaces assembled from evidence instruments and command definitions.
+5. **Make templates executable protocols.**
+   Each template is a starting research protocol with data needs, compile readiness, default grid, falsification, and expected artifacts.
+6. **Make every future feature pass an agentic survivability test.**
+   Ask: if an advanced user brings their own agent, can it safely inspect, call, resume, and audit this feature? If not, the feature is probably just dated SaaS.
+
 #### Security and trust model
 
 Transcripts, papers, Pine source, reports, CSV fields, artifact text, and comments are untrusted content.
@@ -7709,6 +7977,7 @@ Deliver in seven increments:
    - support structured outputs, typed tool calls, cancellation, resumable turns, usage/cost accounting, and model/prompt/tool versioning;
    - preserve OpenAI and Ollama adapters behind one capability interface;
    - add deterministic fallback and provider circuit breakers.
+   - Cx extension: keep hosted Invariance inference as the default provider path and support account-level OpenAI BYOK override before adding Claude/Kimi/local connectors.
 3. **C0.5c - Research chat UI**
    - make the Program thread the primary canvas;
    - add streaming messages, persistent composer, files, URLs, artifact mentions, retries, and focused citations;
@@ -7985,6 +8254,88 @@ Implementation status as of 2026-06-24: implemented with a deliberate shadow-fir
 Owner: `bulletproof_bt` adapter/runtime first, then `invariance_research` connector/product integration.
 
 Implementation status as of 2026-06-24: implemented at the same supervised-canary contract as Bybit. Binance spot and USD-M perpetual support separate testnet/live endpoints, signed REST, instrument filters, balances, positions, orders, fills, mutation locks, user-data listen-key lifecycle, private websocket mapping, and REST reconciliation. Connector diagnosis authenticates the real private stream and records a stream session; failures block the connector. Binance and Bybit share one certification contract covering REST/auth, instrument and balance snapshots, order/fill/private-state events, restart reconciliation, mutation lock, emergency freeze, disconnect/staleness/rate-limit freezing, idempotent fills, and divergence freezing. The web product exposes both venues and products through the same write-only credential, qualification, deployment, recovery, and audit flow. Live remains a bounded canary and is not enabled by adapter presence alone.
+
+#### C9: Open-source-inspired research supercharge layer
+
+Use the six-repo review to add the strongest workflow primitives without diluting Invariance's crypto-only, truth-certified product.
+
+Deliver in eight increments:
+
+1. **C9.1 - Research Council contracts**
+   - define `research_council_review_v1` with role outputs for mechanism, data, leakage, execution, falsification, memory, and deployment critique;
+   - make council outputs cite the source/card/spec/artifact they reviewed;
+   - classify each role result as pass, warning, blocker, unsupported, or needs-human-review;
+   - prevent any council result from authorizing queueing, deployment, or orders on its own.
+2. **C9.2 - Scientific method gates**
+   - adapt the relevant `scientific-agent-skills` protocols into crypto research checklists: hypothesis quality, experimental design, nuisance/confounder analysis, EDA/data quality, literature review, critical-thinking review, and statistical validity;
+   - store checklist results as typed artifacts attached to the Hypothesis Card and experiment plan;
+   - require blockers to be resolved or explicitly waived before expensive grids.
+3. **C9.3 - Crypto Data Doctor and Program Context Pack**
+   - build `program_context_pack_v1` and `crypto_data_doctor_v1`;
+   - include managed-data snapshot, coverage, missing intervals, source/fallback, stale status, dataset availability, connector health, memory maturity, and unresolved blockers;
+   - expose a low-sensitive user view and a richer admin/debug view without leaking raw secrets or private uploads.
+4. **C9.4 - Reflection memory after every run**
+   - emit `experiment_reflection_v1` after each completed or failed experiment;
+   - record expected mechanism, actual verdict, failure cause, data quality, state bucket, cost survival, rare-trade dependence, and next decisive experiment;
+   - make future copilot turns retrieve structured reflections, not free-form historical chat.
+5. **C9.5 - Invariance Agent Skill and Research Gateway**
+   - publish an agent-readable skill/API guide for safe external-agent use;
+   - expose scoped Research Gateway endpoints and optional MCP tools for read, workspace-write proposal, backtest job, and artifact query classes;
+   - require scoped tokens, idempotency keys, rate limits, audit logs, and paper/demo-only defaults;
+   - keep credentials, deployment mutation, and order routing outside ordinary external-agent tools.
+6. **C9.6 - Crypto Template / Alpha Library**
+   - add a curated library of supported crypto research templates with required data, engine primitives, known caveats, default grids, falsification tests, and truth labels;
+   - start with a small set of deeply validated templates rather than hundreds of superficial factors;
+   - tie every template to managed-data coverage and compile-readiness status.
+7. **C9.7 - Shadow-account and trade-journal learning**
+   - import the user's exchange/broker trade history as a learning source;
+   - extract recurring profitable and failing patterns, replay them causally where data supports it, and record memory candidates;
+   - require user confirmation before any extracted behavioral rule becomes canonical memory or a strategy candidate.
+8. **C9.8 - Scheduled research and run library**
+   - let users schedule approved experiment plans within plan/grid limits;
+   - add a searchable run/report library with status, snapshot age, template, verdict, memory events, and next-action filter;
+   - add stale-data and stale-result warnings when a report is no longer representative of current managed panels.
+
+Owner: shared contracts, council schemas, scientific checklist contracts, data-doctor contracts, reflection schemas, template contracts, and gateway capability vocabulary in `bulletproof_bt`; product UI, storage, auth, Research Gateway/MCP server, schedules, run library, token management, and tenant policy in `invariance_research`.
+
+Release gate: C9 is successful only when a user can start from a vague crypto intuition, receive a council critique, choose a supported template or custom card, see data-doctor eligibility, run a bounded managed-data backtest, receive a reflection and next experiment, and retrieve those results through the copilot or Research Gateway without any unsupported authority leak.
+
+#### C10: Agentic research kernel hardening
+
+Make Invariance usable as a future-facing research substrate, not only as a browser SaaS.
+
+Deliver in seven increments:
+
+1. **C10.1 - Resource-first program API**
+   - expose Program Context Pack, current Hypothesis Card, approved Strategy Spec, active Experiment Plan, latest verdict, market-data snapshot, memory maturity, and deployment state as canonical read resources;
+   - keep resources side-effect-free and low-sensitive by default;
+   - add stable resource IDs, version hashes, and tenant-scoped authorization.
+2. **C10.2 - Command registry**
+   - define every meaningful workflow action as a command with schema, risk class, required approvals, idempotency policy, rate limit, and audit event;
+   - map UI buttons and agent tools to the same command registry;
+   - retire UI-only mutations.
+3. **C10.3 - Agent session replay**
+   - persist model/provider, prompt/tool versions, context snapshot, resources read, tools called, validator output, approvals, and side effects for every agent turn;
+   - provide admin and user-visible replay summaries for debugging and trust;
+   - make failed turns recoverable without corrupting program state.
+4. **C10.4 - Generated task surfaces**
+   - render workspaces from typed state and command definitions: card review, run comparison, deployment approval, failed-run rescue, data-doctor review, memory assessment, and incident review;
+   - design these surfaces so a human UI, first-party copilot, and external agent all share the same object model.
+5. **C10.5 - Approval hash discipline**
+   - require exact hashes for card, spec, data snapshot, grid, risk policy, connector, and deployment approvals;
+   - show user-readable diffs before approving superseded objects;
+   - block stale approvals when the underlying object changes.
+6. **C10.6 - Agent integration package**
+   - ship Invariance Agent Skill, OpenAPI/JSON Schema bundle, MCP server, example Codex/Claude/Cursor setup, and golden workflow prompts;
+   - document risk classes, unavailable scopes, and the difference between resources, proposed writes, deployment commands, and order authority.
+7. **C10.7 - Agentic survivability test suite**
+   - test that every core workflow can be inspected, called, paused, resumed, replayed, and audited by both UI and agent paths;
+   - include prompt-injection, cross-tenant, stale-resource, duplicate-command, stale-approval, and runaway-tool-loop cases;
+   - block release when UI and agent behavior diverge.
+
+Owner: resource/command contracts, approval hash semantics, engine-side command requirements, and fixtures in `bulletproof_bt`; resource API, command registry implementation, MCP/OpenAPI package, replay UI, generated task surfaces, and integration test suite in `invariance_research`.
+
+Release gate: C10 is complete when the browser app is demonstrably just one client over the research kernel: an external approved agent can inspect a program, draft a card, request user approval, queue a bounded experiment, read the verdict, propose the next experiment, and replay the entire chain without private credentials, hidden UI state, or unlogged side effects.
 
 ### Success Criteria
 

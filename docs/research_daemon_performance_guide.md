@@ -58,6 +58,38 @@ state_features:
 
 Use `minimal` only when throughput matters more than perp feature enrichment for that batch.
 
+## Decision Logging Profiles
+
+Long volatile grids can spend most of their wall time and disk bandwidth writing
+diagnostic state-only decisions. The engine supports three profiles:
+
+- `full`: write every emitted decision record. Use for short parity/debug runs.
+- `research_sparse`: write approved orders and real risk rejections, but skip
+  `state_log_only` diagnostic signals. The run writes
+  `decision_logging_summary.json` with deterministic written/skipped counts.
+- `parity_debug`: full behavior except optional deterministic sampling of
+  state-only negatives via `decision_negative_sample_every`.
+
+This does not change strategy evaluation, risk sizing, execution, fills, trades,
+equity, or performance metrics. It only changes how much diagnostic non-action
+JSONL is serialized. Truth artifacts remain `fills.jsonl`, `trades.csv`,
+`equity.csv`, `performance.json`, and the run configuration.
+
+For long daemon research use:
+
+```yaml
+outputs:
+  decision_logging_profile: research_sparse
+  decision_negative_sample_every: 0
+```
+
+For byte-for-byte decision-log parity tests use:
+
+```yaml
+outputs:
+  decision_logging_profile: full
+```
+
 ## Safe Overnight Runs
 
 Use the daemon, not a manually looped shell:
@@ -68,6 +100,53 @@ tmux new-session -d -s research_daemon_24_7 \
 ```
 
 Keep `runner_resume_strict: true`. A stale `run_status.json` must not hide missing artifacts.
+
+## Global Capacity Scheduler
+
+For mixed long-running queues, prefer the global capacity scheduler over
+starting several independent daemon sessions by hand. The scheduler launches
+one-shot daemon jobs up to a global worker budget, pauses whole process groups
+when free RAM falls below the pressure threshold, refreshes their queue locks
+while paused, and resumes them when RAM recovers.
+
+It does not change a running grid's math, strategy path, data, fills, PnL, or
+artifacts. It only controls wall-clock scheduling around whole daemon jobs.
+Existing multiprocessing pools cannot be safely resized mid-run, so dynamic
+"more workers" means launching additional queued jobs when there is headroom.
+
+Recommended start command:
+
+```bash
+tmux new-session -d -s research_capacity_scheduler \
+  'cd /home/omenka/Projects/bulletproof_bt && PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 orchestrator/global_capacity_scheduler.py --db research_db/research.sqlite --config orchestrator/daemon_config.yaml >> logs/research_capacity_scheduler_tmux.log 2>&1'
+```
+
+Useful live checks:
+
+```bash
+cat logs/research_capacity_scheduler_state.json
+tail -f logs/research_capacity_scheduler.log
+tmux list-sessions
+ps -eo pid,ppid,pgid,stat,%cpu,%mem,rss,cmd --sort=-rss | head -40
+```
+
+Default scheduler config:
+
+```yaml
+capacity_scheduler:
+  target_workers: 28
+  max_workers_per_job: 12
+  max_concurrent_jobs: 4
+  min_free_ram_gb: 8
+  pause_free_ram_gb: 6
+  resume_free_ram_gb: 12
+```
+
+Use the hysteresis gap between `pause_free_ram_gb` and `resume_free_ram_gb` so
+jobs do not rapidly stop/start around one threshold. If Proxmox reports high
+memory while Linux `MemAvailable` is healthy, the scheduler still follows the
+guest's available-memory signal because that is the correct pressure indicator
+inside the VM.
 
 ## Recovery
 

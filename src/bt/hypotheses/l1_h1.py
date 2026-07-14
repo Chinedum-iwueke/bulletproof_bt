@@ -5,6 +5,7 @@ from collections import deque
 from typing import Deque
 
 _TIMEFRAME_TO_30D_BARS: dict[str, int] = {
+    "1m": 30 * 24 * 60,
     "5m": 30 * 24 * 12,
     "15m": 30 * 24 * 4,
     "1h": 30 * 24,

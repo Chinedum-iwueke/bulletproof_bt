@@ -14,6 +14,7 @@ from bt.metrics.r_metrics import summarize_r
 from bt.logging.formatting import FLOAT_DECIMALS_CSV, write_json_deterministic
 from bt.contracts.schema_versions import PERFORMANCE_SCHEMA_VERSION
 from bt.logging.cost_breakdown import write_cost_breakdown_json
+from bt.research_tiers import SIGNAL_EPISODE_RESEARCH_MODE
 
 
 @dataclass(frozen=True)
@@ -747,6 +748,70 @@ def compute_performance(run_dir: str | Path) -> PerformanceReport:
 
 
 
+_TIER2A_PORTFOLIO_DIAGNOSTIC_PREFIXES = (
+    "negative_free_margin_margin_call_breach",
+)
+
+
+def _is_signal_episode_run(run_path: Path) -> bool:
+    config_path = run_path / "config_used.yaml"
+    if not config_path.exists():
+        return False
+    try:
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+
+    research_cfg = payload.get("research") if isinstance(payload.get("research"), dict) else {}
+    candidates = [
+        payload.get("research_mode"),
+        payload.get("research_tier"),
+        research_cfg.get("research_mode"),
+        research_cfg.get("research_tier"),
+    ]
+    normalized = {str(value).strip().lower() for value in candidates if value is not None}
+    return SIGNAL_EPISODE_RESEARCH_MODE in normalized or "tier2a" in normalized
+
+
+def _apply_signal_episode_validation_policy(
+    validation_payload: dict[str, Any],
+    *,
+    run_path: Path,
+) -> dict[str, Any]:
+    """Keep Tier 2A signal evidence valid when only portfolio-path checks fail.
+
+    Tier 2A is a signal-episode research tier: it asks "did the signal have
+    edge?" rather than "was this a deployable capital path?". Portfolio margin
+    path breaches are therefore retained as diagnostics. R-denominator,
+    reconciliation, cost, and accounting errors remain hard failures because
+    they corrupt the episode-level truth the tier is meant to learn from.
+    """
+    if not _is_signal_episode_run(run_path):
+        return validation_payload
+
+    errors = [str(error) for error in validation_payload.get("errors", [])]
+    portfolio_diagnostics = [
+        error
+        for error in errors
+        if any(error.startswith(prefix) for prefix in _TIER2A_PORTFOLIO_DIAGNOSTIC_PREFIXES)
+    ]
+    hard_errors = [error for error in errors if error not in portfolio_diagnostics]
+    warnings = [str(warning) for warning in validation_payload.get("warnings", [])]
+    warnings.extend(f"tier2a_portfolio_diagnostic_only: {error}" for error in portfolio_diagnostics)
+
+    adjusted = dict(validation_payload)
+    adjusted["passed"] = len(hard_errors) == 0
+    adjusted["errors"] = hard_errors
+    adjusted["warnings"] = warnings
+    adjusted["research_mode"] = SIGNAL_EPISODE_RESEARCH_MODE
+    adjusted["portfolio_validation_policy"] = "diagnostic_only_for_signal_episode"
+    adjusted["portfolio_diagnostic_errors"] = portfolio_diagnostics
+    adjusted["hard_errors"] = hard_errors
+    return adjusted
+
+
 def _validate_performance_metrics(performance_payload: dict[str, Any], trades_df: pd.DataFrame) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -867,6 +932,7 @@ def write_performance_artifacts(report: PerformanceReport, run_dir: str | Path) 
     performance_payload["margin"] = _compute_margin_summary(equity_df)
 
     validation_payload = _validate_performance_metrics(performance_payload, trades_df=pd.read_csv(run_path / "trades.csv") if (run_path / "trades.csv").exists() else pd.DataFrame())
+    validation_payload = _apply_signal_episode_validation_policy(validation_payload, run_path=run_path)
     performance_payload["metrics_valid"] = bool(validation_payload.get("passed", False))
 
     write_json_deterministic(performance_path, performance_payload)

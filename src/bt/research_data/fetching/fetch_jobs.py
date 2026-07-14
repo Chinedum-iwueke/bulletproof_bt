@@ -18,6 +18,7 @@ from bt.research_data.time import timeframe_delta, utc_ts
 
 @dataclass(frozen=True)
 class FetchJob:
+    market: str
     exchange: str
     symbol: str
     dataset: str
@@ -69,11 +70,22 @@ def validate_before_commit(df: pd.DataFrame, dataset: str, timeframe: str) -> No
         if (offsets != 0).any():
             raise ValueError(f"{dataset} timestamps must align to {timeframe} candle opens")
     if dataset == "funding":
-        cadence = pd.Timedelta(hours=1)
-        epoch = pd.Timestamp("1970-01-01T00:00:00Z")
-        offsets = ((ts - epoch) / cadence) % 1
-        if (offsets != 0).any():
-            raise ValueError("funding timestamps must align to whole-hour funding cadence")
+        exchange = str(df["exchange"].dropna().iloc[0]).lower() if "exchange" in df.columns and df["exchange"].notna().any() else ""
+        if exchange == "bybit":
+            # Bybit publishes funding as an exchange event stream and the
+            # interval can vary by instrument/period. Treat the published event
+            # timestamp as the source of truth, while still rejecting malformed
+            # sub-minute timestamps after adapter-level jitter normalization.
+            epoch = pd.Timestamp("1970-01-01T00:00:00Z")
+            minute_offsets = ((ts - epoch) / pd.Timedelta(minutes=1)) % 1
+            if (minute_offsets != 0).any():
+                raise ValueError("bybit funding timestamps must align to minute event boundaries")
+        else:
+            cadence = pd.Timedelta(hours=8)
+            epoch = pd.Timestamp("1970-01-01T00:00:00Z")
+            offsets = ((ts - epoch) / cadence) % 1
+            if (offsets != 0).any():
+                raise ValueError("funding timestamps must align to 8h cadence")
     if dataset == "oi" and ts.duplicated().any():
         raise ValueError("oi contains duplicate snapshots")
 
@@ -84,7 +96,11 @@ class DatasetFetcher:
 
     def fetch(self, job: FetchJob) -> pd.DataFrame:
         if job.dataset == "ohlcv":
+            if job.market == "spot" and hasattr(self.adapter, "fetch_spot_ohlcv"):
+                return self.adapter.fetch_spot_ohlcv(job.symbol, job.chunk.start, job.chunk.end, job.timeframe)
             return self.adapter.fetch_ohlcv(job.symbol, job.chunk.start, job.chunk.end, job.timeframe)
+        if job.market == "spot":
+            raise ValueError(f"spot market supports only ohlcv dataset, got {job.dataset}")
         if job.dataset == "mark":
             return self.adapter.fetch_mark(job.symbol, job.chunk.start, job.chunk.end, job.timeframe)
         if job.dataset == "index":
@@ -106,7 +122,7 @@ def execute_fetch_job(
     limiter: ExchangeRateLimiter,
 ) -> pd.DataFrame:
     started = time.monotonic()
-    key = FetchKey(job.exchange, job.symbol, job.dataset, job.timeframe)
+    key = FetchKey(job.market, job.exchange, job.symbol, job.dataset, job.timeframe)
     state_store.update(key, status="running", last_attempt_ts=job.chunk.end)
     rows_fetched = 0
     rows_written = 0
@@ -127,6 +143,7 @@ def execute_fetch_job(
             df,
             job.chunk.start,
             job.chunk.end,
+            market=job.market,
         )
         rows_written = len(combined)
         state_store.update(
@@ -136,6 +153,7 @@ def execute_fetch_job(
             last_successful_ts=job.chunk.end,
             last_row_count=rows_fetched,
         )
+        coverage_store.update_from_dataset(job.exchange, job.symbol, job.dataset, job.timeframe, market=job.market)
         return combined
     except Exception as exc:
         status = "failed"
@@ -151,6 +169,7 @@ def execute_fetch_job(
     finally:
         duration = time.monotonic() - started
         log_fetch_event(
+            market=job.market,
             exchange=job.exchange,
             symbol=job.symbol,
             dataset=job.dataset,

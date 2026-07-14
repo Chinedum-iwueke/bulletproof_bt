@@ -33,6 +33,7 @@ from bt.experiments.worker_bootstrap import (
     write_worker_exception,
 )
 from bt.hypotheses.contract import HypothesisContract
+from bt.research_tiers import phase_to_contract_phase, research_metadata_for_phase
 from bt.research_orchestration.data_profiles import (
     preflight_research_data_profile,
     resolve_data_profile,
@@ -119,7 +120,7 @@ def build_hypothesis_manifest_rows(*, contract: HypothesisContract, hypothesis_p
 
 
 def _manifest_name(hypothesis_path: Path, phase: str) -> str:
-    return f"{hypothesis_path.stem}_{phase}_grid.csv"
+    return f"{hypothesis_path.stem}_{phase.lower()}_grid.csv"
 
 
 def build_hypothesis_manifest(
@@ -146,6 +147,8 @@ def build_hypothesis_manifest(
     summary_payload = {
         "hypothesis_id": contract.schema.metadata.hypothesis_id,
         "phase": phase,
+        "contract_phase": phase_to_contract_phase(phase),
+        **research_metadata_for_phase(phase),
         "rows": len(rows),
         "tiers": list(resolve_phase_tiers(contract, phase)),
     }
@@ -173,9 +176,36 @@ def _materialize_phase_rollup(experiment_root: Path, manifest_rows: list[dict[st
     status_by_row = {str(row["row_id"]): row for row in status_rows}
     out_rows: list[dict[str, Any]] = []
     for row in manifest_rows:
-        if status_by_row.get(row["row_id"], {}).get("status") != "COMPLETED":
+        status_row = status_by_row.get(row["row_id"], {})
+        if status_row.get("status") != "COMPLETED":
             continue
         metrics = by_key.get(f"{row['variant_id']}::{row['tier']}", {})
+        run_dir = metrics.get("run_dir", "")
+        perf_path: Path | None = None
+        output_dir = status_row.get("output_dir") or row.get("output_dir")
+        if output_dir:
+            candidate = experiment_root / str(output_dir) / "performance.json"
+            if candidate.exists():
+                perf_path = candidate
+        if perf_path is None and run_dir:
+            candidate = Path(str(run_dir)) / "performance.json"
+            if not candidate.is_absolute():
+                candidate = experiment_root / candidate
+            if candidate.exists():
+                perf_path = candidate
+        if perf_path is not None:
+            try:
+                performance = json.loads(perf_path.read_text(encoding="utf-8"))
+                metrics = {
+                    **metrics,
+                    "num_trades": metrics.get("num_trades", performance.get("total_trades")),
+                    "ev_r_net": metrics.get("ev_r_net", performance.get("ev_r_net")),
+                    "pnl_net": metrics.get("pnl_net", performance.get("net_pnl")),
+                    "max_drawdown_r": metrics.get("max_drawdown_r", performance.get("max_drawdown_pct")),
+                    "run_dir": metrics.get("run_dir", str(perf_path.parent)),
+                }
+            except (OSError, json.JSONDecodeError):
+                pass
         out_rows.append(
             {
                 "row_id": row["row_id"],
@@ -353,6 +383,7 @@ def _execute_manifest_row(
             local_config=local_config,
             override_paths=override_paths,
             run_slug=run_slug,
+            phase=row.get("phase", "tier2b"),
         )
         # The engine writes the authoritative PASS status and required truth
         # artifacts. The runner intentionally does not overwrite successful
@@ -628,7 +659,10 @@ def run_hypothesis_manifest_in_parallel(
                         row_id = str(context["row_id"])
                         row = next(item for item in wave_rows if item["row_id"] == row_id)
                         artifact_state = detect_run_artifact_status(experiment_root / row["output_dir"], strict_resume=resume_strict)
-                        status = "COMPLETED" if return_code == 0 and artifact_state.state == "SUCCESS" else "FAILED"
+                        # A worker process can die after the engine has already written a complete
+                        # PASS artifact set. In that case the on-disk run contract is the safer
+                        # source of truth for resume behavior than the pool-level exception.
+                        status = "COMPLETED" if artifact_state.state == "SUCCESS" else "FAILED"
                         status_rows = [
                             existing
                             for existing in status_rows
@@ -651,7 +685,8 @@ def run_hypothesis_manifest_in_parallel(
                         )
                         if status == "FAILED":
                             run_dir = experiment_root / row["output_dir"]
-                            if not (run_dir / "run_status.json").exists() or "timeout" in str(error_message).lower():
+                            existing_state = detect_run_artifact_status(run_dir, strict_resume=False)
+                            if existing_state.state in {"MISSING", "INCOMPLETE", "RUNNING", "PENDING", "SKIPPED"} or "timeout" in str(error_message).lower():
                                 atomic_write_json(
                                     run_dir / "run_status.json",
                                     {
@@ -765,7 +800,7 @@ def cli_build_hypothesis_manifest(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build manifest for any hypothesis contract")
     parser.add_argument("--hypothesis", required=True)
     parser.add_argument("--experiment-root", required=True)
-    parser.add_argument("--phase", choices=("tier2", "tier3", "validate"), default="tier2")
+    parser.add_argument("--phase", choices=("tier2a", "tier2b", "tier2", "tier3", "validate"), default="tier2b")
     args = parser.parse_args(argv)
 
     manifest = build_hypothesis_manifest(
@@ -791,7 +826,7 @@ def cli_run_parallel_hypothesis_grid(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeframe", default="1m")
     parser.add_argument("--membership-path")
     parser.add_argument("--stable-manifest")
-    parser.add_argument("--phase", choices=("tier2", "tier3", "validate"))
+    parser.add_argument("--phase", choices=("tier2a", "tier2b", "tier2", "tier3", "validate"))
     parser.add_argument("--override", action="append", default=[])
     parser.add_argument("--max-workers", type=int, default=6)
     parser.add_argument("--max-workers-auto", action="store_true", default=False)

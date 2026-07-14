@@ -58,6 +58,10 @@ from bt.strategy.l1_h10a_mean_reversion_small_tp import L1H10AMeanReversionSmall
 from bt.strategy.l1_h10b_breakout_scalping import L1H10BBreakoutScalpingStrategy  # noqa: E402
 from bt.strategy.l1_h11_quality_filtered_continuation import L1H11QualityFilteredContinuationStrategy  # noqa: E402
 from bt.strategy.l7_h1_csi_gated_displacement_trend import L7H1CSIGatedDisplacementTrendStrategy  # noqa: E402
+from bt.strategy.l2_h1_htf_trend_filter_pullback import L2H1HTFTrendFilterPullbackStrategy  # noqa: E402
+from bt.strategy.l2_h3_reference_price_reversion import L2H3ReferencePriceReversionStrategy  # noqa: E402
+from bt.strategy.l2_h4_prior_day_extreme_traps import L2H4PriorDayExtremeTrapsStrategy  # noqa: E402
+from bt.strategy.l2_h5_htf_trend_funding_stress import L2H5HTFTrendFundingStressStrategy  # noqa: E402
 
 __all__ = [
     "STRATEGY_REGISTRY",
@@ -85,4 +89,8 @@ __all__ = [
     "L1H10BBreakoutScalpingStrategy",
     "L1H11QualityFilteredContinuationStrategy",
     "L7H1CSIGatedDisplacementTrendStrategy",
+    "L2H1HTFTrendFilterPullbackStrategy",
+    "L2H3ReferencePriceReversionStrategy",
+    "L2H4PriorDayExtremeTrapsStrategy",
+    "L2H5HTFTrendFundingStressStrategy",
 ]

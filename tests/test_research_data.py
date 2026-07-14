@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 from bt.research_data.alignment import build_research_panel
-from bt.research_data.instruments import reconcile_stable_symbols
+from bt.research_data.instruments import native_to_canonical_symbol, reconcile_stable_symbols
 from bt.research_data.schemas import OHLCV_COLUMNS
 from bt.research_data.storage import ResearchDataStore
 from bt.research_data.time import utc_series, utc_ts
@@ -49,6 +49,31 @@ def test_parquet_upsert_deduplicates_by_key(tmp_path) -> None:
     assert len(combined) == 3
     assert combined.loc[combined["ts"].eq(pd.Timestamp("2021-01-01 00:01", tz="UTC")), "close"].item() == 12.0
     assert path.exists()
+
+
+def test_spot_and_perp_storage_namespaces_do_not_collide(tmp_path) -> None:
+    store = ResearchDataStore(tmp_path / "research_data")
+    perp = _ohlcv("BTCUSDT", [("2021-01-01 00:00", 10.0, 10.0)])
+    spot = _ohlcv("BTCUSDT", [("2021-01-01 00:00", 20.0, 20.0)])
+    perp["canonical_symbol"] = "BTC-USDT-PERP"
+    spot["canonical_symbol"] = "BTC-USDT-SPOT"
+
+    store.upsert_dataset("binance", "BTCUSDT", "ohlcv", "1m", perp, market="perp")
+    store.upsert_dataset("binance", "BTCUSDT", "ohlcv", "1m", spot, market="spot")
+
+    saved_perp = store.read(store.raw_path("binance", "BTCUSDT", "ohlcv", "1m", market="perp"))
+    saved_spot = store.read(store.raw_path("binance", "BTCUSDT", "ohlcv", "1m", market="spot"))
+
+    assert saved_perp["close"].item() == 10.0
+    assert saved_spot["close"].item() == 20.0
+    assert store.raw_path("binance", "BTCUSDT", "ohlcv", "1m", market="perp") != store.raw_path(
+        "binance", "BTCUSDT", "ohlcv", "1m", market="spot"
+    )
+
+
+def test_native_symbol_mapping_separates_spot_from_perp() -> None:
+    assert native_to_canonical_symbol("BTCUSDT", market="perp") == "BTC-USDT-PERP"
+    assert native_to_canonical_symbol("BTCUSDT", market="spot") == "BTC-USDT-SPOT"
 
 
 def test_timestamp_normalization_to_utc() -> None:

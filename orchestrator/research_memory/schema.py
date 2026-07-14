@@ -17,6 +17,13 @@ def ensure_research_memory_schema(conn: sqlite3.Connection) -> None:
             symbol TEXT,
             dataset_type TEXT,
             phase TEXT,
+            research_tier TEXT,
+            research_mode TEXT,
+            evidence_type TEXT,
+            portfolio_constraints_applied INTEGER,
+            capital_path_valid INTEGER,
+            deployability_evidence INTEGER,
+            signal_episode_evidence INTEGER,
             experiment_root TEXT,
             ts_signal TEXT,
             ts_entry_fill TEXT,
@@ -156,6 +163,16 @@ def ensure_research_memory_schema(conn: sqlite3.Connection) -> None:
     )
     _add_column_if_missing(conn, "research_memory_trades", "metrics_valid", "INTEGER DEFAULT 1")
     _add_column_if_missing(conn, "research_memory_trades", "invalid_reason", "TEXT")
+    for column, spec in {
+        "research_tier": "TEXT",
+        "research_mode": "TEXT",
+        "evidence_type": "TEXT",
+        "portfolio_constraints_applied": "INTEGER",
+        "capital_path_valid": "INTEGER",
+        "deployability_evidence": "INTEGER",
+        "signal_episode_evidence": "INTEGER",
+    }.items():
+        _add_column_if_missing(conn, "research_memory_trades", column, spec)
     for column, spec in {
         "csi_source": "TEXT",
         "csi_components_json": "TEXT",

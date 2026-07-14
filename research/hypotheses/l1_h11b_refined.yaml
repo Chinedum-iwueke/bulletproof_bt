@@ -1,0 +1,105 @@
+metadata:
+  hypothesis_id: "L1-H11B-REFINED"
+  title: "H11B Refined Deployment Candidates"
+  description: "Data-led refinement of H11B using geometry-specific state gates plus break-even, profit-lock, and runner-trail exits."
+  research_layer: "L1"
+  hypothesis_family: "trend_continuation"
+  parent_family: "L1-H11"
+  version: "1.0.0"
+  author: "bulletproof_bt"
+  created_at: "2026-07-02T00:00:00Z"
+
+hypothesis_id: "L1-H11B-REFINED"
+title: "H11B Refined Deployment Candidates"
+description: "Four-run H11B refinement grid: two 1h candidates from the strongest volatile geometry rows, and two 15m squeeze candidates from state-specific positive pockets."
+research_layer: "L1"
+hypothesis_family: "trend_continuation"
+parent_family: "L1-H11"
+version: "1.0.0"
+author: "bulletproof_bt"
+created_at: "2026-07-02T00:00:00Z"
+
+required_indicators: [ema, adx, atr, session_vwap]
+
+sizing:
+  mode: risk_at_stop
+  r_per_trade: 0.005
+  cap_policy: allow_clip_with_truth
+  min_risk_utilization_pct: 0.10
+  report_under_risked_trades: true
+
+parameter_grid:
+  signal_timeframe: ["1h", "15m"]
+  h11_tuning_profile:
+    - "h11b_1h_core_geometry"
+    - "h11b_1h_mild_basis_runner"
+    - "h11b_15m_midvol_funding_squeeze"
+    - "h11b_15m_liquid_mild_squeeze"
+  family_variant: ["L1-H11B"]
+
+variant_constraints:
+  exclude:
+    - signal_timeframe: "15m"
+      h11_tuning_profile: "h11b_1h_core_geometry"
+    - signal_timeframe: "15m"
+      h11_tuning_profile: "h11b_1h_mild_basis_runner"
+    - signal_timeframe: "1h"
+      h11_tuning_profile: "h11b_15m_midvol_funding_squeeze"
+    - signal_timeframe: "1h"
+      h11_tuning_profile: "h11b_15m_liquid_mild_squeeze"
+
+entry:
+  strategy: "l1_h11_quality_filtered_continuation"
+  signal_timeframe: "15m"
+  timeframe: "15m"
+  base_execution_timeframe: "1m"
+  order_timing: "bar_close_submit_next_bar_execution"
+  no_pyramiding: true
+
+exit:
+  stop_kind: "atr_multiple_with_rule_based_protection_and_runner_trail"
+  stop_model: "fixed_atr_multiple_with_optional_tighter_initial_cap"
+  stop_update_policy: "frozen_at_entry_then_breakeven_profit_lock_runner_trail"
+  atr_source_timeframe: "signal_timeframe"
+  trend_failure_exit: true
+  exit_monitoring_timeframe: "1m"
+
+execution_semantics:
+  signal_timeframe: "15m"
+  base_execution_timeframe: "1m"
+  exit_monitoring_timeframe: "1m"
+  base_data_frequency_expected: "1m"
+  strategy_family: "trend_continuation"
+  family_pattern: "quality_filtered_continuation"
+  parent_family: "L1-H11"
+  stop_model: "fixed_atr_multiple_with_optional_tighter_initial_cap"
+  stop_update_policy: "frozen_at_entry_then_breakeven_profit_lock_runner_trail"
+  tp_update_policy: "none"
+  hold_time_unit: "base_bars"
+  atr_source_timeframe: "signal_timeframe"
+  risk_accounting: "engine_canonical_R"
+  no_pyramiding: true
+
+evaluation:
+  required_tiers: ["Tier2", "Tier3"]
+
+runtime_controls:
+  enabled: true
+  tags: ["h11b", "refined", "deployment_research", "four_run_grid"]
+  notes: "Profiles are fixed from H11B volatile artifacts: best 1h rows 23/6 and state-specific 15m funding-squeeze pockets. Stable remains a rejection check."
+
+truth_contract:
+  version: "1.0"
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  parity_required_for_fast_path: true
+  research_memory_requires_certification: true
