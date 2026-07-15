@@ -22,12 +22,10 @@ def generate_recommendations(conn: sqlite3.Connection, *, min_trades: int = 3) -
     buckets = pd.read_sql_query("SELECT * FROM research_memory_state_buckets WHERE n_trades >= ?", conn, params=(min_trades,))
     if not buckets.empty:
         recs.extend(_bucket_recommendations(buckets))
-    trades = pd.read_sql_query("SELECT * FROM research_memory_trades WHERE metrics_valid = 1 AND r_net IS NOT NULL", conn)
-    if not trades.empty:
-        recs.extend(_trade_recommendations(trades, min_trades=min_trades))
+    recs.extend(_trade_recommendations_from_db(conn, min_trades=min_trades))
     candidates = pd.read_sql_query("SELECT * FROM research_memory_candidates", conn)
     if not candidates.empty:
-        recs.extend(_candidate_recommendations(candidates, trades))
+        recs.extend(_candidate_recommendations(candidates))
     recs = _dedupe(recs)
     write_recommendations(conn, recs)
     return recs
@@ -110,7 +108,43 @@ def _trade_recommendations(df: pd.DataFrame, *, min_trades: int) -> list[dict[st
     return recs
 
 
-def _candidate_recommendations(candidates: pd.DataFrame, trades: pd.DataFrame) -> list[dict[str, Any]]:
+def _trade_recommendations_from_db(conn: sqlite3.Connection, *, min_trades: int) -> list[dict[str, Any]]:
+    recs: list[dict[str, Any]] = []
+    rows = conn.execute(
+        """
+        SELECT
+            setup_class,
+            hypothesis_name,
+            COUNT(*) AS n_trades,
+            AVG(r_net) AS ev_r_net,
+            AVG(mfe_r) AS avg_mfe_r,
+            AVG(exit_efficiency) AS avg_exit_efficiency,
+            AVG(CASE WHEN r_net >= 5 THEN 1.0 ELSE 0.0 END) AS tail_5r_rate
+        FROM research_memory_trades
+        WHERE metrics_valid = 1 AND r_net IS NOT NULL
+        GROUP BY setup_class, hypothesis_name
+        HAVING COUNT(*) >= ?
+        """,
+        (min_trades,),
+    ).fetchall()
+    for row in rows:
+        evidence = {
+            "setup_class": row["setup_class"],
+            "hypothesis_name": row["hypothesis_name"],
+            "n_trades": int(row["n_trades"]),
+            "ev_r_net": _num(row["ev_r_net"]) or 0.0,
+            "avg_mfe_r": _num(row["avg_mfe_r"]),
+            "avg_exit_efficiency": _num(row["avg_exit_efficiency"]),
+            "tail_5r_rate": _num(row["tail_5r_rate"]) or 0.0,
+        }
+        if evidence["avg_mfe_r"] and evidence["avg_mfe_r"] >= 1.5 and (evidence["avg_exit_efficiency"] or 1) <= 0.35 and evidence["ev_r_net"] < 0.25:
+            recs.append(_rec("REFINE_EXIT", "setup_class", str(evidence["setup_class"]), "Good entry excursion but poor realized exits. Test trailing, time-stop, or partial exit variants.", evidence, {"setup_class": evidence["setup_class"]}, evidence["avg_mfe_r"], min(1, evidence["n_trades"] / 30)))
+        if evidence["ev_r_net"] < -0.15 and evidence["avg_mfe_r"] is not None and evidence["avg_mfe_r"] < 0.75 and evidence["tail_5r_rate"] == 0:
+            recs.append(_rec("SCRAP_PATTERN", "setup_class", str(evidence["setup_class"]), "Repeated negative results with weak MFE and no tail generation. Consider scrapping this setup family.", evidence, {"setup_class": evidence["setup_class"]}, abs(evidence["ev_r_net"]), min(1, evidence["n_trades"] / 30)))
+    return recs
+
+
+def _candidate_recommendations(candidates: pd.DataFrame) -> list[dict[str, Any]]:
     recs: list[dict[str, Any]] = []
     for row in candidates.to_dict("records"):
         ev = _num(row.get("ev_r_net"))

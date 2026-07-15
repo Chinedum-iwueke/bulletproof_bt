@@ -37,7 +37,7 @@ def main() -> int:
         )
         print(json.dumps(manifest, indent=2, sort_keys=True))
 
-    if args.recommend or args.write_db:
+    if args.recommend or (args.write_db and not args.skip_recommendations):
         recs = generate_recommendations(conn)
         print(json.dumps({"recommendations_generated": len(recs)}, indent=2, sort_keys=True))
 
@@ -60,6 +60,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default="research/memory")
     parser.add_argument("--write-db", action="store_true")
     parser.add_argument("--recommend", action="store_true")
+    parser.add_argument("--skip-recommendations", action="store_true")
     parser.add_argument("--query", choices=["similar_state", "best_states", "avoid_states", "setup_profile", "hypothesis_profile", "candidate_profile"])
     parser.add_argument("--state-json")
     parser.add_argument("--setup-class")
