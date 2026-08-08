@@ -22,6 +22,7 @@ MAX_NOTIONAL_EXCEEDED = "risk_rejected:max_notional_exceeded"
 MAX_NOTIONAL_PCT_EQUITY_EXCEEDED = "risk_rejected:max_notional_pct_equity_exceeded"
 MAX_GROSS_NOTIONAL_PCT_EQUITY_EXCEEDED = "risk_rejected:max_gross_notional_pct_equity_exceeded"
 MIN_RISK_UTILIZATION_VIOLATION = "risk_rejected:min_risk_utilization_violation"
+PENDING_ENTRY_ORDER = "risk_rejected:pending_entry_order"
 
 # Additional stable reject codes used by RiskEngine
 NO_SIDE = "risk_rejected:no_side"
@@ -54,6 +55,7 @@ _ALL_CODES = {
     MAX_NOTIONAL_PCT_EQUITY_EXCEEDED,
     MAX_GROSS_NOTIONAL_PCT_EQUITY_EXCEEDED,
     MIN_RISK_UTILIZATION_VIOLATION,
+    PENDING_ENTRY_ORDER,
     NO_SIDE,
     SYMBOL_MISMATCH,
     NO_EQUITY,

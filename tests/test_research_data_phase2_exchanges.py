@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import http.client
+
 import pandas as pd
 
 from bt.research_data.exchanges.binance import BinanceSpotAdapter, BinanceUSDMPerpAdapter
-from bt.research_data.exchanges.bybit import BybitSpotAdapter, BybitUSDTPerpAdapter, normalize_bybit_instruments
+from bt.research_data.exchanges.bybit import BybitSpotAdapter, BybitUSDTPerpAdapter, BybitV5Client, normalize_bybit_instruments
 from bt.research_data.exchanges.okx import normalize_okx_instruments
 from bt.research_data.instruments import native_to_canonical_symbol
 from bt.research_data.schemas import FUNDING_COLUMNS, INSTRUMENT_COLUMNS, OHLCV_COLUMNS
@@ -87,6 +89,33 @@ class BybitKlineClient:
                 ]
             },
         }
+
+
+def test_bybit_client_retries_remote_disconnected(monkeypatch) -> None:
+    calls = {"count": 0}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return b'{"retCode":0,"result":{"list":[]}}'
+
+    def fake_urlopen(_request, timeout):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise http.client.RemoteDisconnected("closed before response")
+        return Response()
+
+    monkeypatch.setattr("bt.research_data.exchanges.bybit.urllib.request.urlopen", fake_urlopen)
+
+    payload = BybitV5Client(retries=2, backoff_seconds=0).get("/v5/market/instruments-info", {"category": "linear"})
+
+    assert calls["count"] == 2
+    assert payload["retCode"] == 0
 
 
 class BybitFundingClient:

@@ -119,6 +119,44 @@ class FetchStateStore:
             columns=FETCH_STATE_COLUMNS,
         )
 
+    def mark_stale_running_failed(
+        self,
+        *,
+        exchange: str,
+        market: str = "perp",
+        older_than: object,
+        error_message: str = "stale running state reset before resume",
+    ) -> int:
+        """Convert dead running checkpoints to failed without moving progress.
+
+        Fetch checkpoints are written before each chunk starts. If a VM or tmux
+        session dies, those rows can remain ``running`` forever. Marking only
+        stale rows as failed lets the normal scheduler resume from
+        ``last_successful_ts`` or local raw chunks without treating the dead
+        worker as active.
+        """
+
+        df = self.read()
+        if df.empty:
+            return 0
+        cutoff = utc_ts(older_than)
+        updated_at = pd.to_datetime(df["updated_at"], utc=True, errors="coerce")
+        mask = (
+            df["market"].fillna("perp").astype(str).eq(market)
+            & df["exchange"].astype(str).eq(exchange)
+            & df["status"].astype(str).eq("running")
+            & updated_at.notna()
+            & updated_at.lt(cutoff)
+        )
+        count = int(mask.sum())
+        if count == 0:
+            return 0
+        df.loc[mask, "status"] = "failed"
+        df.loc[mask, "error_message"] = error_message
+        df.loc[mask, "updated_at"] = utc_ts("now")
+        self.store.write_atomic(df[list(FETCH_STATE_COLUMNS)], self.path)
+        return count
+
 
 class CoverageStore:
     def __init__(self, store: ResearchDataStore | None = None) -> None:

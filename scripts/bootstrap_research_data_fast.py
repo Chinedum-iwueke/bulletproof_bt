@@ -18,6 +18,7 @@ if str(SRC_ROOT) not in sys.path:
 from bt.research_data.config import RAW_DATASETS
 from bt.research_data.exchanges.factory import get_adapter
 from bt.research_data.fetching.orchestration import fetch_backfill
+from bt.research_data.fetching.state import FetchStateStore
 from bt.research_data.instruments import write_instrument_manifest, write_stable_universe
 from bt.research_data.jobs.build_panel import build_panels
 from bt.research_data.jobs.build_universe import build_volatile_universe
@@ -40,22 +41,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--volatile-start", default="2025-01-01")
     parser.add_argument("--end", default="now")
     parser.add_argument("--skip-panels", action="store_true")
+    parser.add_argument(
+        "--reset-stale-running-minutes",
+        type=float,
+        default=0.0,
+        help="Before fetching, mark this exchange's stale running fetch_state rows older than N minutes as failed.",
+    )
     return parser.parse_args()
 
 
 def run_fetch_task(task: tuple[str, str, str, str, str, str, float]) -> tuple[str, str, str]:
     exchange, symbol, dataset, timeframe, start, end, rate_limit_seconds = task
     store = ResearchDataStore()
-    fetch_backfill(
-        exchange,
-        dataset,
-        symbol,
-        timeframe,
-        start,
-        end,
-        store=store,
-        rate_limit_seconds=rate_limit_seconds,
-    )
+    try:
+        fetch_backfill(
+            exchange,
+            dataset,
+            symbol,
+            timeframe,
+            start,
+            end,
+            store=store,
+            rate_limit_seconds=rate_limit_seconds,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"{type(exc).__name__}: {exc}") from None
     return symbol, dataset, start
 
 
@@ -99,6 +109,15 @@ def main() -> int:
     exchange = args.exchange.lower()
     store = ResearchDataStore()
     store.ensure_layout()
+    if args.reset_stale_running_minutes and args.reset_stale_running_minutes > 0:
+        cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(minutes=args.reset_stale_running_minutes)
+        reset = FetchStateStore(store).mark_stale_running_failed(
+            exchange=exchange,
+            market="perp",
+            older_than=cutoff,
+            error_message=f"stale running state reset by bootstrap after {args.reset_stale_running_minutes:g} minutes",
+        )
+        log(f"reset stale running fetch_state rows exchange={exchange} rows={reset}")
     adapter = get_adapter(exchange)
 
     log(f"refreshing {exchange} instruments")

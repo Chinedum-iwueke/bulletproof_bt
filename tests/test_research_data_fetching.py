@@ -69,6 +69,33 @@ def test_scheduler_resumes_from_last_successful_timestamp(tmp_path) -> None:
     assert plan.jobs[0].chunk.start == pd.Timestamp("2021-01-02", tz="UTC")
 
 
+def test_stale_running_fetch_state_can_be_reset_without_losing_checkpoint(tmp_path) -> None:
+    store = ResearchDataStore(tmp_path / "research_data")
+    state = FetchStateStore(store)
+    key = FetchKey("perp", "bybit", "BTCUSDT", "ohlcv", "1m")
+    state.update(
+        key,
+        status="running",
+        last_attempt_ts=pd.Timestamp("2021-01-03", tz="UTC"),
+        last_successful_ts=pd.Timestamp("2021-01-02", tz="UTC"),
+        last_row_count=1500,
+    )
+    df = state.read()
+    df.loc[df["exchange"].eq("bybit"), "updated_at"] = pd.Timestamp("2021-01-03", tz="UTC")
+    store.write_atomic(df, state.path)
+
+    reset = state.mark_stale_running_failed(
+        exchange="bybit",
+        older_than=pd.Timestamp("2021-01-04", tz="UTC"),
+    )
+
+    row = state.get(key)
+    assert reset == 1
+    assert row is not None
+    assert row["status"] == "failed"
+    assert row["last_successful_ts"] == pd.Timestamp("2021-01-02", tz="UTC")
+
+
 def test_update_overlap_safety_constants() -> None:
     assert overlap_for_dataset("ohlcv") == pd.Timedelta(days=3)
     assert overlap_for_dataset("mark") == pd.Timedelta(days=3)

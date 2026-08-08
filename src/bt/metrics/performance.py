@@ -66,6 +66,39 @@ def _coerce_numeric(series: pd.Series, *, fillna_zero: bool = True) -> pd.Series
     return out.fillna(0.0) if fillna_zero else out
 
 
+def _read_csv_default(path: Path) -> pd.DataFrame:
+    try:
+        return pd.read_csv(path)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame()
+
+
+def _read_trades_csv(path: Path) -> pd.DataFrame:
+    """Read trade logs without relying solely on pandas' C parser.
+
+    Large research runs can produce wide, mixed-type trade CSVs. The default C
+    parser is fast, but we have observed native crashes on those files during
+    post-run metrics. Prefer pyarrow for full trade-log reads and keep the
+    Python parser as a correctness-first fallback.
+    """
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(path, engine="pyarrow")
+    except ImportError:
+        pass
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame()
+    except Exception:
+        # Fall back to pandas' pure-Python parser for malformed or mixed-type
+        # files instead of risking the native C parser path again.
+        pass
+    try:
+        return pd.read_csv(path, engine="python")
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame()
+
+
 def _resolve_r_multiple_series(
     trades_df: pd.DataFrame,
     *,
@@ -143,6 +176,7 @@ def compute_cost_attribution(
     *,
     fills_path: Path | None = None,
     trades_path: Path | None = None,
+    trades_df: pd.DataFrame | None = None,
 ) -> dict[str, float]:
     """Returns deterministic run-level PnL/cost attribution fields."""
     resolved_trades_path = trades_path if trades_path is not None else run_dir / "trades.csv"
@@ -153,10 +187,7 @@ def compute_cost_attribution(
             f"run_dir={run_dir}: missing fills/trades required for cost attribution (missing trades.csv)"
         )
 
-    try:
-        trades_df = pd.read_csv(resolved_trades_path)
-    except pd.errors.EmptyDataError:
-        trades_df = pd.DataFrame()
+    trades_df = trades_df if trades_df is not None else _read_trades_csv(resolved_trades_path)
 
     if trades_df.empty:
         return {
@@ -502,12 +533,13 @@ def compute_performance(run_dir: str | Path) -> PerformanceReport:
     equity_path = run_path / "equity.csv"
     trades_path = run_path / "trades.csv"
 
-    equity_df = pd.read_csv(equity_path)
-    trades_df = pd.read_csv(trades_path)
+    equity_df = _read_csv_default(equity_path)
+    trades_df = _read_trades_csv(trades_path)
     cost_attribution = compute_cost_attribution(
         run_path,
         fills_path=(run_path / "fills.jsonl"),
         trades_path=trades_path,
+        trades_df=trades_df,
     )
 
     equity_col = None
@@ -926,12 +958,13 @@ def write_performance_artifacts(report: PerformanceReport, run_dir: str | Path) 
 
     equity_path = run_path / "equity.csv"
     try:
-        equity_df = pd.read_csv(equity_path)
+        equity_df = _read_csv_default(equity_path)
     except pd.errors.EmptyDataError:
         equity_df = pd.DataFrame()
     performance_payload["margin"] = _compute_margin_summary(equity_df)
 
-    validation_payload = _validate_performance_metrics(performance_payload, trades_df=pd.read_csv(run_path / "trades.csv") if (run_path / "trades.csv").exists() else pd.DataFrame())
+    trades_df = _read_trades_csv(run_path / "trades.csv")
+    validation_payload = _validate_performance_metrics(performance_payload, trades_df=trades_df)
     validation_payload = _apply_signal_episode_validation_policy(validation_payload, run_path=run_path)
     performance_payload["metrics_valid"] = bool(validation_payload.get("passed", False))
 
@@ -953,13 +986,7 @@ def write_performance_artifacts(report: PerformanceReport, run_dir: str | Path) 
     )
 
     trades_path = run_path / "trades.csv"
-    if trades_path.exists():
-        try:
-            trades_df = pd.read_csv(trades_path)
-        except pd.errors.EmptyDataError:
-            trades_df = pd.DataFrame()
-    else:
-        trades_df = pd.DataFrame()
+    trades_df = _read_trades_csv(trades_path)
     trade_returns_df, _, _, _ = _compute_trade_returns(trades_df)
     ordered_trade_returns = _order_trade_returns(trade_returns_df)
     ordered_trade_returns.to_csv(

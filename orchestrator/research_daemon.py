@@ -158,6 +158,11 @@ def merge_payload_with_defaults(payload: dict[str, Any], config: dict[str, Any],
             "cleanup_delete_nonretained_runs",
             config.get("cleanup_delete_nonretained_runs", True),
         ),
+        "skip_run": payload.get("skip_run", False),
+        "skip_truth_validation": payload.get("skip_truth_validation", False),
+        "skip_analysis": payload.get("skip_analysis", False),
+        "skip_extract": payload.get("skip_extract", False),
+        "skip_cleanup": payload.get("skip_cleanup", False),
     }
 
     missing = [key for key in REQUIRED_PAYLOAD_KEYS if not merged.get(key)]
@@ -231,6 +236,16 @@ def build_pipeline_command(db_path: Path, merged_payload: dict[str, Any]) -> lis
         cmd.append("--no-cleanup-delete-logs")
     if not bool(merged_payload["cleanup_delete_nonretained_runs"]):
         cmd.append("--no-cleanup-delete-nonretained-runs")
+    if bool(merged_payload.get("skip_run")):
+        cmd.append("--skip-run")
+    if bool(merged_payload.get("skip_truth_validation")):
+        cmd.append("--skip-truth-validation")
+    if bool(merged_payload.get("skip_analysis")):
+        cmd.append("--skip-analysis")
+    if bool(merged_payload.get("skip_extract")):
+        cmd.append("--skip-extract")
+    if bool(merged_payload.get("skip_cleanup")):
+        cmd.append("--skip-cleanup")
     return cmd
 
 

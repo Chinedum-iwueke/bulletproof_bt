@@ -597,13 +597,20 @@ def _build_trade_rows(
     for key, value in run_provenance.items():
         out[key] = value
 
-    if "identity_trade_id" not in out.columns:
-        out["identity_trade_id"] = out["trade_id"]
-    else:
-        out["identity_trade_id"] = out["identity_trade_id"].where(
+    if "identity_trade_id" in out.columns:
+        source_identity = out["identity_trade_id"].where(
             out["identity_trade_id"].notna() & out["identity_trade_id"].astype(str).str.strip().ne(""),
-            out["trade_id"],
+            None,
         )
+        if "source_identity_trade_id" not in out.columns:
+            out["source_identity_trade_id"] = source_identity
+
+    # The experiment-level ML dataset needs a globally unique trade identity.
+    # Raw trade logs may carry an engine-local identity_trade_id that can collide
+    # after extraction, especially when a strategy emits multiple trade episodes
+    # under the same source identity. The extractor's trade_id is intentionally
+    # namespaced by run_id, so it is the canonical extracted identity.
+    out["identity_trade_id"] = out["trade_id"]
     if "identity_parameter_set_id" not in out.columns:
         out["identity_parameter_set_id"] = out["parameter_set_id"]
     else:

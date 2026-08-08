@@ -24,6 +24,7 @@ from bt.logging.trades import TradesCsvWriter
 from bt.portfolio.constants import QTY_EPSILON
 from bt.portfolio.portfolio import Portfolio
 from bt.risk.risk_engine import RiskEngine
+from bt.risk.reject_codes import PENDING_ENTRY_ORDER
 from bt.strategy.base import Strategy
 from bt.universe.universe import UniverseEngine
 from bt.audit.audit_manager import AuditManager
@@ -81,6 +82,16 @@ def _is_missing_metadata_value(value: Any) -> bool:
         return bool(value != value)
     except Exception:
         return False
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed != parsed:
+        return default
+    return parsed
 
 
 class BacktestEngine:
@@ -188,6 +199,75 @@ class BacktestEngine:
         )
         has_positions = self._portfolio.position_book.open_positions_count() > 0
         setter(has_exposure=bool(has_open_orders or has_positions))
+
+    @staticmethod
+    def _is_active_order(order: Order) -> bool:
+        return order.state not in {OrderState.FILLED, OrderState.CANCELLED, OrderState.REJECTED}
+
+    @staticmethod
+    def _is_close_reduce_order(order: Order) -> bool:
+        metadata = order.metadata if isinstance(order.metadata, dict) else {}
+        return bool(metadata.get("close_only") or metadata.get("is_exit"))
+
+    def _pending_entry_orders(self, open_orders: list[Order]) -> list[Order]:
+        return [
+            order
+            for order in open_orders
+            if self._is_active_order(order) and not self._is_close_reduce_order(order)
+        ]
+
+    def _pending_entry_symbols(self, open_orders: list[Order]) -> set[str]:
+        return {order.symbol for order in self._pending_entry_orders(open_orders)}
+
+    def _reserved_portfolio_state(self, open_orders: list[Order]) -> tuple[int, float, float]:
+        """Reserve portfolio capacity promised to delayed entry orders.
+
+        Delayed orders are not in the filled position book yet, but they have
+        already passed risk checks and may fill on a later bar. Counting them
+        here keeps max-positions, gross notional, and free-margin checks honest
+        across execution delays without changing fills, PnL, or liquidation
+        semantics.
+        """
+        open_positions = self._portfolio.position_book.open_positions_count()
+        free_margin = float(self._portfolio.free_margin)
+        gross_notional = float(self._portfolio.gross_notional())
+        open_position_symbols = {
+            symbol
+            for symbol, position in self._portfolio.position_book.all_positions().items()
+            if position.state in {PositionState.OPEN, PositionState.OPENING, PositionState.REDUCING}
+            and abs(float(position.qty)) > QTY_EPSILON
+        }
+        pending_new_symbols: set[str] = set()
+        pending_required = 0.0
+        pending_gross = 0.0
+
+        for order in self._pending_entry_orders(open_orders):
+            metadata = order.metadata if isinstance(order.metadata, dict) else {}
+            current_qty = _safe_float(metadata.get("current_qty"), 0.0)
+            if abs(current_qty) <= QTY_EPSILON and order.symbol not in open_position_symbols:
+                pending_new_symbols.add(order.symbol)
+
+            notional_est = abs(_safe_float(metadata.get("notional_est"), 0.0))
+            if notional_est <= 0:
+                notional_est = abs(float(order.qty)) * _safe_float(metadata.get("mark_price_used_for_margin"), 0.0)
+            pending_gross += max(notional_est, 0.0)
+
+            total_required = _safe_float(metadata.get("total_required"), 0.0)
+            if total_required <= 0 and notional_est > 0:
+                total_required = self._risk.estimate_required_margin(
+                    notional=notional_est,
+                    max_leverage=self._portfolio.max_leverage,
+                    fee_buffer=_safe_float(metadata.get("margin_fee_buffer"), 0.0)
+                    + _safe_float(metadata.get("margin_adverse_move_buffer"), 0.0),
+                    slippage_buffer=_safe_float(metadata.get("margin_slippage_buffer"), 0.0),
+                )
+            pending_required += max(total_required, 0.0)
+
+        return (
+            open_positions + len(pending_new_symbols),
+            max(free_margin - pending_required, 0.0),
+            gross_notional + pending_gross,
+        )
 
     def _positions_context(self) -> dict[str, dict[str, Any]]:
         positions_ctx: dict[str, dict[str, Any]] = {}
@@ -672,9 +752,9 @@ class BacktestEngine:
                     self._sync_datafeed_execution_state(open_orders)
                     continue
 
-                reserved_open_positions = self._portfolio.position_book.open_positions_count()
-                reserved_free_margin = self._portfolio.free_margin
-                reserved_gross_notional = self._portfolio.gross_notional()
+                open_orders = self._drop_stale_close_reduce_orders(open_orders)
+                reserved_open_positions, reserved_free_margin, reserved_gross_notional = self._reserved_portfolio_state(open_orders)
+                pending_entry_symbols = self._pending_entry_symbols(open_orders)
 
                 for signal in signals:
                     signal = self._enrich_signal_metadata(signal=signal, ts=ts)
@@ -698,6 +778,20 @@ class BacktestEngine:
 
                     position = self._portfolio.position_book.get(signal.symbol)
                     current_qty = self._signed_position_qty(position)
+                    if current_qty == 0 and signal.symbol in pending_entry_symbols:
+                        decision_reason = PENDING_ENTRY_ORDER
+                        self._emit_decision_record(
+                            {
+                                "ts": ts,
+                                "symbol": signal.symbol,
+                                "signal": signal,
+                                "approved": False,
+                                "reason": decision_reason,
+                            }
+                        )
+                        if self._sanity_counters is not None:
+                            self._sanity_counters.record_decision(approved=False, reason=decision_reason)
+                        continue
                     order_intent, decision_reason = self._risk.signal_to_order_intent(
                         ts=ts,
                         signal=signal,
@@ -758,6 +852,7 @@ class BacktestEngine:
                     reserved_free_margin = max(reserved_free_margin - total_required, 0.0)
                     if current_qty == 0:
                         reserved_open_positions += 1
+                        pending_entry_symbols.add(order_intent.symbol)
                         try:
                             reserved_gross_notional += abs(float(order_intent.metadata.get("notional_est", 0.0) or 0.0))
                         except (TypeError, ValueError):

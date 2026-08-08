@@ -48,17 +48,20 @@ def parse_args() -> argparse.Namespace:
 def run_fetch_task(task: tuple[str, str, str, str, str, str, float]) -> tuple[str, str, str]:
     exchange, symbol, dataset, timeframe, start, end, rate_limit_seconds = task
     store = ResearchDataStore()
-    fetch_backfill(
-        exchange,
-        dataset,
-        symbol,
-        timeframe,
-        start,
-        end,
-        market=MARKET,
-        store=store,
-        rate_limit_seconds=rate_limit_seconds,
-    )
+    try:
+        fetch_backfill(
+            exchange,
+            dataset,
+            symbol,
+            timeframe,
+            start,
+            end,
+            market=MARKET,
+            store=store,
+            rate_limit_seconds=rate_limit_seconds,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"{type(exc).__name__}: {exc}") from None
     return symbol, dataset, start
 
 

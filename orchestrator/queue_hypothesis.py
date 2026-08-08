@@ -46,6 +46,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--parallel-datasets", action="store_true", default=False)
     parser.add_argument("--no-cleanup-delete-logs", action="store_true", default=False)
     parser.add_argument("--no-cleanup-delete-nonretained-runs", action="store_true", default=False)
+    parser.add_argument("--skip-run", action="store_true", default=False)
+    parser.add_argument("--skip-truth-validation", action="store_true", default=False)
+    parser.add_argument("--skip-analysis", action="store_true", default=False)
+    parser.add_argument("--skip-extract", action="store_true", default=False)
+    parser.add_argument("--skip-cleanup", action="store_true", default=False)
     return parser.parse_args()
 
 
@@ -89,6 +94,11 @@ def main() -> int:
         "parallel_datasets": args.parallel_datasets,
         "cleanup_delete_logs": not args.no_cleanup_delete_logs,
         "cleanup_delete_nonretained_runs": not args.no_cleanup_delete_nonretained_runs,
+        "skip_run": args.skip_run,
+        "skip_truth_validation": args.skip_truth_validation,
+        "skip_analysis": args.skip_analysis,
+        "skip_extract": args.skip_extract,
+        "skip_cleanup": args.skip_cleanup,
     }
 
     queue_id = db.enqueue(

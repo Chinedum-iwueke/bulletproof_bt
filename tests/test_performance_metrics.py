@@ -7,6 +7,7 @@ import json
 import pandas as pd
 import pytest
 
+import bt.metrics.performance as performance_module
 from bt.metrics.performance import compute_performance, write_performance_artifacts
 
 
@@ -70,6 +71,37 @@ def test_compute_performance_metrics(tmp_path: Path) -> None:
     by_bucket = pd.read_csv(run_dir / "performance_by_bucket.csv")
     assert list(by_bucket["bucket"]) == ["high", "low"]
     assert list(by_bucket["n_trades"]) == [3, 3]
+
+
+def test_performance_trade_csv_reader_avoids_default_c_parser(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    run_dir = tmp_path / "run_safe_reader"
+    run_dir.mkdir()
+    _write_equity(run_dir / "equity.csv", [100.0, 101.0])
+    _write_trades(
+        run_dir / "trades.csv",
+        [
+            {"pnl_net": 1.0, "fees": -0.1, "slippage": -0.01, "mixed_metadata": '{"a": 1}'},
+            {"pnl_net": -0.5, "fees": -0.1, "slippage": -0.02, "mixed_metadata": "plain text"},
+        ],
+    )
+
+    original_read_csv = pd.read_csv
+    calls: list[str | None] = []
+
+    def guarded_read_csv(path, *args, **kwargs):
+        engine = kwargs.get("engine")
+        calls.append(engine)
+        if str(path).endswith("trades.csv") and engine is None:
+            raise RuntimeError("default parser should not be used for trades.csv")
+        return original_read_csv(path, *args, **kwargs)
+
+    monkeypatch.setattr(performance_module.pd, "read_csv", guarded_read_csv)
+
+    report = compute_performance(run_dir)
+    write_performance_artifacts(report, run_dir)
+
+    assert report.total_trades == 2
+    assert "pyarrow" in calls or "python" in calls
 
 
 def test_compute_performance_missing_bucket(tmp_path: Path) -> None:

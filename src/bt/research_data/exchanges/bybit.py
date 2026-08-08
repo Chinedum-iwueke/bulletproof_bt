@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import http.client
 import time
 import urllib.error
 import urllib.parse
@@ -54,7 +55,14 @@ class BybitV5Client:
                 if str(payload.get("retCode", "0")) != "0":
                     raise RuntimeError(f"Bybit error {payload.get('retCode')}: {payload.get('retMsg')}")
                 return payload
-            except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, RuntimeError) as exc:
+            except (
+                urllib.error.HTTPError,
+                urllib.error.URLError,
+                TimeoutError,
+                RuntimeError,
+                http.client.RemoteDisconnected,
+                http.client.IncompleteRead,
+            ) as exc:
                 last_error = exc
                 if isinstance(exc, urllib.error.HTTPError) and exc.code not in {429, 500, 502, 503, 504}:
                     raise

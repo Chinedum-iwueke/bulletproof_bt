@@ -475,8 +475,20 @@ class L7H1CSIGatedDisplacementTrendStrategy(Strategy):
     def _compiled_features_for_decision_bar(self, *, state: _FeatureState, bar: Bar) -> dict[str, Any] | None:
         return self._precomputed_features_for_signal_bar(state=state, decision_bar=bar, signal_bar=bar)
 
-    def _entry_metadata(self, *, symbol: str, ts: pd.Timestamp, side: Side, entry_ref: float, stop_distance: float, features: dict[str, Any]) -> dict[str, Any]:
+    def _entry_metadata(self, *, symbol: str, ts: pd.Timestamp, side: Side, entry_ref: float, stop_distance: float, features: dict[str, Any]) -> dict[str, Any] | None:
+        entry_ref = float(entry_ref)
+        stop_distance = float(stop_distance)
         stop_price = entry_ref - stop_distance if side == Side.BUY else entry_ref + stop_distance
+        # Strategy-side risk metadata must be executable before it reaches the
+        # engine. Tiny-priced symbols can otherwise produce a long stop below
+        # zero when ATR * k_stop exceeds entry_ref; that is an invalid trade,
+        # not an engine/accounting failure.
+        if not math.isfinite(entry_ref) or entry_ref <= 0:
+            return None
+        if not math.isfinite(stop_distance) or stop_distance <= 0:
+            return None
+        if not math.isfinite(stop_price) or stop_price <= 0:
+            return None
         gate_values = {"D_t": features.get("D_t"), "CSI": features.get("CSI")}
         gate_thresholds = {"D_t": self._d0, "CSI": self._theta}
         gate_margins = {
@@ -708,6 +720,9 @@ class L7H1CSIGatedDisplacementTrendStrategy(Strategy):
             stop_distance = self._k_stop * atr
             entry_ref = float(bar.close)
             metadata = self._entry_metadata(symbol=symbol, ts=ts, side=side, entry_ref=entry_ref, stop_distance=stop_distance, features=features)
+            if metadata is None:
+                signals.append(self._state_log_signal(ts=ts, symbol=symbol, features=features, reason="invalid_stop_geometry"))
+                continue
             state.entry_price = entry_ref
             state.atr_entry = atr
             state.stop_distance = stop_distance
@@ -835,6 +850,9 @@ class L7H1CSIGatedDisplacementTrendStrategy(Strategy):
             stop_distance = self._k_stop * atr
             entry_ref = float(bar.close)
             metadata = self._entry_metadata(symbol=symbol, ts=ts, side=side, entry_ref=entry_ref, stop_distance=stop_distance, features=features)
+            if metadata is None:
+                signals.append(self._state_log_signal(ts=ts, symbol=symbol, features=features, reason="invalid_stop_geometry"))
+                continue
             state.position = side
             state.entry_price = entry_ref
             state.atr_entry = atr
@@ -924,6 +942,9 @@ class L7H1CSIGatedDisplacementTrendStrategy(Strategy):
             stop_distance = self._k_stop * atr
             entry_ref = float(bar.close)
             metadata = self._entry_metadata(symbol=symbol, ts=ts, side=side, entry_ref=entry_ref, stop_distance=stop_distance, features=features)
+            if metadata is None:
+                signals.append(self._state_log_signal(ts=ts, symbol=symbol, features=features, reason="invalid_stop_geometry"))
+                continue
             state.entry_price = entry_ref
             state.atr_entry = atr
             state.stop_distance = stop_distance
