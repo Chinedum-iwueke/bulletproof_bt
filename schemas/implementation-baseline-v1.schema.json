@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://invariance.internal/schemas/implementation-baseline-v1.schema.json",
+  "title": "Implementation Baseline v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "repository",
+    "runtime",
+    "dependencies",
+    "schemas",
+    "acceptance_commands",
+    "claim_vocabulary",
+    "safety",
+    "baseline_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "implementation-baseline-v1"},
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "branch", "commit", "origin", "dirty", "dirty_paths"],
+      "properties": {
+        "name": {"enum": ["swarm-control-plane", "bulletproof_bt"]},
+        "branch": {"type": "string"},
+        "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "origin": {"type": ["string", "null"]},
+        "dirty": {"type": "boolean"},
+        "dirty_paths": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "tools"],
+      "properties": {
+        "platform": {"type": "string"},
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "version"],
+            "properties": {"name": {"type": "string"}, "version": {"type": "string"}}
+          }
+        }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifests", "locks", "lock_present"],
+      "properties": {
+        "manifests": {"$ref": "#/$defs/files"},
+        "locks": {"$ref": "#/$defs/files"},
+        "lock_present": {"type": "boolean"}
+      }
+    },
+    "schemas": {"$ref": "#/$defs/files"},
+    "acceptance_commands": {
+      "type": "array",
+      "items": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+    },
+    "claim_vocabulary": {
+      "const": ["current", "partial", "documented", "tested", "observed", "target", "extension", "deferred", "unknown", "blocked"]
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["environment_values_collected", "ignored_files_scanned", "raw_data_scanned", "remote_credentials_retained"],
+      "properties": {
+        "environment_values_collected": {"const": false},
+        "ignored_files_scanned": {"const": false},
+        "raw_data_scanned": {"const": false},
+        "remote_credentials_retained": {"const": false}
+      }
+    },
+    "baseline_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "$defs": {
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256", "size_bytes"],
+        "properties": {
+          "path": {"type": "string"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "size_bytes": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  }
+}
