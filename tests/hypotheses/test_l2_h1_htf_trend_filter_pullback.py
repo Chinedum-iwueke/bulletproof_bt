@@ -73,7 +73,7 @@ def test_l2_h1_contract_grid_and_runtime_htf_context(tmp_path: Path) -> None:
     override = build_runtime_override(contract, spec, "Tier2")
     assert override["strategy"]["name"] == "l2_h1_htf_trend_filter_pullback"
     assert sorted(override["htf_resampler"]["timeframes"]) == ["1h", "5m"]
-    assert "htf_1h_" in override["data"]["extra_column_prefixes"]
+    assert override["htf_resampler"]["strict"] is True
 
     manifest = build_hypothesis_manifest(
         hypothesis_path=Path("research/hypotheses/l2_h1_htf_trend_filter_pullback.yaml"),

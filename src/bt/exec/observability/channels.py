@@ -18,7 +18,9 @@ class StdoutAlertChannel:
 
 class FileAlertChannel:
     def __init__(self, path: Path) -> None:
-        self._writer = JsonlWriter(path)
+        # Alerts are low-volume operational records and must be observable as
+        # soon as send() returns. High-volume execution logs retain batching.
+        self._writer = JsonlWriter(path, flush_every=1)
 
     def send(self, alert: Alert) -> None:
         self._writer.write(alert.to_jsonable())

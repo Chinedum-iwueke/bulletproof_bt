@@ -3624,9 +3624,14 @@ class StrategyRobustnessLabService:
             )
 
         if required_missing:
+            limited_summary_metrics = {
+                **baseline_summary_metrics,
+                "probability_of_ruin": None,
+                "survival_probability": None,
+            }
             return {
                 "status": "limited",
-                "summary_metrics": baseline_summary_metrics,
+                "summary_metrics": limited_summary_metrics,
                 "streak_statistics": streak_stats,
                 "drawdown_statistics": historical_drawdown_stats,
                 "figures": baseline_figures,
@@ -3674,7 +3679,7 @@ class StrategyRobustnessLabService:
                     "ruin_threshold_equity": ruin_threshold_equity if monte_carlo_linked else None,
                     "capability_used": bool(semantic_capabilities.get("can_build_ruin_model", False)),
                 },
-                "probability_of_ruin": baseline_summary_metrics["probability_of_ruin"],
+                "probability_of_ruin": None,
                 "expected_stress_drawdown": expected_stress_drawdown,
                 "account_size": float(explicit_account_size) if explicit_account_size is not None else None,
                 "risk_per_trade_pct": risk_per_trade_pct,

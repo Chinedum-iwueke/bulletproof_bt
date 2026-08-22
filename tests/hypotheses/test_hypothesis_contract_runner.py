@@ -81,7 +81,14 @@ def test_runtime_override_uses_each_grid_signal_timeframe_as_only_htf_resampler(
             strategy_name = str(override["strategy"]["name"]).lower()
             timeframes = [str(item).lower() for item in override["htf_resampler"]["timeframes"]]
 
-            if strategy_name == "l1_h3c_regime_switch_trend":
+            declared_timeframes = {
+                str(item).lower()
+                for item in contract.schema.execution_semantics.get("htf_timeframes", ())
+            }
+            if declared_timeframes:
+                assert set(timeframes) == declared_timeframes, path
+                assert signal_timeframe in timeframes, path
+            elif strategy_name == "l1_h3c_regime_switch_trend":
                 assert signal_timeframe in timeframes, path
             else:
                 assert timeframes == [signal_timeframe], path

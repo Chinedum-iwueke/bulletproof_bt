@@ -1,0 +1,15 @@
+{
+  "schema_version": "canonical-identity-v1.0.0",
+  "object_id": "11111111-1111-4111-8111-111111111111",
+  "object_type": "research.trial",
+  "content_version": "1",
+  "content_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "producer": {
+    "system": "bulletproof",
+    "native_type": "research.trial",
+    "native_id": "run-btc-momentum-001",
+    "schema_version": "run-bundle-v1"
+  },
+  "aliases": [{"namespace": "bulletproof", "object_type": "research.trial", "value": "run-btc-momentum-001"}],
+  "supersedes_object_id": null
+}

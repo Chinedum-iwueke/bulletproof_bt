@@ -12,7 +12,8 @@ def _write_success_run(run_dir: Path, payload: dict[str, object]) -> None:
     (run_dir / "causal_parity.json").write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
     (run_dir / "run_status.json").write_text(json.dumps({"status": "PASS"}), encoding="utf-8")
     for name in REQUIRED_ARTIFACTS:
-        (run_dir / name).write_text("ok", encoding="utf-8")
+        content = json.dumps({"metrics_valid": True}) if name == "performance.json" else "ok"
+        (run_dir / name).write_text(content, encoding="utf-8")
 
 
 def _deterministic_causal_payload() -> dict[str, object]:
@@ -76,7 +77,7 @@ def test_parallel_runner_causal_parity_with_serial_stub(monkeypatch, tmp_path: P
         return 0, ""
 
     monkeypatch.setattr(parallel_grid, "ProcessPoolExecutor", DummyExecutor)
-    monkeypatch.setattr(parallel_grid, "as_completed", lambda futures: list(futures))
+    monkeypatch.setattr(parallel_grid, "wait", lambda futures, **_: (set(futures), set()))
     monkeypatch.setattr(parallel_grid, "_execute_manifest_row", fake_execute_manifest_row)
 
     config = tmp_path / "engine.yaml"

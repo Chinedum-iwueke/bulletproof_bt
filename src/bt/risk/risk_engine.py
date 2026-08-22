@@ -28,6 +28,7 @@ from bt.risk.reject_codes import (
     STOP_UNRESOLVABLE_SAFE_NO_PROXY,
     STOP_UNRESOLVABLE_STRICT,
     SYMBOL_MISMATCH,
+    UNIVERSE_INACTIVE,
     validate_known,
 )
 from bt.risk.stop_resolver import resolve_stop_from_spec
@@ -666,7 +667,7 @@ class RiskEngine:
             return None, CLOSE_ONLY_NO_POSITION
         universe_active = bar.extra.get("universe_active", bar.extra.get("volatile_active", True))
         if cur_qty == 0 and not bool(universe_active):
-            return None, "risk_rejected:universe_inactive"
+            return None, UNIVERSE_INACTIVE
         cur_side = None
         if cur_qty > 0:
             cur_side = Side.BUY
@@ -839,7 +840,6 @@ class RiskEngine:
             if abs(desired_qty) * cap_unit_notional > remaining_gross_notional:
                 effective_cap = self._effective_entry_notional_cap(remaining_gross_notional)
                 desired_qty = _cap_qty(effective_cap)
-                desired_notional = self._entry_notional_for_qty(qty=desired_qty, price=bar.close, symbol=signal.symbol)
                 cap_applied = True
                 cap_reason = "max_gross_notional_pct_equity"
                 max_notional = remaining_gross_notional

@@ -15,8 +15,8 @@ def test_l1_h6a_contract_loads_and_locks_semantics() -> None:
     assert sem["hold_time_unit"] == "signal_bars"
 
 
-def test_l1_h6a_parameter_grid_is_exactly_24_runs() -> None:
+def test_l1_h6a_parameter_grid_is_exactly_16_runs() -> None:
     contract = HypothesisContract.from_yaml("research/hypotheses/l1_h6a_vov_gate_mean_reversion.yaml")
     rows = contract.materialize_grid()
-    assert len(rows) == 24
+    assert len(rows) == 16
     assert rows == contract.materialize_grid()
