@@ -1,5 +1,8 @@
 # Fast Path Engine
 
+> Deprecated: production research runs now resolve to the classic event-driven
+> engine. See `docs/fast_path_deprecation.md`.
+
 Bulletproof_bt now has a conservative fast-path execution seam beside the
 classic event-driven engine. The public workflow is unchanged: existing
 orchestrator, daemon, queue, and `scripts/run_parallel_hypothesis_grid.py`
@@ -7,12 +10,10 @@ commands still call the same interfaces.
 
 ## Selection
 
-Use either:
+Use:
 
 ```bash
 BULLETPROOF_EXECUTION_ENGINE=classic
-BULLETPROOF_EXECUTION_ENGINE=auto
-BULLETPROOF_EXECUTION_ENGINE=fast_path
 ```
 
 or set:
@@ -21,8 +22,13 @@ or set:
 execution_engine: classic   # classic | auto | fast_path
 ```
 
-`auto` is the safe default. Unsupported strategies fall back to the classic
-engine and write `fast_path_status.json`.
+`auto` and `fast_path` remain accepted only for old configs; they are
+downgraded to classic execution.
+
+`classic` is the production default. `auto` and `fast_path` are accepted for
+backward compatibility, but they are deprecated and downgraded to classic
+execution. Runs write `fast_path_status.json` with
+`mode=classic_deprecated_fallback`.
 
 ## What Exists Now
 
@@ -169,15 +175,15 @@ Run:
 PYTHONPATH=src:. pytest -q tests/test_fast_path_engine.py
 ```
 
-The parity test runs a deterministic fixture once with `classic` and once with
-`auto`, then compares truth artifacts.
+Historical parity tools may still run deterministic fixtures, but production
+research should not rely on fast-path parity.
 
 ## Operational Use
 
 For daemon retests:
 
 ```bash
-BULLETPROOF_EXECUTION_ENGINE=auto PYTHONPATH=src:. python3 orchestrator/research_daemon.py \
+BULLETPROOF_EXECUTION_ENGINE=classic PYTHONPATH=src:. python3 orchestrator/research_daemon.py \
   --db research_db/research.sqlite \
   --config orchestrator/daemon_config.yaml \
   --max-workers 8
