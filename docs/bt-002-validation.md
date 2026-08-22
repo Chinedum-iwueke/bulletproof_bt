@@ -11,7 +11,7 @@ future-availability rejection, prospective membership, correction lineage, and
 source-lake non-mutation.
 
 ```text
-Focused and adjacent data/identity suites: 36 passed
+Focused and adjacent data/identity suites: 37 passed
 Full BT-001 matrix: 1,241 collected; 1,214 passed; 27 existing explicit skips
 Scoped Ruff: clean
 ```

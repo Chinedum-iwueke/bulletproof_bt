@@ -116,6 +116,23 @@ def test_clock_and_future_availability_are_rejected(tmp_path) -> None:
             request=_request(timestamp_semantics="unknown"),
             membership=_membership(),
         )
+    with pytest.raises(DatasetContractError, match="cannot be negative"):
+        build_snapshot_manifest(
+            [_write(root / "negative-lag.parquet")],
+            source_root=root,
+            request=_request(availability_lag_seconds=-1),
+            membership=_membership(),
+        )
+
+
+def test_recorded_availability_cannot_claim_an_open_bar_was_known(tmp_path) -> None:
+    root = tmp_path / "lake"
+    path = _write(
+        root / "premature.parquet",
+        available_at=[pd.Timestamp(f"2026-01-01T00:{minute:02d}:00Z") for minute in (0, 1, 2)],
+    )
+    with pytest.raises(DatasetContractError, match="bar-close availability boundary"):
+        build_snapshot_manifest([path], source_root=root, request=_request(), membership=_membership())
 
 
 def test_membership_must_be_known_before_effective_and_cover_rows(tmp_path) -> None:

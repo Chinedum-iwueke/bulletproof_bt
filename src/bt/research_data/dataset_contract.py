@@ -79,6 +79,8 @@ def _available_at(event_time: datetime, request: SnapshotRequest) -> datetime:
 
 
 def _partition(path: Path, source_root: Path, request: SnapshotRequest) -> tuple[dict[str, Any], pd.DataFrame]:
+    if request.availability_lag_seconds < 0:
+        raise DatasetContractError("availability_lag_seconds cannot be negative")
     resolved = path.resolve(strict=True)
     root = source_root.resolve(strict=True)
     try:
@@ -99,6 +101,11 @@ def _partition(path: Path, source_root: Path, request: SnapshotRequest) -> tuple
         frame["available_at"] = pd.to_datetime(frame["available_at"], utc=True, errors="raise")
     else:
         frame["available_at"] = frame["ts"].map(lambda value: _available_at(value.to_pydatetime(), request))
+    earliest_availability = frame["ts"].map(
+        lambda value: _available_at(value.to_pydatetime(), request)
+    )
+    if (frame["available_at"] < earliest_availability).any():
+        raise DatasetContractError("available_at predates the declared bar-close availability boundary")
     ordered = frame.sort_values(["exchange", "symbol", "ts"])
     step = timeframe_delta(request.timeframe)
     gaps = int(
