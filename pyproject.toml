@@ -9,19 +9,20 @@ description = "Event-driven, bar-by-bar backtesting scaffold."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "numpy",
-  "pandas",
-  "pyarrow",
-  "matplotlib",
-  "pyyaml",
+  "numpy>=2.2,<2.3",
+  "pandas>=2.2,<3",
+  "pyarrow>=23,<24",
+  "matplotlib>=3.10,<4",
+  "pyyaml>=6,<7",
   "websocket-client>=1.8,<2",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "pytest",
-  "ruff",
-  "mypy",
+  "jsonschema>=4.25,<5",
+  "pytest>=9,<10",
+  "ruff>=0.12,<1",
+  "mypy>=1.18,<2",
 ]
 
 [project.scripts]

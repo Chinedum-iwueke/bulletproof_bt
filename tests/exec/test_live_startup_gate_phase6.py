@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
 
@@ -20,7 +20,7 @@ class _FakePortfolio:
 
 @dataclass
 class _FakePortfolioRunner:
-    portfolio: _FakePortfolio = _FakePortfolio()
+    portfolio: _FakePortfolio = field(default_factory=_FakePortfolio)
 
 
 @dataclass

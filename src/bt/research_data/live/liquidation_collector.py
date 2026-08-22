@@ -245,11 +245,12 @@ def aggregate_liquidation_frame(events: pd.DataFrame, timeframe: str = "1m") -> 
 
 def aggregate_liquidations(exchange: str, timeframe: str = "1m", store: ResearchDataStore | None = None) -> pd.DataFrame:
     store = store or ResearchDataStore()
-    root = store.root / "raw" / exchange
+    roots = [store.root / "raw" / "perp" / exchange, store.root / "raw" / exchange]
     frames: list[pd.DataFrame] = []
-    if not root.exists():
+    if not any(root.exists() for root in roots):
         return pd.DataFrame(columns=LIQUIDATION_1M_COLUMNS)
-    for path in root.glob("*/liquidations/timeframe=event/data.jsonl"):
+    paths = sorted({path for root in roots for path in root.glob("*/liquidations/timeframe=event/data.jsonl")})
+    for path in paths:
         events = read_liquidation_events(path)
         if events.empty:
             continue

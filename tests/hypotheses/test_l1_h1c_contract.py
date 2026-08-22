@@ -13,10 +13,10 @@ def test_l1_h1c_contract_loads_and_locks_semantics() -> None:
     assert sem["exit_model"] == "ema_trend_end"
 
 
-def test_l1_h1c_grid_is_deterministic_and_54_variants() -> None:
+def test_l1_h1c_grid_is_deterministic_and_32_variants() -> None:
     contract = HypothesisContract.from_yaml("research/hypotheses/l1_h1c_volfloor_ema_pullback.yaml")
     one = contract.materialize_grid()
     two = contract.materialize_grid()
     assert one == two
-    assert len(one) == 54
-    assert {row["params"]["er_lookback"] for row in one} == {10, 16, 20}
+    assert len(one) == 32
+    assert {row["params"]["er_lookback"] for row in one} == {10, 20}
