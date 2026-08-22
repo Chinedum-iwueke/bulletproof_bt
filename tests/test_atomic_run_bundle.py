@@ -1,0 +1,178 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from unittest.mock import patch
+
+import jsonschema
+import pytest
+import yaml
+
+from bt.logging.run_bundle import (
+    RunBundleError,
+    finalize_run_bundle,
+    hermes_run_payload,
+    publish_to_hermes,
+    validate_bundle_manifest,
+)
+
+
+def _lineage() -> dict[str, object]:
+    return {
+        "repository_commit": "1" * 40,
+        "code_digest": "2" * 64,
+        "dataset_snapshot_id": "11111111-1111-4111-8111-111111111111",
+        "dataset_digest": "3" * 64,
+        "specification_digest": "4" * 64,
+        "environment_digest": "5" * 64,
+        "attempt": 1,
+    }
+
+
+def _run(path: Path, *, run_id: str = "run-a", absolute_manifest_paths: bool = True) -> Path:
+    path.mkdir(parents=True)
+    (path / "config_used.yaml").write_text(
+        yaml.safe_dump({"strategy": {"name": "fixture"}, "seed": 7}), encoding="utf-8"
+    )
+    (path / "performance.json").write_text(
+        json.dumps({"schema_version": 1, "run_id": run_id, "total_trades": 0}) + "\n",
+        encoding="utf-8",
+    )
+    for name, header in (
+        ("equity.csv", "ts,equity\n"),
+        ("trades.csv", "entry_ts,exit_ts,symbol\n"),
+        ("performance_by_bucket.csv", "bucket,trades\n"),
+    ):
+        (path / name).write_text(header, encoding="utf-8")
+    (path / "fills.jsonl").write_text("", encoding="utf-8")
+    (path / "decisions.jsonl").write_text("", encoding="utf-8")
+    run_dir_value = str(path) if absolute_manifest_paths else "runs/current"
+    (path / "run_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": run_id,
+                "run_dir": run_dir_value,
+                "data_path": "/srv/protected/data.parquet" if absolute_manifest_paths else "data/fixture.parquet",
+                "created_at_utc": "2026-08-22T12:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _manifest(root: Path, receipt: dict[str, object]) -> tuple[dict, Path]:
+    directory = root / "bundles" / str(receipt["bundle_digest"])
+    return json.loads((directory / "run_bundle_manifest.json").read_text()), directory
+
+
+def test_finalization_is_atomic_schema_valid_and_integrity_replayable(tmp_path) -> None:
+    root = tmp_path / "registry"
+    receipt = finalize_run_bundle(_run(tmp_path / "run"), root, lineage=_lineage())
+    manifest, directory = _manifest(root, receipt)
+    schema = json.loads(Path("schemas/run-bundle-v1.schema.json").read_text())
+    jsonschema.Draft202012Validator(schema).validate(manifest)
+    validate_bundle_manifest(manifest, directory)
+    legacy = next(item for item in manifest["artifacts"] if item["name"] == "run_manifest.json")
+    assert legacy["normalization"] == "stable-runtime-aliases-v1"
+    assert legacy["source_content_digest"] != legacy["content_digest"]
+    assert not any(path.name.startswith(".staging") for path in root.iterdir())
+
+
+def test_semantically_equal_runs_share_bundle_digest_and_publish_once(tmp_path) -> None:
+    root = tmp_path / "registry"
+    first = finalize_run_bundle(_run(tmp_path / "run-a", run_id="a"), root, lineage=_lineage())
+    second = finalize_run_bundle(_run(tmp_path / "run-b", run_id="b"), root, lineage=_lineage())
+    assert first == second
+    assert len(list((root / "bundles").iterdir())) == 1
+    assert len(list((root / "receipts").iterdir())) == 1
+
+
+def test_interruption_retains_failed_attempt_and_no_partial_bundle(tmp_path) -> None:
+    root = tmp_path / "registry"
+
+    def interrupt(_):
+        raise RuntimeError("simulated interruption")
+
+    with pytest.raises(RunBundleError, match="failure retained"):
+        finalize_run_bundle(_run(tmp_path / "run"), root, lineage=_lineage(), before_commit=interrupt)
+    failures = list((root / "failures").glob("*.json"))
+    assert len(failures) == 1
+    assert json.loads(failures[0].read_text())["state"] == "failed"
+    assert not (root / "bundles").exists()
+
+
+def test_missing_corrupt_and_unregistered_artifacts_fail_closed(tmp_path) -> None:
+    root = tmp_path / "registry"
+    missing = _run(tmp_path / "missing")
+    (missing / "trades.csv").unlink()
+    with pytest.raises(RunBundleError):
+        finalize_run_bundle(missing, root, lineage=_lineage())
+    corrupt = _run(tmp_path / "corrupt")
+    (corrupt / "performance.json").write_text("not json", encoding="utf-8")
+    with pytest.raises(RunBundleError):
+        finalize_run_bundle(corrupt, root, lineage=_lineage())
+    unknown = _run(tmp_path / "unknown")
+    (unknown / "model.bin").write_bytes(b"binary")
+    with pytest.raises(RunBundleError, match="registered structural schema"):
+        finalize_run_bundle(unknown, root, lineage=_lineage())
+
+
+def test_manifest_corruption_and_incompatible_schema_fail_replay(tmp_path) -> None:
+    root = tmp_path / "registry"
+    receipt = finalize_run_bundle(_run(tmp_path / "run"), root, lineage=_lineage())
+    manifest, directory = _manifest(root, receipt)
+    incompatible = {**manifest, "schema_version": "run-bundle-v2.0.0"}
+    with pytest.raises(RunBundleError, match="unsupported"):
+        validate_bundle_manifest(incompatible, directory)
+    artifact = directory / "artifacts/performance.json"
+    artifact.write_text("{}", encoding="utf-8")
+    with pytest.raises(RunBundleError, match="integrity mismatch"):
+        validate_bundle_manifest(manifest, directory)
+
+
+@pytest.mark.parametrize(
+    "name,content,match",
+    [
+        ("notes.txt", "source=/home/founder/private\n", "absolute protected path"),
+        ("notes.txt", "api_key=supersecretvalue\n", "sensitive material"),
+    ],
+)
+def test_path_and_secret_scan_blocks_publication(tmp_path, name, content, match) -> None:
+    run = _run(tmp_path / "run")
+    (run / name).write_text(content, encoding="utf-8")
+    with pytest.raises(RunBundleError, match=match):
+        finalize_run_bundle(run, tmp_path / "registry", lineage=_lineage())
+
+
+def test_symlinked_artifact_cannot_escape_run_directory(tmp_path) -> None:
+    outside = tmp_path / "outside.txt"
+    outside.write_text("private", encoding="utf-8")
+    run = _run(tmp_path / "run")
+    (run / "linked.txt").symlink_to(outside)
+    with pytest.raises(RunBundleError, match="symlinked artifacts are forbidden"):
+        finalize_run_bundle(run, tmp_path / "registry", lineage=_lineage())
+
+
+def test_hermes_payload_and_idempotent_receipt_are_digest_bound(tmp_path) -> None:
+    receipt = finalize_run_bundle(
+        _run(tmp_path / "run"), tmp_path / "registry", lineage=_lineage()
+    )
+    payload = hermes_run_payload(receipt, _lineage())
+    assert payload["payload"]["bundle_digest"] == receipt["bundle_digest"]
+    response = json.dumps({"object_id": payload["object_id"]}).encode()
+
+    class Response:
+        def __enter__(self):
+            return io.BytesIO(response)
+
+        def __exit__(self, *_):
+            return False
+
+    import io
+
+    with patch("urllib.request.urlopen", return_value=Response()) as call:
+        published = publish_to_hermes("http://control-plane", "not-logged", receipt, _lineage())
+    assert published["state"] == "published"
+    assert call.call_args.args[0].headers["Authorization"] == "Bearer not-logged"

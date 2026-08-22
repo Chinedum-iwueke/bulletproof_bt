@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://invarianceresearch.xyz/schemas/run-bundle-v1.schema.json",
+  "title": "Atomic Run Bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "state", "identity", "bundle_digest", "lineage", "artifacts", "manifest_digest"],
+  "properties": {
+    "schema_version": {"const": "run-bundle-v1.0.0"},
+    "state": {"const": "finalized"},
+    "identity": {"type": "object"},
+    "bundle_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "lineage": {"type": "object", "required": ["repository_commit", "code_digest", "dataset_snapshot_id", "dataset_digest", "specification_digest", "environment_digest", "attempt"]},
+    "artifacts": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["name", "media_type", "schema_identity", "byte_size", "source_content_digest", "content_digest", "semantic_digest", "normalization"]}},
+    "manifest_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}
