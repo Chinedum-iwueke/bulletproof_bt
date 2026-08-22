@@ -3,7 +3,7 @@
 # Use execution.profile=custom with execution.* override fields for custom execution behavior.
 initial_cash: 100000.0
 model: fixed_bps
-execution_engine: auto        # classic | auto | fast_path; unsupported fast runs fall back safely
+execution_engine: classic     # classic is the production source of truth; auto/fast_path are deprecated fallbacks
 
 # Data loading and streaming controls.
 data:

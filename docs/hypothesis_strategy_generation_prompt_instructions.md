@@ -15,9 +15,7 @@ Do not weaken any Bulletproof_bt truth guarantees:
 - Strict UTC timestamps.
 - HTF signals must use only fully closed HTF bars.
 - Funding and OI may only be used when available at or before the decision bar.
-- Execution semantics remain in the classic engine unless a compiled execution
-  kernel has parity tests for fees, slippage, spread, delay, intrabar behavior,
-  stop handling, risk sizing, fills, decisions, trades, and equity.
+- Execution semantics remain in the classic engine.
 - Rich logs must remain: decisions, fills, trades, equity, performance, state
   features, structural buckets, verdict artifacts, and research memory inputs.
 - Every generated strategy must be able to pass the experiment truth gate in
@@ -68,61 +66,28 @@ Given a hypothesis card, generate:
 
 - `research/hypotheses/<hypothesis_id>.yaml`
 - `src/bt/strategy/<strategy_name>.py`
-- `src/bt/engine/fast_path/<strategy_family>_kernel.py` only if the family
-  needs a genuinely new vectorized causal feature builder. Prefer registering
-  features through `FeatureSpec` and adapters first.
 - `docs/hypotheses/<hypothesis_id>.md`
 - Contract and integration tests under `tests/hypotheses/` and `tests/`
 
 Update:
 
 - `src/bt/strategy/__init__.py` to import/register the strategy.
-- `src/bt/engine/fast_path/family_kernels.py` with a `StrategyAdapterSpec`
-  declaring requested feature families and the generic sparse scheduler.
-- `src/bt/engine/fast_path/feature_registry.py` only when a new reusable
-  causal feature family is required. Each feature must declare required inputs,
-  lookback/warmup, causality contract, version/hash, output dtype, readiness
-  rule, and candidate marker columns.
-- `src/bt/engine/fast_path/signal_compiler.py` only if support detection needs
-  a new mode. It should report the adapter and feature requests, not hide
-  unsupported behavior.
-- `src/bt/engine/fast_path/batch_runner.py` to report the selected safe mode.
-- `src/bt/research_data/jobs/state_features.py` and
-  `src/bt/research_data/cli.py` if the kernel needs materialized feature
-  columns.
+- Do not add strategy-family fast-path kernels for new hypotheses. The fast
+  path is deprecated; generated strategies must be correct on the classic
+  event-driven engine.
 
-## Shared Feature And Sparse Event Architecture
+## Deprecated Fast Path Note
 
-Do not build one-off fast-path plumbing for a hypothesis. New families must fit
-the shared architecture:
+Do not instruct Codex to create compiled kernels, sparse candidate adapters, or
+materialized fast-path feature columns for a new strategy. The accepted
+production architecture is:
 
-- The engine loads data through `DataSession` / `MarketDataSnapshot`, which
-  exposes integer symbol ids, contiguous OHLCV arrays, rich feature arrays,
-  active universe masks, and a `FeatureBank`.
-- Strategy code asks for normal `Bar.extra` fields and remains valid on the
-  classic path. It must not require future rows or full-sample statistics.
-- Reusable features are registered as `FeatureSpec` objects. A feature may be
-  materialized into research panels with:
-
-```bash
-PYTHONPATH=src python3 -m bt.research_data.cli build-registered-features \
-  --exchange binance \
-  --universe stable \
-  --timeframe 1m \
-  --features engine_state,htf_context,l7h1_csi_displacement \
-  --signal-timeframes 5m,15m,1h
-```
-
-- Candidate scheduling uses generic causal markers such as `*_ready`,
-  `*_entry_candidate`, `*_exit_candidate`, `*_continuation_required`, and
-  `*_stop_check_required`.
-- Sparse execution may skip flat no-candidate timestamps only when the classic
-  engine has no exposure or required symbols. Once exposure exists, the feed
-  must emit dense bars needed for exits, mark-to-market, fills, and liquidation
-  checks.
-- Every adapter remains parity-gated. Classic execution stays the source of
-  truth for fills, PnL, fees, slippage, spread, delay, margin, liquidation, and
-  all research artifacts.
+- classic event-driven strategy evaluation;
+- causal features from current/historical bars only;
+- rich `Signal.metadata` and `Bar.extra` logging;
+- no-lookahead state snapshots;
+- post-run analysis, extraction, state discovery, verdict cards, and research
+  memory consuming the standard artifacts.
 
 ## Hypothesis YAML Contract
 
@@ -165,7 +130,7 @@ truth_contract:
   risk_authority: engine
   accounting: engine_canonical_R
   truth_gate_required: true
-  parity_required_for_fast_path: true
+  fast_path_generation: forbidden
   research_memory_requires_certification: true
 ```
 
@@ -343,80 +308,18 @@ must survive extraction if they use approved prefixes:
 - `counterfactual_`
 - `label_`
 
-## Strategy-Family Kernel Requirements
+## Deprecated Fast Path Requirements
 
-Every new family must include a kernel module under `src/bt/engine/fast_path/`.
-The first safe kernel target is a compiled causal feature kernel, not a full
-execution engine replacement.
+Do not add fast-path kernels, compiled event adapters, sparse candidate-event
+shortcuts, or materialized strategy-family feature columns for new hypotheses.
+The backtest fast path is deprecated. Every generated strategy must be correct
+and complete on the classic event-driven engine.
 
-Fast-path kernels must be written against the reusable market snapshot contract
-in `src/bt/engine/fast_path/data_session.py` whenever possible:
-
-- Load canonical research panels through `DataSession.from_config(...)`.
-- Use `MarketDataSnapshot.symbol_to_id` and integer `symbol_id` values instead
-  of repeatedly string-indexing large DataFrames.
-- Read OHLCV from contiguous `SymbolArrays.open/high/low/close/volume`.
-- Read optional rich research columns from `SymbolArrays.extras`.
-- Use `SymbolArrays.active_mask` for volatile membership gating; do not infer
-  active symbols from today's universe or from a full-sample symbol list.
-- Use `SymbolArrays.candidate_ready` and the family-specific readiness columns
-  to build sparse candidate schedules.
-- Treat the snapshot as read-only. A strategy or kernel must never mutate these
-  arrays in place.
-- Do not add future-derived columns to the snapshot. All arrays must be causal:
-  row `i` may only contain information available at or before `ts[i]`.
-
-This snapshot layer is a system-wide data access foundation. It does not replace
-the classic engine, risk engine, execution engine, portfolio accounting, or rich
-artifact writers. A generated strategy may use snapshot-backed compiled feature
-or candidate-event adapters only after parity tests prove that classic decisions,
-fills, trades, equity, and metrics are unchanged.
-
-A feature kernel must:
-
-- Accept canonical research panel columns.
-- Use only rows with `ts <= decision_ts`.
-- Emit features keyed by decision timestamp and symbol.
-- Include a boolean `<prefix>compiled_feature_ready` column.
-- Use deterministic names scoped by family and timeframe.
-- Be optional: the strategy must fall back to Python feature computation if
-  compiled columns are absent.
-- Be parity-tested on small fixtures against the Python strategy feature path.
-
-Only enable a full compiled execution kernel after tests prove parity for:
-
-- entry timing
-- exits
-- stops/trailing stops
-- fees
-- slippage
-- spread
-- delay bars
-- worst-case intrabar behavior
-- fills
-- decisions
-- trades
-- equity
-- performance metrics
-- rich metadata columns
-
-## Kernel Wiring Pattern
-
-1. Add `src/bt/engine/fast_path/<family>_kernel.py`.
-2. Add `build_<family>_feature_frame(panel, params=...)`.
-3. Add a research-data job/CLI command to stamp feature columns:
-
-```bash
-PYTHONPATH=src python3 -m bt.research_data.cli build-<family>-kernel-features \
-  --exchange binance \
-  --universe stable \
-  --timeframe 1m
-```
-
-4. Make the strategy check `bar.extra["<prefix>compiled_feature_ready"]`.
-5. If present, use compiled features and add `"feature_kernel": "compiled"`.
-6. If absent, use original Python feature computation.
-7. Update fast-path status to report `classic_with_compiled_<family>_features`.
+Optimization is allowed only when it is semantics-neutral infrastructure such
+as safer IO, bounded memory usage, streaming artifact writes, or post-run
+analysis batching. It must not change which bars the strategy sees, which
+orders are emitted, how stops/fills are resolved, how risk is sized, or which
+truth artifacts are written.
 
 ## Documentation For The Hypothesis
 
@@ -434,8 +337,7 @@ The hypothesis doc must explain:
 - Falsification criteria.
 - Expected failure modes.
 - Which rich research panel columns are used.
-- Which compiled feature kernel is provided.
-- Whether the kernel is feature-only or full execution.
+- Confirmation that the classic engine is the execution source of truth.
 
 ## Tests
 
@@ -446,11 +348,7 @@ Add tests that prove:
 - Rich metadata survives trade logging.
 - OHLCV-only fallback does not crash.
 - Enriched research panel data populates state fields.
-- Compiled feature kernel is causal.
-- Compiled feature kernel output matches Python feature semantics on a small
-  fixture within documented tolerance.
-- Fast-path status is accurate.
-- Missing compiled columns fall back to classic feature calculation.
+- `fast_path_status.json` records classic execution or deprecated fallback.
 - Volatile membership does not expose inactive symbols.
 
 ## Queue And Daemon Readiness Checklist
@@ -473,8 +371,6 @@ Before queueing a new hypothesis:
 - `python scripts/build_hypothesis_grid.py ...` writes the expected manifest.
 - Stable preflight passes.
 - Volatile preflight passes.
-- If a family kernel was added, kernel features are materialized for the
-  intended universe.
 - A one-day volatile smoke run completes.
 - `PYTHONPATH=src python3 scripts/validate_experiment_truth.py --experiment-root <root>`
   passes on the smoke output.

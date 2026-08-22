@@ -21,7 +21,7 @@ backtest setting or output field means before trusting a result.
 ## Configuration Variables
 
 - **initial_cash**: Starting account equity for the backtest.
-- **execution_engine**: Engine mode. `classic` uses the Python event engine. `auto` may use safe compiled feature paths when parity-tested. `fast_path` requires explicitly supported kernels.
+- **execution_engine**: Engine mode. `classic` uses the production Python event engine. `auto` and `fast_path` are deprecated compatibility values and are downgraded to classic execution with `fast_path_status.json` documenting the fallback.
 - **data.mode**: Loading mode. `streaming` avoids loading all data at once where supported.
 - **data.date_range.start / end**: Inclusive research window used for the run.
 - **execution.intrabar_mode**: How ambiguous intrabar stop/target paths are resolved. `worst_case` assumes adverse fills first where ordering is unknowable.

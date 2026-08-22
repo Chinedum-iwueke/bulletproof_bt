@@ -105,7 +105,9 @@ def test_fast_path_auto_fallback_matches_classic_outputs(tmp_path: Path) -> None
     )["final_equity"]
     status = json.loads((auto / "fast_path_status.json").read_text(encoding="utf-8"))
     assert status["handled"] is False
-    assert status["mode"] == "classic_fallback"
+    assert status["mode"] == "classic_deprecated_fallback"
+    assert status["actual_engine"] == "classic"
+    assert status["fast_path_deprecated"] is True
     timing = json.loads((auto / "run_timing.json").read_text(encoding="utf-8"))
     assert any(event["stage"] == "engine.run" for event in timing["events"])
 
@@ -122,9 +124,11 @@ def test_fast_path_status_falls_back_for_unsupported_research_panel(tmp_path: Pa
     )
 
     assert result.handled is False
-    assert result.mode == "classic_fallback"
+    assert result.mode == "classic_deprecated_fallback"
     status = json.loads((run_dir / "fast_path_status.json").read_text(encoding="utf-8"))
-    assert "research_panel" in status["reason"]
+    assert status["actual_engine"] == "classic"
+    assert status["fast_path_deprecated"] is True
+    assert "deprecated" in status["reason"]
 
 
 def test_fast_path_status_attaches_l7h1_compiled_feature_kernel(tmp_path: Path) -> None:
@@ -143,10 +147,11 @@ def test_fast_path_status_attaches_l7h1_compiled_feature_kernel(tmp_path: Path) 
     )
 
     assert result.handled is False
-    assert result.mode == "classic_with_compiled_l7h1_features"
+    assert result.mode == "classic_deprecated_fallback"
     status = json.loads((run_dir / "fast_path_status.json").read_text(encoding="utf-8"))
-    assert status["mode"] == "classic_with_compiled_l7h1_features"
-    assert "L7-H1" in status["reason"]
+    assert status["mode"] == "classic_deprecated_fallback"
+    assert status["actual_engine"] == "classic"
+    assert status["fast_path_deprecated"] is True
 
 
 def test_volatile_l7h1_compiled_guard_enables_online_event_adapter(tmp_path: Path, monkeypatch) -> None:
@@ -168,12 +173,11 @@ def test_volatile_l7h1_compiled_guard_enables_online_event_adapter(tmp_path: Pat
     monkeypatch.setenv("BT_ALLOW_VOLATILE_L7H1_COMPILED", "1")
     apply_runtime_data_memory_controls(runtime, [str(profile)])
 
-    assert runtime["strategy"]["use_compiled_features"] is True
-    assert runtime["strategy"]["use_compiled_event_kernel"] is True
-    assert runtime["strategy"]["compiled_event_source"] == "online"
+    assert runtime["strategy"]["use_compiled_features"] is False
+    assert runtime["strategy"]["use_compiled_event_kernel"] is False
+    assert "compiled_event_source" not in runtime["strategy"]
     assert "extra_column_prefixes" not in runtime["data"]
-    assert runtime["data"]["requires_htf_context"] is False
-    assert runtime["state_features"] == {"enabled": True, "profile": "full"}
+    assert "requires_htf_context" not in runtime["data"]
 
 
 def test_volatile_l7h1_static_guard_keeps_column_event_adapter(tmp_path: Path, monkeypatch) -> None:
@@ -195,11 +199,11 @@ def test_volatile_l7h1_static_guard_keeps_column_event_adapter(tmp_path: Path, m
     monkeypatch.delenv("BT_ALLOW_VOLATILE_L7H1_COMPILED", raising=False)
     apply_runtime_data_memory_controls(runtime, [str(profile)])
 
-    assert runtime["strategy"]["use_compiled_features"] is True
-    assert runtime["strategy"]["use_compiled_event_kernel"] is True
-    assert runtime["strategy"]["compiled_event_source"] == "columns"
-    assert runtime["data"]["extra_column_prefixes"] == ["l7h1_15m_"]
-    assert runtime["data"]["requires_htf_context"] is False
+    assert runtime["strategy"]["use_compiled_features"] is False
+    assert runtime["strategy"]["use_compiled_event_kernel"] is False
+    assert "compiled_event_source" not in runtime["strategy"]
+    assert "extra_column_prefixes" not in runtime["data"]
+    assert "requires_htf_context" not in runtime["data"]
 
 
 def test_volatile_l7h1_without_guard_forces_classic_feature_path(tmp_path: Path, monkeypatch) -> None:
@@ -244,14 +248,14 @@ def test_fast_path_status_attaches_generic_htf_event_kernel(tmp_path: Path) -> N
     )
 
     assert result.handled is False
-    assert result.mode == "classic_with_compiled_htf_event_kernel_precomputed"
+    assert result.mode == "classic_deprecated_fallback"
     status = json.loads((run_dir / "fast_path_status.json").read_text(encoding="utf-8"))
-    assert "htf_event_schedule_kernel" in status["reason"]
-    assert status["metadata"]["kernel_name"] == "htf_event_schedule"
-    assert status["metadata"]["active_path"] == "htf_event_schedule_kernel"
+    assert status["actual_engine"] == "classic"
+    assert status["fast_path_deprecated"] is True
+    assert status["metadata"]["active_path"] == "classic_deprecated_fallback"
 
 
-def test_current_hypothesis_contracts_do_not_require_compiled_kernels() -> None:
+def test_current_hypothesis_strategies_do_not_require_family_kernels() -> None:
     from bt.hypotheses.contract import HypothesisContract
 
     offenders: list[str] = []

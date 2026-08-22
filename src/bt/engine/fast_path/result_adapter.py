@@ -17,13 +17,17 @@ class FastPathResult:
 
 
 def write_fast_path_status(run_dir: Path, result: FastPathResult) -> None:
+    metadata = dict(result.metadata)
     write_json_deterministic(
         run_dir / "fast_path_status.json",
         {
             "handled": result.handled,
             "mode": result.mode,
             "reason": result.reason,
-            "metadata": result.metadata,
+            "requested_engine": metadata.get("requested"),
+            "actual_engine": metadata.get("actual_engine", "classic" if not result.handled else result.mode),
+            "fast_path_deprecated": bool(metadata.get("fast_path_deprecated", False)),
+            "metadata": metadata,
             "schema_version": 1,
         },
     )

@@ -5,7 +5,10 @@ import json
 import traceback
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from bt.audit.audit_manager import AuditManager
 
 from bt.config import deep_merge, load_yaml, resolve_paths_relative_to
 from bt.core.config_resolver import resolve_config
@@ -184,13 +187,10 @@ def _build_engine(
     data_cfg = config.get("data") if isinstance(config.get("data"), dict) else {}
     dataset_kind = data_cfg.get("dataset_kind") if isinstance(data_cfg, dict) else None
     timeframe_override = data_cfg.get("timeframe") if isinstance(data_cfg, dict) else None
-    execution_engine_raw = str(config.get("execution_engine", config.get("engine", "classic")) or "classic").strip().lower()
-    enable_htf_event_kernel = (
-        execution_engine_raw in {"auto", "fast_path"}
-        and dataset_kind == "research_panel"
-        and data_cfg.get("enable_htf_event_kernel", True) is not False
-        and str(strategy_name) != "l7_h1_csi_gated_displacement_trend"
-    )
+    # Fast-path/sparse HTF event scheduling is deprecated. Keep every strategy
+    # on dense classic HTF context so optimization cannot change bar-by-bar
+    # visibility, execution, or logging semantics.
+    enable_htf_event_kernel = False
     if timeframe_override is not None and mode == "default" and dataset_kind != "research_panel":
         from bt.data.resample import normalize_timeframe
 
@@ -415,8 +415,6 @@ def run_backtest(
     from bt.logging.trades import make_run_id, prepare_run_dir, write_config_used, write_data_scope
     from bt.metrics.performance import compute_performance, write_performance_artifacts
     from bt.metrics.reconcile import reconcile_execution_costs
-    from bt.execution.profile import resolve_execution_profile
-
     from bt.audit.audit_manager import AuditManager
 
     base_config = load_yaml(config_path)

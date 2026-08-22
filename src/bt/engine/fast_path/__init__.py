@@ -1,7 +1,7 @@
-"""Conservative fast-path execution seam.
+"""Deprecated fast-path execution seam.
 
-The fast path is opt-in and fallback-safe. It never replaces the classic engine
-unless the batch runner can prove support for the current strategy/config.
+The reference modules remain importable for audits and possible future design
+work. Production backtests currently resolve to the classic event-driven engine.
 """
 from __future__ import annotations
 
@@ -9,4 +9,3 @@ from bt.engine.fast_path.batch_runner import FastPathDecision, run_fast_path_if_
 from bt.engine.fast_path.timing import TimingRecorder
 
 __all__ = ["FastPathDecision", "TimingRecorder", "run_fast_path_if_supported"]
-

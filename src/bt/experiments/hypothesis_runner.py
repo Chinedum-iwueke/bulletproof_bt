@@ -33,6 +33,7 @@ from bt.research_tiers import (
 
 
 DEFAULT_VOLATILE_RESEARCH_PANEL_CHUNKSIZE = 50_000
+FAST_PATH_DEPRECATED = True
 
 
 def resolve_phase_tiers(contract: HypothesisContract, phase: str) -> tuple[str, ...]:
@@ -160,9 +161,7 @@ def build_runtime_override(
         if normalized_entry_timeframe not in {"", "none", "off", "false", "0"}:
             data_override["entry_timeframe"] = normalized_entry_timeframe
     strategy_name = str(entry.get("strategy", "l1_h1_vol_floor_trend"))
-    use_compiled_features = spec_params.get("use_compiled_features")
-    if use_compiled_features is None:
-        use_compiled_features = True
+    use_compiled_features = False
     if strategy_name == "l7_h1_csi_gated_displacement_trend" and bool(use_compiled_features):
         from bt.engine.fast_path.l7_h1_kernel import prefix_for_timeframe
 
@@ -194,7 +193,8 @@ def build_runtime_override(
         "disallow_flip": bool(entry.get("disallow_flip", True)),
     }
     if strategy_name == "l7_h1_csi_gated_displacement_trend":
-        strategy_payload["use_compiled_event_kernel"] = bool(use_compiled_features)
+        strategy_payload["use_compiled_features"] = False
+        strategy_payload["use_compiled_event_kernel"] = False
 
     research_meta = research_metadata_for_phase(phase)
     is_signal_episode = research_meta["research_mode"] == SIGNAL_EPISODE_RESEARCH_MODE
@@ -220,11 +220,8 @@ def build_runtime_override(
             "strict": True,
         },
         "strategy": strategy_payload,
-        "indicator_profile": "none" if strategy_name == "l7_h1_csi_gated_displacement_trend" and bool(use_compiled_features) else "default",
-        "state_features": {
-            "enabled": False,
-            "profile": "full",
-        } if strategy_name == "l7_h1_csi_gated_displacement_trend" and bool(use_compiled_features) else {},
+        "indicator_profile": "default",
+        "state_features": {},
     }
     if is_signal_episode:
         # Tier 2A is signal-outcome discovery, not account deployability. Keep
@@ -295,6 +292,20 @@ def apply_runtime_data_memory_controls(runtime_override: dict[str, Any], overrid
     universe = _research_panel_universe_from_overrides(override_paths)
     strategy = runtime_override.get("strategy") if isinstance(runtime_override.get("strategy"), dict) else {}
     data = runtime_override.get("data") if isinstance(runtime_override.get("data"), dict) else {}
+    if FAST_PATH_DEPRECATED:
+        if isinstance(strategy, dict):
+            strategy["use_compiled_features"] = False
+            strategy["use_compiled_event_kernel"] = False
+            strategy.pop("compiled_event_source", None)
+        if runtime_override.get("indicator_profile") == "none":
+            runtime_override["indicator_profile"] = "default"
+        if isinstance(data, dict):
+            data.pop("extra_column_prefixes", None)
+            data.pop("extra_columns", None)
+            data.pop("candidate_event_mode", None)
+            data.pop("columnar_candidate_events", None)
+            data.pop("htf_context_source", None)
+            data.pop("requires_htf_context", None)
     if universe == "volatile" and isinstance(data, dict):
         prefixes = data.get("extra_column_prefixes")
         htf_prefix_requested = False
