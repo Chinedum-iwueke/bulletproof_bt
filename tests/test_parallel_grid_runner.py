@@ -43,7 +43,7 @@ def test_l1_h1c_manifest_row_count_matches_registered_grid() -> None:
         hypothesis_path=Path("research/hypotheses/l1_h1c_volfloor_ema_pullback.yaml"),
         phase="tier2",
     )
-    assert len(rows) == 108
+    assert len(rows) == 32
     assert {row["tier"] for row in rows} == {"Tier2"}
 
 

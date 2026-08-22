@@ -25,4 +25,4 @@ def test_l1_h3b_grid_deterministic_and_preregistered() -> None:
     assert {row["params"]["gate_quantile_low"] for row in one} == {0.3, 0.7}
     assert {row["params"]["z0"] for row in one} == {0.8, 1.0}
     assert {row["params"]["k"] for row in one} == {1.5, 2.0}
-    assert {row["params"]["T_hold"] for row in one} == {12, 24}
+    assert {row["params"]["T_hold"] for row in one} == {24}

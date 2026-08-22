@@ -28,11 +28,23 @@ def write_reports(conn: sqlite3.Connection, output_dir: Path) -> dict[str, Any]:
     avoid.to_csv(output_dir / "top_avoid_states.csv", index=False)
     profiles.to_csv(output_dir / "setup_profiles.csv", index=False)
     recs.to_csv(output_dir / "recommendations.csv", index=False)
-    (output_dir / "recommendations.json").write_text(recs.to_json(orient="records", indent=2), encoding="utf-8")
+    recommendation_records = recs.astype(object).where(pd.notna(recs), None).to_dict("records")
+    (output_dir / "recommendations.json").write_text(
+        json.dumps(recommendation_records, indent=2, default=_json_default),
+        encoding="utf-8",
+    )
     (output_dir / "research_memory_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
     (output_dir / "research_memory_report.md").write_text(_markdown(summary, positive, avoid, profiles, recs), encoding="utf-8")
     (output_dir / "live_query_examples.md").write_text(_examples(), encoding="utf-8")
     return summary
+
+
+def _json_default(value: object) -> object:
+    if hasattr(value, "item"):
+        return value.item()  # type: ignore[union-attr]
+    if hasattr(value, "isoformat"):
+        return value.isoformat()  # type: ignore[union-attr]
+    raise TypeError(f"Unsupported JSON value: {type(value).__name__}")
 
 
 def _summary(conn: sqlite3.Connection) -> dict[str, Any]:

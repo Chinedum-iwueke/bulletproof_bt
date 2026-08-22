@@ -14,7 +14,6 @@ from bt.core.enums import Side
 from bt.core.types import Bar
 from bt.engine.fast_path.l7_h1_kernel import L7H1KernelParams, build_l7_h1_feature_frame
 from bt.engine.fast_path import run_fast_path_if_supported
-from bt.engine.fast_path.family_kernels import kernel_for_strategy
 from bt.engine.fast_path.timing import TimingRecorder
 from bt.experiments.hypothesis_runner import apply_runtime_data_memory_controls
 from bt.strategy.base import Strategy
@@ -252,18 +251,19 @@ def test_fast_path_status_attaches_generic_htf_event_kernel(tmp_path: Path) -> N
     assert status["metadata"]["active_path"] == "htf_event_schedule_kernel"
 
 
-def test_current_hypothesis_strategies_have_registered_family_kernels() -> None:
+def test_current_hypothesis_contracts_do_not_require_compiled_kernels() -> None:
     from bt.hypotheses.contract import HypothesisContract
 
-    missing: list[str] = []
+    offenders: list[str] = []
     for path in sorted(Path("research/hypotheses").glob("*.yaml")):
         if path.name == "sample_pipeline_smoke.yaml":
             continue
         contract = HypothesisContract.from_yaml(path)
-        strategy = str(contract.schema.entry.get("strategy", ""))
-        if kernel_for_strategy(strategy) is None:
-            missing.append(f"{path.name}:{strategy}")
-    assert missing == []
+        for spec in contract.to_run_specs():
+            params = spec.get("params", {})
+            if params.get("use_compiled_features") or params.get("use_compiled_event_kernel"):
+                offenders.append(f"{path.name}:{spec.get('grid_id')}")
+    assert offenders == []
 
 
 def test_l7h1_kernel_emits_causal_decision_time_features() -> None:

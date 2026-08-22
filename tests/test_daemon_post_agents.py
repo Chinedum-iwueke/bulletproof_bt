@@ -26,9 +26,9 @@ def test_post_agent_command_order_and_state_dir_in_interpreter(tmp_path: Path) -
     assert "state_discovery.py" in " ".join(sd)
     assert "--stable-root" in sd and "--vol-root" in sd
     assert "--state-discovery-dir" in interp
-    assert "research/state_findings/tier2" in interp
-    assert "research/state_findings/tier2" in sd
-    assert "research/verdicts/tier2" in interp
+    assert "research/state_findings/tier2b" in interp
+    assert "research/state_findings/tier2b" in sd
+    assert "research/verdicts/tier2b" in interp
 
 
 def test_interpreter_fallback_on_llm_timeout(monkeypatch, tmp_path: Path) -> None:

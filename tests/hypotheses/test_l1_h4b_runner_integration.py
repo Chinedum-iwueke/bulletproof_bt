@@ -10,7 +10,7 @@ def test_runtime_override_uses_l1_h4b_strategy_name() -> None:
     spec = contract.to_run_specs()[0]
     override = build_runtime_override(contract, spec, "Tier2")
     assert override["strategy"]["name"] == "l1_h4b_liquidity_gate_size_adjusted_mean_reversion"
-    assert override["strategy"]["timeframe"] == "5m"
+    assert override["strategy"]["timeframe"] == spec["params"]["signal_timeframe"]
 
 
 def test_parallel_manifest_build_for_l1_h4b(tmp_path: Path) -> None:
