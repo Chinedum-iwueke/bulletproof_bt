@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://invariance.systems/schemas/canonical-identity-v1.schema.json",
+  "title": "Canonical identity envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "object_id", "object_type", "content_version", "content_digest", "producer", "aliases", "supersedes_object_id"],
+  "properties": {
+    "schema_version": {"type": "string", "pattern": "^canonical-identity-v1\\.[0-9]+\\.[0-9]+$"},
+    "object_id": {"type": "string", "format": "uuid"},
+    "object_type": {"type": "string", "pattern": "^[a-z][a-z0-9._-]{0,99}$"},
+    "content_version": {"type": "string", "minLength": 1, "maxLength": 150},
+    "content_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "producer": {
+      "type": "object", "additionalProperties": false,
+      "required": ["system", "native_type", "native_id", "schema_version"],
+      "properties": {
+        "system": {"type": "string", "pattern": "^[a-z][a-z0-9._-]{0,99}$"},
+        "native_type": {"type": "string", "pattern": "^[a-z][a-z0-9._-]{0,99}$"},
+        "native_id": {"type": "string", "minLength": 1, "maxLength": 300},
+        "schema_version": {"type": "string", "minLength": 1, "maxLength": 150}
+      }
+    },
+    "aliases": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["namespace", "object_type", "value"],
+        "properties": {
+          "namespace": {"type": "string", "pattern": "^[a-z][a-z0-9._-]{0,99}$"},
+          "object_type": {"type": "string", "pattern": "^[a-z][a-z0-9._-]{0,99}$"},
+          "value": {"type": "string", "minLength": 1, "maxLength": 300}
+        }
+      }
+    },
+    "supersedes_object_id": {"type": ["string", "null"], "format": "uuid"}
+  }
+}

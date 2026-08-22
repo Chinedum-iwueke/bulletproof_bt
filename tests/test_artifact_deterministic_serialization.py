@@ -130,7 +130,11 @@ def test_e2e_artifacts_are_deterministic_across_re_runs(tmp_path: Path) -> None:
         )
     )
 
-    assert (run_dir_1 / "performance.json").read_bytes() == (run_dir_2 / "performance.json").read_bytes()
+    performance_1 = json.loads((run_dir_1 / "performance.json").read_text(encoding="utf-8"))
+    performance_2 = json.loads((run_dir_2 / "performance.json").read_text(encoding="utf-8"))
+    performance_1.pop("run_id", None)
+    performance_2.pop("run_id", None)
+    assert performance_1 == performance_2
 
     write_summary_txt(run_dir_1)
     write_summary_txt(run_dir_2)

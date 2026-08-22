@@ -25,6 +25,13 @@ def _conn(path: Path) -> sqlite3.Connection:
 def _write_exp(root: Path, trades: pd.DataFrame, *, metrics_valid: bool = True) -> None:
     run_dir = root / "runs" / "run_1"
     run_dir.mkdir(parents=True, exist_ok=True)
+    trades = trades.copy()
+    if "trade_id" not in trades:
+        trades["trade_id"] = [f"trade-{index}" for index in range(len(trades))]
+    if "ts_signal" not in trades:
+        trades["ts_signal"] = pd.date_range("2024-01-01", periods=len(trades), freq="h", tz="UTC")
+    if "pnl_net" not in trades and "r_net" in trades:
+        trades["pnl_net"] = trades["r_net"]
     trades.to_csv(run_dir / "trades.csv", index=False)
     (run_dir / "performance_validation.json").write_text(json.dumps({"metrics_valid": metrics_valid}), encoding="utf-8")
 

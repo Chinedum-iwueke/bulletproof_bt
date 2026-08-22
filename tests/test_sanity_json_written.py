@@ -44,8 +44,8 @@ def test_sanity_json_written_for_successful_run(tmp_path: Path) -> None:
 def test_sanity_json_written_when_run_fails_after_run_dir_created(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     original_build_engine = api._build_engine
 
-    def _build_engine_that_crashes(config: dict, datafeed: object, run_dir: Path, sanity_counters=None):
-        engine = original_build_engine(config, datafeed, run_dir, sanity_counters=sanity_counters)
+    def _build_engine_that_crashes(config: dict, datafeed: object, run_dir: Path, sanity_counters=None, **kwargs):
+        engine = original_build_engine(config, datafeed, run_dir, sanity_counters=sanity_counters, **kwargs)
 
         def _boom() -> None:
             raise RuntimeError("forced test failure")

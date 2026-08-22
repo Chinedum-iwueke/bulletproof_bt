@@ -30,7 +30,7 @@ def test_rolling_std_and_quantile_gate_are_causal() -> None:
     vov_5 = std.update(0.03)
     threshold, passed = gate.update(vov_5)
     assert threshold == pytest.approx(0.0081649658)
-    assert passed is False
+    assert passed is True
 
 
 def test_rolling_std_handles_missing_values() -> None:

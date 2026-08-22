@@ -112,6 +112,15 @@ def _round_or_none(value: str | None, digits: int = 12) -> float | None:
     return round(float(value), digits)
 
 
+def _normalize_scalar(value: str | None) -> object:
+    if value in (None, ""):
+        return None
+    try:
+        return _round_or_none(value)
+    except ValueError:
+        return value
+
+
 def _normalized_equity(path: Path) -> list[dict[str, Any]]:
     with path.open("r", encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
@@ -133,12 +142,14 @@ def _normalized_trades(path: Path) -> list[dict[str, Any]]:
     for row in rows:
         item: dict[str, Any] = {}
         for key, value in row.items():
+            if key in {"run_id", "identity_run_id", "identity_trade_id"}:
+                continue
             if key.endswith("_ts") and value:
                 item[key] = _iso_utc(value)
-            elif key in {"symbol", "side"}:
+            elif key in {"symbol", "side", "run_id"}:
                 item[key] = value
             else:
-                item[key] = _round_or_none(value)
+                item[key] = _normalize_scalar(value)
         normalized.append(item)
     normalized.sort(key=lambda r: (r.get("entry_ts") or "", r.get("exit_ts") or "", r.get("symbol") or ""))
     return normalized

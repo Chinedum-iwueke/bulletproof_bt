@@ -195,26 +195,32 @@ def _validate_panel_vs_ohlcv(path: Path, panel: pd.DataFrame, store: ResearchDat
 
 def _panel_paths(root: Path, exchange: str | None) -> list[Path]:
     exchange_glob = exchange or "*"
-    return sorted((root / "canonical").glob(f"{exchange_glob}/*/timeframe=*/research_panel.parquet"))
+    paths = (root / "canonical").glob(f"{exchange_glob}/*/timeframe=*/research_panel.parquet")
+    namespaced = (root / "canonical").glob(f"*/{exchange_glob}/*/timeframe=*/research_panel.parquet")
+    return sorted(set(paths) | set(namespaced))
 
 
 def _raw_paths(root: Path, exchange: str | None) -> list[Path]:
     exchange_glob = exchange or "*"
-    return sorted((root / "raw").glob(f"{exchange_glob}/*/*/timeframe=*/data.parquet"))
+    paths = (root / "raw").glob(f"{exchange_glob}/*/*/timeframe=*/data.parquet")
+    namespaced = (root / "raw").glob(f"*/{exchange_glob}/*/*/timeframe=*/data.parquet")
+    return sorted(set(paths) | set(namespaced))
 
 
 def _panel_identity(path: Path) -> tuple[str, str, str]:
     parts = path.parts
     idx = parts.index("canonical")
-    timeframe = parts[idx + 3].split("=", 1)[1]
-    return parts[idx + 1], parts[idx + 2], timeframe
+    offset = 2 if parts[idx + 1] in {"perp", "spot"} else 1
+    timeframe = parts[idx + offset + 2].split("=", 1)[1]
+    return parts[idx + offset], parts[idx + offset + 1], timeframe
 
 
 def _raw_identity(path: Path) -> tuple[str, str, str, str]:
     parts = path.parts
     idx = parts.index("raw")
-    timeframe = parts[idx + 4].split("=", 1)[1]
-    return parts[idx + 1], parts[idx + 2], parts[idx + 3], timeframe
+    offset = 2 if parts[idx + 1] in {"perp", "spot"} else 1
+    timeframe = parts[idx + offset + 3].split("=", 1)[1]
+    return parts[idx + offset], parts[idx + offset + 1], parts[idx + offset + 2], timeframe
 
 
 def _row(

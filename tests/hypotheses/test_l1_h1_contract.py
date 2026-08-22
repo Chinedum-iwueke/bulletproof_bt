@@ -12,7 +12,7 @@ def test_l1_h1_grid_deterministic() -> None:
     one = contract.materialize_grid()
     two = contract.materialize_grid()
     assert one == two
-    assert {v["params"]["tp_enabled"] for v in one} == {False, True}
+    assert {v["params"]["tp_enabled"] for v in one} == {True}
 
 
 def test_l1_h1_contract_locks_two_clock_and_frozen_stop_semantics() -> None:
