@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://invariance.local/schemas/representation-contract-v1.schema.json",
+  "title": "Bulletproof representation contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "contract_id", "dataset_snapshot_id", "dataset_digest",
+    "repository_commit", "code_digest", "decision_time_column", "entity_columns",
+    "membership_known_at_column", "membership_valid_from_column",
+    "membership_valid_to_column", "fields", "split", "representation_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "representation-contract-v1.0.0"},
+    "contract_id": {"type": "string", "minLength": 1},
+    "dataset_snapshot_id": {"type": "string", "minLength": 1},
+    "dataset_digest": {"$ref": "#/$defs/digest"},
+    "repository_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "code_digest": {"$ref": "#/$defs/digest"},
+    "decision_time_column": {"type": "string", "minLength": 1},
+    "entity_columns": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "membership_known_at_column": {"type": "string", "minLength": 1},
+    "membership_valid_from_column": {"type": "string", "minLength": 1},
+    "membership_valid_to_column": {"type": ["string", "null"]},
+    "fields": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/field"}},
+    "split": {"$ref": "#/$defs/split"},
+    "representation_digest": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name", "kind", "source_columns", "transformation", "transformation_version",
+        "implementation_digest", "observation_time_column", "availability_time_column",
+        "warmup_observations", "missing_policy", "fit_policy", "fit_artifact_digest",
+        "completeness_column", "label_horizon_seconds"
+      ],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["representation", "feature", "label"]},
+        "source_columns": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "transformation": {"type": "string", "minLength": 1},
+        "transformation_version": {"type": "string", "minLength": 1},
+        "implementation_digest": {"$ref": "#/$defs/digest"},
+        "observation_time_column": {"type": "string", "minLength": 1},
+        "availability_time_column": {"type": "string", "minLength": 1},
+        "warmup_observations": {"type": "integer", "minimum": 0},
+        "missing_policy": {"enum": ["remain_missing", "drop_row", "error"]},
+        "fit_policy": {"enum": ["stateless", "train_only"]},
+        "fit_artifact_digest": {"anyOf": [{"$ref": "#/$defs/digest"}, {"type": "null"}]},
+        "completeness_column": {"type": ["string", "null"]},
+        "label_horizon_seconds": {"type": ["integer", "null"], "minimum": 1}
+      }
+    },
+    "split": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "train_start", "train_end", "validation_start", "validation_end", "test_start",
+        "test_end", "fit_start", "fit_end", "purge_seconds", "embargo_seconds"
+      ],
+      "properties": {
+        "train_start": {"$ref": "#/$defs/timestamp"},
+        "train_end": {"$ref": "#/$defs/timestamp"},
+        "validation_start": {"$ref": "#/$defs/timestamp"},
+        "validation_end": {"$ref": "#/$defs/timestamp"},
+        "test_start": {"$ref": "#/$defs/timestamp"},
+        "test_end": {"$ref": "#/$defs/timestamp"},
+        "fit_start": {"$ref": "#/$defs/timestamp"},
+        "fit_end": {"$ref": "#/$defs/timestamp"},
+        "purge_seconds": {"type": "integer", "minimum": 0},
+        "embargo_seconds": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

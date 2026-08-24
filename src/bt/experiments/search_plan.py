@@ -72,6 +72,7 @@ class SearchPlan:
     repository_commit: str
     code_digest: str
     market_model_bundle_digest: str
+    representation_contract_digest: str
     parameter_values: dict[str, tuple[Any, ...]]
     included_variants: tuple[dict[str, Any], ...]
     tiers: tuple[str, ...]
@@ -82,7 +83,9 @@ class SearchPlan:
 
     def document(self) -> dict[str, Any]:
         self.validate()
-        document = {"schema_version": SEARCH_PLAN_SCHEMA_VERSION, **asdict(self)}
+        document = json.loads(
+            _canonical({"schema_version": SEARCH_PLAN_SCHEMA_VERSION, **asdict(self)}).decode("ascii")
+        )
         document["declared_cartesian_variants"] = self.declared_cartesian_variants
         document["included_variant_count"] = len(self.included_variants)
         document["excluded_variant_count"] = self.declared_cartesian_variants - len(self.included_variants)
@@ -106,7 +109,8 @@ class SearchPlan:
         if not self.family_id.strip() or not self.hypothesis_id.strip():
             raise SearchPlanError("family_id and hypothesis_id are required")
         for name in (
-            "hypothesis_digest", "dataset_digest", "code_digest", "market_model_bundle_digest"
+            "hypothesis_digest", "dataset_digest", "code_digest", "market_model_bundle_digest",
+            "representation_contract_digest",
         ):
             _require_digest(name, str(getattr(self, name)))
         if len(self.repository_commit) != 40 or any(
@@ -199,6 +203,7 @@ def compile_hypothesis_search_plan(
     repository_commit: str,
     code_digest: str,
     market_model_bundle_digest: str,
+    representation_contract_digest: str,
     tiers: tuple[str, ...],
     seeds: tuple[int, ...],
     resources: dict[str, str | int | float | bool],
@@ -216,6 +221,7 @@ def compile_hypothesis_search_plan(
         repository_commit=repository_commit,
         code_digest=code_digest,
         market_model_bundle_digest=market_model_bundle_digest,
+        representation_contract_digest=representation_contract_digest,
         parameter_values=contract.schema.parameter_grid,
         included_variants=tuple(dict(row["params"]) for row in materialized),
         tiers=tiers,
