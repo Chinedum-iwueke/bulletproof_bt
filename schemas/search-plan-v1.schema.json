@@ -4,7 +4,7 @@
   "title": "Prospective Search Plan",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "family_id", "hypothesis_id", "hypothesis_digest", "dataset_snapshot_id", "dataset_digest", "repository_commit", "code_digest", "market_model_bundle_digest", "parameter_values", "included_variants", "tiers", "seeds", "resources", "budget", "stopping_rule", "declared_cartesian_variants", "included_variant_count", "excluded_variant_count", "registered_trials", "plan_digest"],
+  "required": ["schema_version", "family_id", "hypothesis_id", "hypothesis_digest", "dataset_snapshot_id", "dataset_digest", "repository_commit", "code_digest", "market_model_bundle_digest", "representation_contract_digest", "parameter_values", "included_variants", "tiers", "seeds", "resources", "budget", "stopping_rule", "declared_cartesian_variants", "included_variant_count", "excluded_variant_count", "registered_trials", "plan_digest"],
   "properties": {
     "schema_version": {"const": "search-plan-v1.0.0"},
     "family_id": {"type": "string", "minLength": 1},
@@ -15,6 +15,7 @@
     "repository_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "code_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "market_model_bundle_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "representation_contract_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "parameter_values": {"type": "object", "minProperties": 1},
     "included_variants": {"type": "array", "minItems": 1},
     "tiers": {"type": "array", "minItems": 1, "uniqueItems": true},

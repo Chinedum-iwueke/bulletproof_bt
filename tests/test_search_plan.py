@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
+from pathlib import Path
 
+import jsonschema
 import pytest
 
 from bt.experiments.search_plan import (
@@ -28,6 +31,7 @@ def _plan(**overrides) -> SearchPlan:
         "repository_commit": "3" * 40,
         "code_digest": "4" * 64,
         "market_model_bundle_digest": "5" * 64,
+        "representation_contract_digest": "6" * 64,
         "parameter_values": {"d0": (1.8, 2.2), "theta": (0.7, 0.8)},
         "included_variants": (
             {"d0": 1.8, "theta": 0.7},
@@ -148,6 +152,7 @@ def test_compiler_binds_filtered_hypothesis_variants() -> None:
         repository_commit="3" * 40,
         code_digest="4" * 64,
         market_model_bundle_digest="5" * 64,
+        representation_contract_digest="6" * 64,
         tiers=("Tier2",),
         seeds=(7,),
         resources={"max_workers": 1},
@@ -196,6 +201,8 @@ def test_registered_manifest_expands_seeds_and_detects_drift() -> None:
 
 def test_serialized_search_plan_is_tamper_evident() -> None:
     document = _plan().document()
+    schema = json.loads(Path("schemas/search-plan-v1.schema.json").read_text())
+    jsonschema.Draft202012Validator(schema).validate(document)
     validate_search_plan_document(document)
     document["budget"]["max_trials"] = 999
     with pytest.raises(SearchPlanError, match="digest mismatch"):

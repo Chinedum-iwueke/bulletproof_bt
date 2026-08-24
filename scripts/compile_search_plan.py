@@ -29,6 +29,7 @@ def main() -> int:
     parser.add_argument("--repository-commit", required=True)
     parser.add_argument("--code-digest", required=True)
     parser.add_argument("--market-model-bundle-digest", required=True)
+    parser.add_argument("--representation-contract-digest", required=True)
     parser.add_argument("--tier", action="append", required=True)
     parser.add_argument("--seed", action="append", type=int, required=True)
     parser.add_argument("--max-trials", type=int, required=True)
@@ -49,6 +50,7 @@ def main() -> int:
         repository_commit=args.repository_commit,
         code_digest=args.code_digest,
         market_model_bundle_digest=args.market_model_bundle_digest,
+        representation_contract_digest=args.representation_contract_digest,
         tiers=tuple(args.tier),
         seeds=tuple(args.seed),
         resources={"max_workers": args.max_workers},

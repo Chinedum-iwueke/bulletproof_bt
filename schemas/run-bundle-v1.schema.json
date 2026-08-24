@@ -10,7 +10,7 @@
     "state": {"const": "finalized"},
     "identity": {"type": "object"},
     "bundle_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "lineage": {"type": "object", "required": ["repository_commit", "code_digest", "dataset_snapshot_id", "dataset_digest", "specification_digest", "environment_digest", "market_model_bundle_digest", "search_plan_digest", "search_family_id", "trial_id", "attempt"], "properties": {"market_model_bundle_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "search_plan_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "search_family_id": {"type": "string", "minLength": 1}, "trial_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}},
+    "lineage": {"type": "object", "required": ["repository_commit", "code_digest", "dataset_snapshot_id", "dataset_digest", "specification_digest", "environment_digest", "market_model_bundle_digest", "representation_contract_digest", "search_plan_digest", "search_family_id", "trial_id", "attempt"], "properties": {"market_model_bundle_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "representation_contract_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "search_plan_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "search_family_id": {"type": "string", "minLength": 1}, "trial_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}},
     "artifacts": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["name", "media_type", "schema_identity", "byte_size", "source_content_digest", "content_digest", "semantic_digest", "normalization"]}},
     "manifest_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
   }

@@ -19,6 +19,11 @@ import yaml  # type: ignore[import-untyped]
 from bt.contracts.canonical_identity import SCHEMA_VERSION as IDENTITY_SCHEMA_VERSION
 from bt.contracts.canonical_identity import validate_identity
 from bt.execution.model_registry import MarketModelError, validate_model_bundle_document
+from bt.experiments.representation_contract import (
+    LEAKAGE_REPORT_SCHEMA_VERSION,
+    RepresentationContractError,
+    validate_representation_document,
+)
 from bt.logging.run_contract import validate_run_artifacts
 
 BUNDLE_SCHEMA_VERSION = "run-bundle-v1.0.0"
@@ -178,7 +183,7 @@ def _validate_lineage(lineage: dict[str, Any]) -> None:
     required = {
         "repository_commit", "code_digest", "dataset_snapshot_id", "dataset_digest",
         "specification_digest", "environment_digest", "market_model_bundle_digest",
-        "search_plan_digest", "search_family_id", "trial_id", "attempt",
+        "representation_contract_digest", "search_plan_digest", "search_family_id", "trial_id", "attempt",
     }
     missing = sorted(required - set(lineage))
     if missing:
@@ -186,7 +191,7 @@ def _validate_lineage(lineage: dict[str, Any]) -> None:
     for key in (
         "repository_commit", "code_digest", "dataset_digest", "specification_digest",
         "environment_digest", "market_model_bundle_digest",
-        "search_plan_digest", "trial_id",
+        "representation_contract_digest", "search_plan_digest", "trial_id",
     ):
         value = str(lineage[key])
         expected = 40 if key == "repository_commit" else 64
@@ -222,6 +227,31 @@ def validate_bundle_manifest(manifest: dict[str, Any], bundle_dir: Path | None =
                 raise RunBundleError(f"bundle artifact integrity mismatch: {artifact['name']}")
 
 
+def _validate_representation_evidence(run_dir: Path, lineage: dict[str, Any]) -> None:
+    contract_path = run_dir / "representation_contract.json"
+    report_path = run_dir / "representation_leakage_report.json"
+    if not contract_path.is_file() or not report_path.is_file():
+        raise RunBundleError(
+            "representation_contract.json and representation_leakage_report.json are required"
+        )
+    try:
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        validate_representation_document(contract)
+    except (json.JSONDecodeError, RepresentationContractError) as exc:
+        raise RunBundleError(f"invalid representation evidence: {exc}") from exc
+    contract_digest = contract.get("representation_digest")
+    if contract_digest != lineage["representation_contract_digest"]:
+        raise RunBundleError("representation contract does not match lineage digest")
+    if report.get("schema_version") != LEAKAGE_REPORT_SCHEMA_VERSION:
+        raise RunBundleError("unsupported representation leakage report schema")
+    expected = _digest({key: value for key, value in report.items() if key != "report_digest"})
+    if report.get("report_digest") != expected:
+        raise RunBundleError("representation leakage report digest mismatch")
+    if report.get("representation_digest") != contract_digest or report.get("status") != "certified":
+        raise RunBundleError("representation leakage report is not certified for this contract")
+
+
 def finalize_run_bundle(
     run_dir: Path,
     bundle_root: Path,
@@ -246,6 +276,7 @@ def finalize_run_bundle(
             raise RunBundleError(f"invalid market_model_bundle.json: {exc}") from exc
         if model_bundle["bundle_digest"] != lineage["market_model_bundle_digest"]:
             raise RunBundleError("market-model bundle does not match lineage digest")
+        _validate_representation_evidence(run_dir, lineage)
         staging_artifacts = staging / "artifacts"
         staging_artifacts.mkdir(parents=True)
         entries: list[dict[str, Any]] = []

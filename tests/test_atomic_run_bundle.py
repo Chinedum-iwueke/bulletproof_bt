@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from unittest.mock import patch
 
 import jsonschema
+import pandas as pd
 import pytest
 import yaml
 
@@ -16,6 +18,54 @@ from bt.logging.run_bundle import (
     validate_bundle_manifest,
 )
 from bt.execution.model_registry import declared_classic_bundle
+from bt.experiments.representation_contract import (
+    EvaluationSplit,
+    FieldContract,
+    RepresentationContract,
+    audit_representation_frame,
+)
+
+
+def _representation() -> RepresentationContract:
+    return RepresentationContract(
+        contract_id="bundle-fixture",
+        dataset_snapshot_id="11111111-1111-4111-8111-111111111111",
+        dataset_digest="3" * 64,
+        repository_commit="1" * 40,
+        code_digest="2" * 64,
+        decision_time_column="decision_at",
+        entity_columns=("symbol",),
+        membership_known_at_column="membership_known_at",
+        membership_valid_from_column="membership_valid_from",
+        membership_valid_to_column=None,
+        fields=(
+            FieldContract(
+                name="close_feature",
+                kind="feature",
+                source_columns=("close",),
+                transformation="fixture:identity",
+                transformation_version="1",
+                implementation_digest="a" * 64,
+                observation_time_column="observed_at",
+                availability_time_column="available_at",
+                warmup_observations=0,
+                missing_policy="error",
+                fit_policy="stateless",
+            ),
+        ),
+        split=EvaluationSplit(
+            train_start="2026-01-01T00:00:00Z",
+            train_end="2026-01-01T00:01:00Z",
+            validation_start="2026-01-01T00:01:00Z",
+            validation_end="2026-01-01T00:02:00Z",
+            test_start="2026-01-01T00:02:00Z",
+            test_end="2026-01-01T00:03:00Z",
+            fit_start="2026-01-01T00:00:00Z",
+            fit_end="2026-01-01T00:01:00Z",
+            purge_seconds=0,
+            embargo_seconds=0,
+        ),
+    )
 
 
 def _lineage() -> dict[str, object]:
@@ -31,6 +81,7 @@ def _lineage() -> dict[str, object]:
         "specification_digest": "4" * 64,
         "environment_digest": "5" * 64,
         "market_model_bundle_digest": model_digest,
+        "representation_contract_digest": _representation().digest,
         "search_plan_digest": "7" * 64,
         "search_family_id": "fixture-family",
         "trial_id": "8" * 64,
@@ -53,6 +104,27 @@ def _run(path: Path, *, run_id: str = "run-a", absolute_manifest_paths: bool = T
     )
     (path / "market_model_bundle.json").write_text(
         json.dumps(model_bundle.document(), sort_keys=True) + "\n", encoding="utf-8"
+    )
+    representation = _representation()
+    representation_document = representation.document()
+    frame = pd.DataFrame(
+        {
+            "symbol": ["BTCUSDT"],
+            "decision_at": [pd.Timestamp("2026-01-01T00:00:00Z")],
+            "membership_known_at": [pd.Timestamp("2026-01-01T00:00:00Z")],
+            "membership_valid_from": [pd.Timestamp("2026-01-01T00:00:00Z")],
+            "close": [100.0],
+            "close_feature": [100.0],
+            "observed_at": [pd.Timestamp("2026-01-01T00:00:00Z")],
+            "available_at": [pd.Timestamp("2026-01-01T00:00:00Z")],
+        }
+    )
+    report = audit_representation_frame(representation, frame)
+    (path / "representation_contract.json").write_text(
+        json.dumps(representation_document, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    (path / "representation_leakage_report.json").write_text(
+        json.dumps(report, sort_keys=True) + "\n", encoding="utf-8"
     )
     for name, header in (
         ("equity.csv", "ts,equity\n"),
@@ -152,6 +224,34 @@ def test_market_model_bundle_is_required_digest_bound_and_tamper_evident(tmp_pat
     (tampered / "market_model_bundle.json").write_text(json.dumps(document), encoding="utf-8")
     with pytest.raises(RunBundleError, match="bundle digest mismatch"):
         finalize_run_bundle(tampered, tmp_path / "registry-c", lineage=_lineage())
+
+
+def test_representation_evidence_is_required_certified_and_digest_bound(tmp_path) -> None:
+    missing = _run(tmp_path / "missing-representation")
+    (missing / "representation_leakage_report.json").unlink()
+    with pytest.raises(RunBundleError, match="representation_contract.json"):
+        finalize_run_bundle(missing, tmp_path / "registry-a", lineage=_lineage())
+
+    uncertified = _run(tmp_path / "uncertified-representation")
+    report_path = uncertified / "representation_leakage_report.json"
+    report = json.loads(report_path.read_text())
+    report["status"] = "failed"
+    report["report_digest"] = hashlib.sha256(
+        json.dumps(
+            {key: value for key, value in report.items() if key != "report_digest"},
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("ascii")
+    ).hexdigest()
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(RunBundleError, match="not certified"):
+        finalize_run_bundle(uncertified, tmp_path / "registry-b", lineage=_lineage())
+
+    mismatched = _lineage()
+    mismatched["representation_contract_digest"] = "f" * 64
+    with pytest.raises(RunBundleError, match="does not match lineage"):
+        finalize_run_bundle(_run(tmp_path / "mismatch-representation"), tmp_path / "registry-c", lineage=mismatched)
 
 
 def test_manifest_corruption_and_incompatible_schema_fail_replay(tmp_path) -> None:
