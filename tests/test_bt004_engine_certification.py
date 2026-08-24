@@ -117,6 +117,13 @@ def test_transition_digest_replays_exactly_and_changes_with_state() -> None:
     )
 
 
+def test_canonical_state_rejects_unsupported_or_non_finite_values() -> None:
+    with pytest.raises(CertificationError, match="unsupported type"):
+        digest({"symbols": {"BTCUSDT"}})
+    with pytest.raises(CertificationError, match="non-finite"):
+        digest({"equity": float("nan")})
+
+
 def test_historical_feed_equal_timestamp_symbols_are_stable() -> None:
     rows = [
         {"ts": TS, "symbol": symbol, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 1}

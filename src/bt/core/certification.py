@@ -7,6 +7,7 @@ from enum import Enum
 import hashlib
 import json
 import math
+import re
 from typing import Any, Iterable
 
 import pandas as pd
@@ -41,13 +42,32 @@ def _utc(value: pd.Timestamp | datetime | str, field: str) -> pd.Timestamp:
     return parsed.tz_convert("UTC")
 
 
+def _normalize(value: Any) -> Any:
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise CertificationError("canonical state contains a non-finite number")
+        return value
+    if isinstance(value, (pd.Timestamp, datetime)):
+        return _utc(value, "state timestamp").isoformat()
+    if isinstance(value, (list, tuple)):
+        return [_normalize(item) for item in value]
+    if isinstance(value, dict):
+        if not all(isinstance(key, str) for key in value):
+            raise CertificationError("canonical state keys must be strings")
+        return {key: _normalize(item) for key, item in value.items()}
+    raise CertificationError(
+        f"canonical state contains unsupported type: {type(value).__name__}"
+    )
+
+
 def _canonical(value: Any) -> bytes:
     return json.dumps(
-        value,
+        _normalize(value),
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=True,
-        default=str,
     ).encode("ascii")
 
 
@@ -182,6 +202,13 @@ class CertifiedCheckpoint:
         )
 
     def validate(self, *, dataset_digest: str, config_digest: str) -> None:
+        for name, value in (
+            ("dataset_digest", self.dataset_digest),
+            ("config_digest", self.config_digest),
+            ("state_digest", self.state_digest),
+        ):
+            if re.fullmatch(r"[0-9a-f]{64}", value) is None:
+                raise CertificationError(f"checkpoint {name} must be SHA-256")
         if self.contract_version != CONTRACT_VERSION:
             raise CertificationError("checkpoint contract version is unsupported")
         if self.dataset_digest != dataset_digest:
