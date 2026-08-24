@@ -31,6 +31,9 @@ def _lineage() -> dict[str, object]:
         "specification_digest": "4" * 64,
         "environment_digest": "5" * 64,
         "market_model_bundle_digest": model_digest,
+        "search_plan_digest": "7" * 64,
+        "search_family_id": "fixture-family",
+        "trial_id": "8" * 64,
         "attempt": 1,
     }
 

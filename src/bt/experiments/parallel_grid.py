@@ -23,6 +23,7 @@ from bt.experiments.hypothesis_runner import execute_hypothesis_variant, resolve
 from bt.experiments.manifest import decode_params, encode_params, read_manifest_csv, write_manifest_csv
 from bt.experiments.precompute_cache import PrecomputeRegistry, build_registry, stable_cache_key
 from bt.experiments.resource_controls import memory_snapshot, resolve_auto_workers, wait_for_memory
+from bt.experiments.search_plan import SearchPlan, validate_registered_manifest_rows
 from bt.experiments.shared_data import SharedDatasetPlan, build_shared_dataset_plan, write_shared_cache_manifest
 from bt.experiments.status import atomic_write_json, detect_run_artifact_status, write_status_csv
 from bt.experiments.wave_scheduler import iter_waves, resolve_wave_size
@@ -444,6 +445,7 @@ def run_hypothesis_manifest_in_parallel(
     min_free_ram_gb: float = 6.0,
     fail_fast: bool = False,
     resume_strict: bool = True,
+    registered_search_plan: SearchPlan | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     status_rows: list[dict[str, Any]] = []
     launch_rows: list[dict[str, str]] = []
@@ -454,6 +456,14 @@ def run_hypothesis_manifest_in_parallel(
         raise ValueError(f"--local-config file does not exist: {local_config}")
     if not data_path.exists():
         raise ValueError(f"--data path does not exist: {data_path}")
+    if registered_search_plan is not None:
+        validate_registered_manifest_rows(registered_search_plan, manifest_rows)
+        search_plan_path = experiment_root / "search_plan.json"
+        search_plan_path.parent.mkdir(parents=True, exist_ok=True)
+        search_plan_path.write_text(
+            json.dumps(registered_search_plan.document(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
     for override in override_paths:
         if not override.exists():

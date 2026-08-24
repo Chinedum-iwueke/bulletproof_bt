@@ -177,7 +177,8 @@ def _failure(bundle_root: Path, run_dir: Path, error: Exception) -> Path:
 def _validate_lineage(lineage: dict[str, Any]) -> None:
     required = {
         "repository_commit", "code_digest", "dataset_snapshot_id", "dataset_digest",
-        "specification_digest", "environment_digest", "market_model_bundle_digest", "attempt",
+        "specification_digest", "environment_digest", "market_model_bundle_digest",
+        "search_plan_digest", "search_family_id", "trial_id", "attempt",
     }
     missing = sorted(required - set(lineage))
     if missing:
@@ -185,6 +186,7 @@ def _validate_lineage(lineage: dict[str, Any]) -> None:
     for key in (
         "repository_commit", "code_digest", "dataset_digest", "specification_digest",
         "environment_digest", "market_model_bundle_digest",
+        "search_plan_digest", "trial_id",
     ):
         value = str(lineage[key])
         expected = 40 if key == "repository_commit" else 64
@@ -196,6 +198,8 @@ def _validate_lineage(lineage: dict[str, Any]) -> None:
         raise RunBundleError("dataset_snapshot_id must be a UUID") from exc
     if not isinstance(lineage["attempt"], int) or lineage["attempt"] < 1:
         raise RunBundleError("attempt must be a positive integer")
+    if not str(lineage["search_family_id"]).strip():
+        raise RunBundleError("search_family_id is required")
 
 
 def validate_bundle_manifest(manifest: dict[str, Any], bundle_dir: Path | None = None) -> None:
