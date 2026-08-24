@@ -15,9 +15,14 @@ from bt.logging.run_bundle import (
     publish_to_hermes,
     validate_bundle_manifest,
 )
+from bt.execution.model_registry import declared_classic_bundle
 
 
 def _lineage() -> dict[str, object]:
+    model_digest = declared_classic_bundle(
+        profile="tier2",
+        parameters={"taker_fee_bps": 6.0, "slippage_bps": 2.0, "spread_bps": 1.0, "delay_bars": 1},
+    ).digest
     return {
         "repository_commit": "1" * 40,
         "code_digest": "2" * 64,
@@ -25,6 +30,7 @@ def _lineage() -> dict[str, object]:
         "dataset_digest": "3" * 64,
         "specification_digest": "4" * 64,
         "environment_digest": "5" * 64,
+        "market_model_bundle_digest": model_digest,
         "attempt": 1,
     }
 
@@ -37,6 +43,13 @@ def _run(path: Path, *, run_id: str = "run-a", absolute_manifest_paths: bool = T
     (path / "performance.json").write_text(
         json.dumps({"schema_version": 1, "run_id": run_id, "total_trades": 0}) + "\n",
         encoding="utf-8",
+    )
+    model_bundle = declared_classic_bundle(
+        profile="tier2",
+        parameters={"taker_fee_bps": 6.0, "slippage_bps": 2.0, "spread_bps": 1.0, "delay_bars": 1},
+    )
+    (path / "market_model_bundle.json").write_text(
+        json.dumps(model_bundle.document(), sort_keys=True) + "\n", encoding="utf-8"
     )
     for name, header in (
         ("equity.csv", "ts,equity\n"),
@@ -117,6 +130,25 @@ def test_missing_corrupt_and_unregistered_artifacts_fail_closed(tmp_path) -> Non
     (unknown / "model.bin").write_bytes(b"binary")
     with pytest.raises(RunBundleError, match="registered structural schema"):
         finalize_run_bundle(unknown, root, lineage=_lineage())
+
+
+def test_market_model_bundle_is_required_digest_bound_and_tamper_evident(tmp_path) -> None:
+    missing = _run(tmp_path / "missing-model")
+    (missing / "market_model_bundle.json").unlink()
+    with pytest.raises(RunBundleError, match="market_model_bundle.json is required"):
+        finalize_run_bundle(missing, tmp_path / "registry-a", lineage=_lineage())
+
+    mismatched = _lineage()
+    mismatched["market_model_bundle_digest"] = "f" * 64
+    with pytest.raises(RunBundleError, match="does not match lineage"):
+        finalize_run_bundle(_run(tmp_path / "mismatch"), tmp_path / "registry-b", lineage=mismatched)
+
+    tampered = _run(tmp_path / "tampered")
+    document = json.loads((tampered / "market_model_bundle.json").read_text())
+    document["models"][0]["parameters"]["delay_bars"] = 99
+    (tampered / "market_model_bundle.json").write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(RunBundleError, match="bundle digest mismatch"):
+        finalize_run_bundle(tampered, tmp_path / "registry-c", lineage=_lineage())
 
 
 def test_manifest_corruption_and_incompatible_schema_fail_replay(tmp_path) -> None:

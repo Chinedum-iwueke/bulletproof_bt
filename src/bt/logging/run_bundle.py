@@ -18,6 +18,7 @@ import yaml  # type: ignore[import-untyped]
 
 from bt.contracts.canonical_identity import SCHEMA_VERSION as IDENTITY_SCHEMA_VERSION
 from bt.contracts.canonical_identity import validate_identity
+from bt.execution.model_registry import MarketModelError, validate_model_bundle_document
 from bt.logging.run_contract import validate_run_artifacts
 
 BUNDLE_SCHEMA_VERSION = "run-bundle-v1.0.0"
@@ -176,12 +177,15 @@ def _failure(bundle_root: Path, run_dir: Path, error: Exception) -> Path:
 def _validate_lineage(lineage: dict[str, Any]) -> None:
     required = {
         "repository_commit", "code_digest", "dataset_snapshot_id", "dataset_digest",
-        "specification_digest", "environment_digest", "attempt",
+        "specification_digest", "environment_digest", "market_model_bundle_digest", "attempt",
     }
     missing = sorted(required - set(lineage))
     if missing:
         raise RunBundleError(f"lineage missing fields: {missing}")
-    for key in ("repository_commit", "code_digest", "dataset_digest", "specification_digest", "environment_digest"):
+    for key in (
+        "repository_commit", "code_digest", "dataset_digest", "specification_digest",
+        "environment_digest", "market_model_bundle_digest",
+    ):
         value = str(lineage[key])
         expected = 40 if key == "repository_commit" else 64
         if len(value) != expected or any(char not in "0123456789abcdef" for char in value):
@@ -228,6 +232,16 @@ def finalize_run_bundle(
     try:
         _validate_lineage(lineage)
         validate_run_artifacts(run_dir)
+        model_bundle_path = run_dir / "market_model_bundle.json"
+        if not model_bundle_path.is_file():
+            raise RunBundleError("market_model_bundle.json is required")
+        try:
+            model_bundle = json.loads(model_bundle_path.read_text(encoding="utf-8"))
+            validate_model_bundle_document(model_bundle)
+        except (json.JSONDecodeError, MarketModelError) as exc:
+            raise RunBundleError(f"invalid market_model_bundle.json: {exc}") from exc
+        if model_bundle["bundle_digest"] != lineage["market_model_bundle_digest"]:
+            raise RunBundleError("market-model bundle does not match lineage digest")
         staging_artifacts = staging / "artifacts"
         staging_artifacts.mkdir(parents=True)
         entries: list[dict[str, Any]] = []
