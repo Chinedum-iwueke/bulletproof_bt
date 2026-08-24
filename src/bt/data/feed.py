@@ -40,7 +40,10 @@ class HistoricalDataFeed:
             return None
         ts = self._timestamps[self._index]
         self._index += 1
-        rows = self._rows_by_ts[ts]
+        rows = sorted(
+            self._rows_by_ts[ts],
+            key=lambda row: str(row["symbol"]),
+        )
         return [
             Bar(
                 ts=row["ts"],

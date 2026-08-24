@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import deque
+import math
 from typing import Deque
 
 from bt.hypotheses.l1_h1 import bars_for_30_calendar_days
@@ -40,7 +41,13 @@ class RollingQuantileGate:
             gate = None
         else:
             threshold = self._linear_quantile(reference, self._q)
-            gate = float(value) <= threshold
+            candidate = float(value)
+            gate = candidate <= threshold or math.isclose(
+                candidate,
+                threshold,
+                rel_tol=1e-12,
+                abs_tol=1e-15,
+            )
         self._history.append(float(value))
         return threshold, gate
 
