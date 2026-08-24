@@ -454,13 +454,13 @@ def _read_run_metrics(run_dir: Path) -> dict[str, Any]:
     performance_path = run_dir / "performance.json"
     payload = json.loads(performance_path.read_text(encoding="utf-8")) if performance_path.exists() else {}
     return {
-        "num_trades": payload.get("trades", 0),
-        "ev_r_gross": payload.get("expectancy_r", 0.0),
-        "ev_r_net": payload.get("expectancy_r", 0.0),
-        "pnl_gross": payload.get("pnl_gross", payload.get("net_pnl", 0.0)),
+        "num_trades": payload.get("total_trades", payload.get("trades", 0)),
+        "ev_r_gross": payload.get("ev_r_gross", payload.get("expectancy_r", 0.0)),
+        "ev_r_net": payload.get("ev_r_net", payload.get("expectancy_r", 0.0)),
+        "pnl_gross": payload.get("gross_pnl", payload.get("pnl_gross", payload.get("net_pnl", 0.0))),
         "pnl_net": payload.get("net_pnl", 0.0),
         "hit_rate": payload.get("win_rate", 0.0),
-        "max_drawdown_r": payload.get("max_drawdown", 0.0),
+        "max_drawdown_r": abs(payload.get("max_drawdown_pct", payload.get("max_drawdown", 0.0))),
         "mae_mean_r": payload.get("mae_mean_r", 0.0),
         "mfe_mean_r": payload.get("mfe_mean_r", 0.0),
         "avg_hold_bars": payload.get("avg_hold_bars", 0.0),
