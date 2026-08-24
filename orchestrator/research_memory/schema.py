@@ -153,6 +153,16 @@ def ensure_research_memory_schema(conn: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS research_memory_publications (
+            publication_key TEXT PRIMARY KEY,
+            bundle_digest TEXT NOT NULL UNIQUE,
+            request_digest TEXT NOT NULL UNIQUE,
+            trial_id TEXT NOT NULL,
+            result_id TEXT NOT NULL,
+            canonical_receipt_json TEXT NOT NULL,
+            record_digest TEXT NOT NULL UNIQUE
+        );
+
         CREATE INDEX IF NOT EXISTS idx_rm_trades_setup ON research_memory_trades(setup_class);
         CREATE INDEX IF NOT EXISTS idx_rm_trades_state ON research_memory_trades(csi_pctile, vol_pctile, spread_pctile, tr_over_atr);
         CREATE INDEX IF NOT EXISTS idx_rm_trades_valid ON research_memory_trades(metrics_valid);
