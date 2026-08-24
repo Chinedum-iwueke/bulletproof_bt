@@ -168,6 +168,24 @@ def test_finalization_is_atomic_schema_valid_and_integrity_replayable(tmp_path) 
     assert not any(path.name.startswith(".staging") for path in root.iterdir())
 
 
+def test_segment_rollup_runtime_path_is_structurally_normalized(tmp_path) -> None:
+    run = _run(tmp_path / "run")
+    absolute = str(run)
+    (run / "segment_rollups.csv").write_text(
+        "schema_version,source_run_dir,n_trades\n1," + absolute + ",0\n",
+        encoding="utf-8",
+    )
+    (run / "segment_rollups.jsonl").write_text(
+        json.dumps({"schema_version": 1, "source_run_dir": absolute, "n_trades": 0}) + "\n",
+        encoding="utf-8",
+    )
+    receipt = finalize_run_bundle(run, tmp_path / "registry", lineage=_lineage())
+    _, directory = _manifest(tmp_path / "registry", receipt)
+    assert absolute not in (directory / "artifacts/segment_rollups.csv").read_text()
+    assert absolute not in (directory / "artifacts/segment_rollups.jsonl").read_text()
+    assert "run://current" in (directory / "artifacts/segment_rollups.csv").read_text()
+
+
 def test_semantically_equal_runs_share_bundle_digest_and_publish_once(tmp_path) -> None:
     root = tmp_path / "registry"
     first = finalize_run_bundle(_run(tmp_path / "run-a", run_id="a"), root, lineage=_lineage())

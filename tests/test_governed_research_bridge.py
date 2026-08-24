@@ -13,6 +13,7 @@ from bt.governance.research_bridge import (
     compile_submission,
     validate_approved_proposal,
     register_with_hermes,
+    materialize_approved_contract,
 )
 
 
@@ -162,3 +163,15 @@ def test_hermes_registration_sends_only_typed_proposal() -> None:
     request = opened.call_args.args[0]
     assert request.full_url.endswith("/v1/research/governed-bridges")
     assert b'"command"' not in request.data
+
+
+def test_approved_contract_materializes_only_sixteen_requested_variants(tmp_path: Path) -> None:
+    value = compile() | {"state": "approved"}
+    receipt = materialize_approved_contract(
+        value, repository_root=ROOT, output=tmp_path / "approved.yaml"
+    )
+    assert receipt["variant_count"] == 16
+    derived = __import__("yaml").safe_load((tmp_path / "approved.yaml").read_text())
+    assert derived["parameter_grid"]["d0"] == [1.8, 2.2]
+    assert derived["parameter_grid"]["signal_timeframe"] == ["15m"]
+    assert derived["governance"]["proposal_digest"] == value["proposal_digest"]

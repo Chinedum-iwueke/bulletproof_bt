@@ -87,9 +87,36 @@ def _legacy_manifest_bytes(path: Path) -> tuple[bytes, str]:
     return json.dumps(document, indent=2, sort_keys=True).encode("utf-8") + b"\n", "stable-runtime-aliases-v1"
 
 
+def _segment_rollup_bytes(path: Path) -> tuple[bytes, str]:
+    if path.suffix == ".jsonl":
+        rows = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if not isinstance(row, dict):
+                raise RunBundleError("segment_rollups.jsonl contains a non-object row")
+            row["source_run_dir"] = "run://current"
+            rows.append(json.dumps(row, sort_keys=True, separators=(",", ":")))
+        return ("\n".join(rows) + ("\n" if rows else "")).encode("utf-8"), "stable-runtime-aliases-v1"
+    text = path.read_text(encoding="utf-8")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames or "source_run_dir" not in reader.fieldnames:
+        raise RunBundleError("segment_rollups.csv lacks source_run_dir")
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=reader.fieldnames, lineterminator="\n")
+    writer.writeheader()
+    for row in reader:
+        row["source_run_dir"] = "run://current"
+        writer.writerow(row)
+    return output.getvalue().encode("utf-8"), "stable-runtime-aliases-v1"
+
+
 def _artifact_bytes(path: Path) -> tuple[bytes, str | None]:
     if path.name == "run_manifest.json":
         return _legacy_manifest_bytes(path)
+    if path.name in {"segment_rollups.csv", "segment_rollups.jsonl"}:
+        return _segment_rollup_bytes(path)
     return path.read_bytes(), None
 
 

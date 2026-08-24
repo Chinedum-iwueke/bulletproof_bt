@@ -11,6 +11,7 @@ import sqlite3
 from typing import Any
 import urllib.error
 import urllib.request
+import yaml  # type: ignore[import-untyped]
 
 from bt.hypotheses.contract import HypothesisContract
 
@@ -227,6 +228,53 @@ def compile_submission(
     }
     digest_core = {key: value for key, value in core.items() if key != "state"}
     return core | {"proposal_digest": _digest(digest_core)}
+
+
+def materialize_approved_contract(
+    proposal: dict[str, Any], *, repository_root: Path, output: Path,
+) -> dict[str, Any]:
+    """Derive the approved finite grid without mutating the registered source."""
+    validate_approved_proposal(proposal, str(proposal.get("proposal_digest", "")))
+    relative = str(proposal["resolution"]["hypothesis_path"])
+    source = (repository_root / relative).resolve(strict=True)
+    if not source.is_relative_to(repository_root.resolve(strict=True)):
+        raise BridgeError("registered hypothesis path escapes the repository")
+    document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise BridgeError("registered hypothesis is not a mapping")
+    registered_grid = document.get("parameter_grid")
+    if not isinstance(registered_grid, dict):
+        raise BridgeError("registered hypothesis has no parameter grid")
+    requested = proposal["search"]["parameter_grid"]
+    derived_grid: dict[str, list[Any]] = {}
+    for name, values in registered_grid.items():
+        if name in requested:
+            derived_grid[name] = list(requested[name])
+        else:
+            if not isinstance(values, list) or not values:
+                raise BridgeError(f"registered parameter {name} has no default")
+            derived_grid[name] = [values[0]]
+    document["parameter_grid"] = derived_grid
+    document["governance"] = {
+        "schema_version": SCHEMA_VERSION,
+        "proposal_digest": proposal["proposal_digest"],
+        "source_hypothesis_path": relative,
+        "source_hypothesis_digest": proposal["resolution"]["hypothesis_digest"],
+        "derivation": "approved-grid-with-registered-singleton-defaults",
+    }
+    contract = HypothesisContract.from_dict(document)
+    variants = contract.to_run_specs()
+    expected = proposal["search"]["variant_count"]
+    if len(variants) != expected:
+        raise BridgeError(f"derived contract has {len(variants)} variants, expected {expected}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    encoded = yaml.safe_dump(document, sort_keys=False)
+    output.write_text(encoded, encoding="utf-8")
+    return {
+        "output": str(output),
+        "content_digest": hashlib.sha256(encoded.encode()).hexdigest(),
+        "variant_count": len(variants),
+    }
 
 
 def validate_approved_proposal(document: dict[str, Any], approved_digest: str) -> None:
