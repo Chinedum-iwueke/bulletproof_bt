@@ -20,7 +20,13 @@ MANIFEST_COLUMNS = [
     "expected_status",
     "enabled",
     "notes",
+    "search_plan_digest",
+    "trial_id",
+    "search_family_id",
+    "seed",
+    "attempt",
 ]
+REQUIRED_MANIFEST_COLUMNS = MANIFEST_COLUMNS[:13]
 
 
 def encode_params(params: dict[str, Any]) -> str:
@@ -35,7 +41,7 @@ def decode_params(params_json: str) -> dict[str, Any]:
 
 
 def validate_manifest_row(row: dict[str, str]) -> None:
-    missing = [c for c in MANIFEST_COLUMNS if c not in row]
+    missing = [c for c in REQUIRED_MANIFEST_COLUMNS if c not in row]
     if missing:
         raise ValueError(f"Manifest row missing columns {missing}: {row}")
 
@@ -84,7 +90,14 @@ def read_manifest_csv(manifest_path: Path) -> list[dict[str, str]]:
         raise ValueError(f"Manifest path does not exist: {manifest_path}")
     with manifest_path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
-        rows = [dict(row) for row in reader]
+        rows = [
+            {
+                key: value
+                for key, value in dict(row).items()
+                if key in REQUIRED_MANIFEST_COLUMNS or str(value or "").strip()
+            }
+            for row in reader
+        ]
     for row in rows:
         validate_manifest_row(row)
     return rows
