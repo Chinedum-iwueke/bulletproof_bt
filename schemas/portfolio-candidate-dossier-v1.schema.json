@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://invariance-research.local/schemas/portfolio-candidate-dossier-v1.schema.json",
+  "title": "PORT-001 Portfolio Candidate Dossier",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "evaluated_at", "service", "authority",
+    "candidate_set_digest", "candidate_digests", "policy", "policy_digest",
+    "dependency", "proposal", "stress", "constraint_evaluations", "decision",
+    "rejection_reasons", "allocated", "dossier_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "portfolio-candidate-dossier-v1.0.0"},
+    "evaluated_at": {"type": "string", "format": "date-time"},
+    "service": {
+      "type": "object",
+      "required": ["name", "version", "determinism"],
+      "properties": {
+        "name": {"const": "bulletproof-portfolio-candidate-risk"},
+        "version": {"const": "1.0.0"},
+        "determinism": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "authority": {
+      "type": "object",
+      "required": ["portfolio_allocation", "capital", "orders", "self_promotion", "permitted_use"],
+      "properties": {
+        "portfolio_allocation": {"const": "prohibited"},
+        "capital": {"const": "prohibited"},
+        "orders": {"const": "prohibited"},
+        "self_promotion": {"const": "prohibited"},
+        "permitted_use": {"const": "portfolio_candidate_review_only"}
+      },
+      "additionalProperties": false
+    },
+    "candidate_set_digest": {"$ref": "#/$defs/sha256"},
+    "candidate_digests": {"type": "array", "items": {"$ref": "#/$defs/sha256"}},
+    "policy": {"type": "object"},
+    "policy_digest": {"$ref": "#/$defs/sha256"},
+    "dependency": {"type": "object"},
+    "proposal": {"type": "object"},
+    "stress": {"type": "object"},
+    "constraint_evaluations": {"type": "array", "items": {"type": "object"}},
+    "decision": {"enum": ["candidate", "rejected"]},
+    "rejection_reasons": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "allocated": {"const": false},
+    "dossier_digest": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}
