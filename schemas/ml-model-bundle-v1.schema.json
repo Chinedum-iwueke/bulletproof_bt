@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://invariance.local/schemas/ml-model-bundle-v1.schema.json",
+  "title": "ML-001 model bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "authority", "lineage", "split_contract", "problem", "feature_schema", "fit", "calibration", "evaluation", "policy", "model_digest"],
+  "properties": {
+    "schema_version": {"const": "ml-model-bundle-v1.0.0"},
+    "authority": {"type": "object"},
+    "lineage": {
+      "type": "object",
+      "required": ["problem_digest", "dataset_digest", "representation_digest", "split_digest", "source_digest"],
+      "additionalProperties": false,
+      "properties": {
+        "problem_digest": {"$ref": "#/$defs/sha256"},
+        "dataset_digest": {"$ref": "#/$defs/sha256"},
+        "representation_digest": {"$ref": "#/$defs/sha256"},
+        "split_digest": {"$ref": "#/$defs/sha256"},
+        "source_digest": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "split_contract": {"type": "object"},
+    "problem": {"type": "object"},
+    "feature_schema": {"type": "object"},
+    "fit": {"type": "object"},
+    "calibration": {"type": "object"},
+    "evaluation": {"type": "object"},
+    "policy": {"type": "object"},
+    "model_digest": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

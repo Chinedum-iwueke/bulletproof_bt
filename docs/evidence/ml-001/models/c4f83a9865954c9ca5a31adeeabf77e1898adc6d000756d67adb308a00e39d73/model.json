@@ -1,0 +1,93 @@
+{
+  "authority": {
+    "alpha": "prohibited",
+    "capital": "prohibited",
+    "orders": "prohibited",
+    "permitted_use": "scientific_estimation_only",
+    "self_promotion": "prohibited"
+  },
+  "calibration": {
+    "intercept": -2.792362695236416e-17,
+    "method": "held_out_platt",
+    "rows": 4,
+    "slope": 1.422276319327256,
+    "uncertainty": "empirical_binary_probability"
+  },
+  "evaluation": {
+    "calibrated_brier": 2.7107073070134167e-06,
+    "calibrated_log_loss": 0.0016477794216552084,
+    "positive_rate": 0.5,
+    "raw_brier": 0.00011950031291527967,
+    "raw_log_loss": 0.010991809068985725,
+    "rows": 4
+  },
+  "feature_schema": {
+    "means": [
+      0.25,
+      0.25
+    ],
+    "names": [
+      "momentum",
+      "liquidity"
+    ],
+    "scales": [
+      1.224744871391589,
+      1.224744871391589
+    ],
+    "support_max": [
+      2.25,
+      2.25
+    ],
+    "support_min": [
+      -1.75,
+      -1.75
+    ]
+  },
+  "fit": {
+    "environment": {
+      "implementation": "cpython",
+      "numpy": "2.2.6",
+      "platform": "Linux-5.15.0-187-generic-x86_64-with-glibc2.35",
+      "python": "3.11.15"
+    },
+    "estimator": "deterministic_logistic_baseline",
+    "intercept": 6.401129626354415e-17,
+    "l2": 0.0001,
+    "learning_rate": 0.05,
+    "seed": 20260825,
+    "steps": 1000,
+    "train_rows": 8,
+    "weights": [
+      2.758801494209142,
+      2.758801494209142
+    ]
+  },
+  "lineage": {
+    "dataset_digest": "24109c27b5ba6b2bc40d8377b0ab3ed94dbce58f9146c55cf1137de2b3ee0a19",
+    "problem_digest": "24ab4a01a083ef9df0707da6efe873b4cec0cba9859a04a723cb45b8f2499691",
+    "representation_digest": "4bd83f2668e9ba9c8103bd1dbd71a0d978a034a5828d8d3a2a1179d4d3a08737",
+    "source_digest": "8d8a9a6b1d66bd336d30b6821171e3e350609607de444a371c36312bd6d79f43",
+    "split_digest": "bd55b13a803ecb753532889022023ec51e7148d49314920d658af106bbeba4a0"
+  },
+  "model_digest": "c4f83a9865954c9ca5a31adeeabf77e1898adc6d000756d67adb308a00e39d73",
+  "policy": {
+    "abstention_threshold": 0.55,
+    "on_invalid": "fail_closed",
+    "on_shift": "abstain",
+    "shift_z_threshold": 5.0
+  },
+  "problem": {
+    "consumer": "research_evaluation",
+    "role": "conditional_probability_estimation",
+    "target": "binary_fixture_outcome"
+  },
+  "schema_version": "ml-model-bundle-v1.0.0",
+  "split_contract": {
+    "calibration_end": "2025-09-30T23:59:59Z",
+    "calibration_start": "2025-07-01T00:00:00Z",
+    "evaluation_end": "2025-12-31T23:59:59Z",
+    "evaluation_start": "2025-10-01T00:00:00Z",
+    "train_end": "2025-06-30T23:59:59Z",
+    "train_start": "2025-01-01T00:00:00Z"
+  }
+}
