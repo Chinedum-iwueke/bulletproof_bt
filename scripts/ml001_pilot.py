@@ -80,9 +80,9 @@ def main() -> int:
     first = fit(source_digest=source_digest)
     reproduced = fit(source_digest=source_digest)
     challenger = fit(source_digest=source_digest, offset=0.25)
-    registry = ModelRegistry(
-        args.output / "model-registry.sqlite", args.output / "models"
-    )
+    registry_database = args.output / "model-registry.sqlite"
+    registry_database.unlink(missing_ok=True)
+    registry = ModelRegistry(registry_database, args.output / "models")
     first_registration = registry.register(family="ml001-fixture-quality", bundle=first)
     challenger_registration = registry.register(
         family="ml001-fixture-quality", bundle=challenger
