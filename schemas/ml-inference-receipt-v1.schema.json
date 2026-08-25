@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://invariance.local/schemas/ml-inference-receipt-v1.schema.json",
+  "title": "ML-001 calibrated inference receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "model_digest", "observed_at", "input_digest", "calibration_method", "probability", "uncertainty", "applicability", "abstained", "abstention_reason", "authority", "receipt_digest"],
+  "properties": {
+    "schema_version": {"const": "ml-inference-receipt-v1.0.0"},
+    "model_digest": {"$ref": "#/$defs/sha256"},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "input_digest": {"$ref": "#/$defs/sha256"},
+    "calibration_method": {"const": "held_out_platt"},
+    "probability": {"type": "number", "minimum": 0, "maximum": 1},
+    "uncertainty": {"type": "number", "minimum": 0, "maximum": 1},
+    "applicability": {"enum": ["supported", "out_of_support"]},
+    "abstained": {"type": "boolean"},
+    "abstention_reason": {"type": ["string", "null"]},
+    "authority": {"const": "research_evidence_only"},
+    "receipt_digest": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}
