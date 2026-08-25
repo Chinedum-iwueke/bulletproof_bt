@@ -111,6 +111,8 @@ def main() -> int:
         {"momentum": 100.0, "liquidity": 100.0},
         observed_at="2026-08-25T12:00:01Z",
     )
+    registry_snapshot = registry.snapshot(family="ml001-fixture-quality")
+    write_json_deterministic(args.output / "registry-snapshot.json", registry_snapshot)
     report = {
         "schema_version": "ml001-pilot-report-v1.0.0",
         "success": first == reproduced
@@ -124,6 +126,7 @@ def main() -> int:
         "supported_inference": supported,
         "shifted_inference": shifted,
         "rollback_restored": first["model_digest"],
+        "registry_snapshot_digest": registry_snapshot["snapshot_digest"],
         "capital_or_order_authority": False,
         "production_resources_touched": False,
     }

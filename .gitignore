@@ -51,3 +51,4 @@ configs/data/
 .DS_Store
 examples/reference_artifacts/full_research_bundle_reference.zip
 examples/reference_artifacts/full_research_bundle_reference/
+docs/evidence/*/model-registry.sqlite

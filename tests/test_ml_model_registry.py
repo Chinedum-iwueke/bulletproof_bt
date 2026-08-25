@@ -188,6 +188,15 @@ def test_registry_is_idempotent_immutable_and_supports_approved_rollback(
     assert registry.state(first["model_digest"]) == "active"
     assert registry.state(second["model_digest"]) == "superseded"
     assert two["version"] == 2
+    snapshot = registry.snapshot(family="fixture-quality")
+    assert [item["event_type"] for item in snapshot["events"]] == [
+        "registered",
+        "registered",
+        "activated",
+        "activated",
+        "activated",
+    ]
+    assert len(snapshot["snapshot_digest"]) == 64
 
 
 def test_inference_rejects_schema_and_clock_drift() -> None:

@@ -500,3 +500,33 @@ class ModelRegistry:
         if row is None:
             raise ModelRegistryError("model is not registered")
         return str(row["state"])
+
+    def snapshot(self, *, family: str) -> dict[str, Any]:
+        """Return a deterministic, secret-free projection of versions and events."""
+        with self._connect() as connection:
+            versions = connection.execute(
+                "SELECT model_digest, version, state FROM model_versions WHERE family = ? ORDER BY version",
+                (family,),
+            ).fetchall()
+            events = connection.execute(
+                """
+                SELECT e.model_digest, e.event_type, e.payload_json
+                FROM model_events e JOIN model_versions v USING(model_digest)
+                WHERE v.family = ? ORDER BY e.id
+                """,
+                (family,),
+            ).fetchall()
+        core = {
+            "schema_version": "ml-registry-snapshot-v1.0.0",
+            "family": family,
+            "versions": [dict(row) for row in versions],
+            "events": [
+                {
+                    "model_digest": row["model_digest"],
+                    "event_type": row["event_type"],
+                    "payload": json.loads(row["payload_json"]),
+                }
+                for row in events
+            ],
+        }
+        return core | {"snapshot_digest": _digest(core)}
