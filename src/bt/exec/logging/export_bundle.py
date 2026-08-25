@@ -19,6 +19,8 @@ DEFAULT_EXPORT_FILES = [
     "incidents.jsonl",
     "session_summary.json",
     "incident_summary.json",
+    "prospective_journal.jsonl",
+    "shadow_replay_report.json",
     "config_used.yaml",
 ]
 
