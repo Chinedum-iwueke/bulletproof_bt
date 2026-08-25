@@ -79,6 +79,7 @@ def main() -> int:
         replay_journal(tampered)
     except JournalError:
         tamper_rejected = True
+    tampered.unlink()
 
     report = {
         "schema_version": "shadow001-pilot-report-v1.0.0",
