@@ -1,0 +1,95 @@
+{
+  "allocated": false,
+  "authority": {
+    "capital": "prohibited",
+    "orders": "prohibited",
+    "permitted_use": "portfolio_candidate_review_only",
+    "portfolio_allocation": "prohibited",
+    "self_promotion": "prohibited"
+  },
+  "candidate_digests": [
+    "f6a10b256a02ce2beba0d9fdf7b080350d32ef064091ecf1b1281f99d402b2cb",
+    "af73d71460f9b3013043630f78c9553898ae255ff00854438b50c4e793bd92c9"
+  ],
+  "candidate_set_digest": "977a22fc1ad5158d6aee634cea4965c3ea054d0a20da67dc0e6b824ae6574489",
+  "constraint_evaluations": [],
+  "decision": "rejected",
+  "dependency": {
+    "candidate_ids": [
+      "carry",
+      "trend"
+    ],
+    "correlation": [
+      [
+        1.0,
+        0.307640681802
+      ],
+      [
+        0.307640681802,
+        1.0
+      ]
+    ],
+    "covariance": [
+      [
+        4.0718644e-05,
+        1.2289831e-05
+      ],
+      [
+        1.2289831e-05,
+        3.919322e-05
+      ]
+    ],
+    "estimator": "sample_covariance_exact_overlap",
+    "joint_dependency": [
+      [
+        1.0,
+        0.4
+      ],
+      [
+        0.4,
+        1.0
+      ]
+    ],
+    "overlap_observations": 60,
+    "shared_dependency": [
+      [
+        1.0,
+        0.4
+      ],
+      [
+        0.4,
+        1.0
+      ]
+    ]
+  },
+  "dossier_digest": "647d5b68fa94e311ffd60d4beb907814a3f9a2075ad1c973add20ca52b4f8ff5",
+  "evaluated_at": "2026-08-25T18:00:00Z",
+  "policy": {
+    "capacity_stress_haircut": 0.5,
+    "cost_stress_multiplier": 3.0,
+    "max_candidate_weight": 0.5,
+    "max_family_weight": 0.6,
+    "max_hhi": 0.42,
+    "max_stress_loss": 0.1,
+    "max_weighted_dependency": 0.85,
+    "min_candidates": 2,
+    "min_overlap_observations": 40,
+    "portfolio_notional": 1500000.0,
+    "schema_version": "portfolio-candidate-policy-v1.0.0"
+  },
+  "policy_digest": "28e0925cf3f4b8854992290d3726d8c567faf0ded8b756c123417f47306f13de",
+  "proposal": {
+    "notionals": {},
+    "weights": {}
+  },
+  "rejection_reasons": [
+    "infeasible_candidate_and_capacity_caps"
+  ],
+  "schema_version": "portfolio-candidate-dossier-v1.0.0",
+  "service": {
+    "determinism": "same canonical inputs produce the same dossier digest",
+    "name": "bulletproof-portfolio-candidate-risk",
+    "version": "1.0.0"
+  },
+  "stress": {}
+}
