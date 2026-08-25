@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -16,6 +17,7 @@ from bt.execution.intrabar import parse_intrabar_spec
 from bt.execution.profile import resolve_execution_profile
 from bt.execution.slippage import SlippageModel
 from bt.instruments.registry import resolve_instrument_spec
+from bt.logging.formatting import write_json_deterministic
 from bt.logging.trades import make_run_id, prepare_run_dir, write_config_used
 from bt.portfolio.portfolio import Portfolio
 from bt.risk.risk_engine import RiskEngine
@@ -50,6 +52,7 @@ from bt.exec.runtime.loop import ReconciliationConfig, RuntimeLoop, RuntimeLoopS
 from bt.exec.runtime.scheduler import HeartbeatScheduler
 from bt.exec.services.execution_router import ExecutionRouter
 from bt.exec.services.kill_switch import KillSwitch
+from bt.exec.services.live_authorization import load_live_authorization
 from bt.exec.services.live_controls import CanaryGuard, load_canary_policy
 from bt.exec.services.portfolio_runner import PortfolioRunner
 from bt.exec.services.risk_runner import RiskRunner
@@ -227,7 +230,6 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
     run_dir = prepare_run_dir(run_root, rid)
     write_config_used(run_dir, config)
 
-    strategy_runner, risk_runner, portfolio_runner, adapter = _build_components(config)
     broker_cfg = config.get("broker") if isinstance(config.get("broker"), dict) else {}
     environment = str(broker_cfg.get("environment", "demo")).lower()
     is_live_mode = mode == "live_broker"
@@ -238,6 +240,26 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
             raise ValueError("exec.mode=paper_broker is demo-only")
     if is_live_mode and environment != "live":
         raise ValueError("exec.mode=live_broker requires broker.environment=live")
+
+    live_authorization_receipt: dict[str, Any] | None = None
+    if is_live_mode:
+        authorization = (
+            config.get("live_authorization")
+            if isinstance(config.get("live_authorization"), dict)
+            else {}
+        )
+        bundle_path = str(authorization.get("bundle_path", "")).strip()
+        if not bundle_path:
+            raise ValueError("live_authorization.bundle_path is required")
+        live_authorization_receipt = load_live_authorization(
+            bundle_path, config, now=datetime.now(tz=UTC)
+        )
+        write_json_deterministic(
+            run_dir / "live_authorization_receipt.json",
+            live_authorization_receipt,
+        )
+
+    strategy_runner, risk_runner, portfolio_runner, adapter = _build_components(config)
 
     checkpoint_ts: pd.Timestamp | None = None
     order_seq = 0
