@@ -1,0 +1,182 @@
+{
+  "allocated": false,
+  "authority": {
+    "capital": "prohibited",
+    "orders": "prohibited",
+    "permitted_use": "portfolio_candidate_review_only",
+    "portfolio_allocation": "prohibited",
+    "self_promotion": "prohibited"
+  },
+  "candidate_digests": [
+    "bbdc3d777ef6ef72028e63222d0367f79a552789f3d17e4d85922309945301c7",
+    "47b3054f6a6aee706816bf23b1506a86f5c2157abfd1444e18113d2592d834db",
+    "30468cdb47e26f315cf360b4eb680240a009effef0c844cbb76af66e592e761a"
+  ],
+  "candidate_set_digest": "43a0bd21e8c1286b13e1c4de9010c19580e543cd9b2402cdfc0bb31b2e43b325",
+  "constraint_evaluations": [
+    {
+      "binding": false,
+      "name": "weights_sum_to_one",
+      "passed": true
+    },
+    {
+      "binding": false,
+      "name": "candidate_concentration",
+      "passed": true
+    },
+    {
+      "binding": false,
+      "name": "family_concentration",
+      "passed": true
+    },
+    {
+      "binding": false,
+      "name": "hhi",
+      "passed": true
+    },
+    {
+      "binding": false,
+      "name": "weighted_dependency",
+      "passed": true
+    },
+    {
+      "binding": true,
+      "name": "stress_loss",
+      "passed": false
+    }
+  ],
+  "decision": "rejected",
+  "dependency": {
+    "candidate_ids": [
+      "carry",
+      "reversion",
+      "trend"
+    ],
+    "correlation": [
+      [
+        1.0,
+        0.253442192253,
+        0.307640681802
+      ],
+      [
+        0.253442192253,
+        1.0,
+        -0.223910545688
+      ],
+      [
+        0.307640681802,
+        -0.223910545688,
+        1.0
+      ]
+    ],
+    "covariance": [
+      [
+        4.0718644e-05,
+        9.732203e-06,
+        1.2289831e-05
+      ],
+      [
+        9.732203e-06,
+        3.6213559e-05,
+        -8.435593e-06
+      ],
+      [
+        1.2289831e-05,
+        -8.435593e-06,
+        3.919322e-05
+      ]
+    ],
+    "estimator": "sample_covariance_exact_overlap",
+    "joint_dependency": [
+      [
+        1.0,
+        0.4,
+        0.4
+      ],
+      [
+        0.4,
+        1.0,
+        0.6
+      ],
+      [
+        0.4,
+        0.6,
+        1.0
+      ]
+    ],
+    "overlap_observations": 60,
+    "shared_dependency": [
+      [
+        1.0,
+        0.4,
+        0.4
+      ],
+      [
+        0.4,
+        1.0,
+        0.6
+      ],
+      [
+        0.4,
+        0.6,
+        1.0
+      ]
+    ]
+  },
+  "dossier_digest": "8737236d213ae7347fc675692654e2183661ce607da6f0ee806f4c9419b78e90",
+  "evaluated_at": "2026-08-25T18:00:00Z",
+  "policy": {
+    "capacity_stress_haircut": 0.5,
+    "cost_stress_multiplier": 3.0,
+    "max_candidate_weight": 0.5,
+    "max_family_weight": 0.6,
+    "max_hhi": 0.42,
+    "max_stress_loss": 0.02,
+    "max_weighted_dependency": 0.85,
+    "min_candidates": 2,
+    "min_overlap_observations": 40,
+    "portfolio_notional": 1500000.0,
+    "schema_version": "portfolio-candidate-policy-v1.0.0"
+  },
+  "policy_digest": "493f4920aaafc6982fa9e89c965b396a7319d83cbe5864b2391960767d9ef665",
+  "proposal": {
+    "family_weights": {
+      "carry": 0.327005254886,
+      "mean-reversion": 0.337358449863,
+      "momentum": 0.335636295251
+    },
+    "hhi": 0.333394883107,
+    "method": "capacity_capped_inverse_volatility_baseline",
+    "notionals": {
+      "carry": 490507.88232900004,
+      "reversion": 506037.6747945,
+      "trend": 503454.4428765
+    },
+    "weighted_dependency": 0.645328825978,
+    "weights": {
+      "carry": 0.327005254886,
+      "reversion": 0.337358449863,
+      "trend": 0.335636295251
+    }
+  },
+  "rejection_reasons": [
+    "constraint_failed:stress_loss"
+  ],
+  "schema_version": "portfolio-candidate-dossier-v1.0.0",
+  "service": {
+    "determinism": "same canonical inputs produce the same dossier digest",
+    "name": "bulletproof-portfolio-candidate-risk",
+    "version": "1.0.0"
+  },
+  "stress": {
+    "baseline_expected_net_return": 0.004400344431,
+    "capacity_haircut": 0.5,
+    "cost_stress_return": 0.002586230117,
+    "scenario_returns": {
+      "correlation_convergence": -0.039003444309,
+      "liquidity_withdrawal": -0.049003444309,
+      "regime_reversal": -0.029003444309
+    },
+    "worst_return": -0.049003444309
+  }
+}

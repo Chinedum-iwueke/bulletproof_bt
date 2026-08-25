@@ -18,4 +18,10 @@ The focused suite covers deterministic reproduction, public-schema validation, e
 
 The retained pilot runs one feasible three-candidate fixture and three rejected paths: missing overlap, infeasible stressed capacity, and a binding loss-stress constraint. All inputs are deterministic fixtures; no production resources or capital-bearing systems are touched.
 
-Evidence is retained under `docs/evidence/port-001/` after the implementation source commit is fixed.
+## Retained result
+
+The implementation source commit is `4eaf836d2b0f9a1de4730b2141847cc7d073e40a`. The complete Bulletproof suite passed with 1,294 tests, 27 declared skips, and two pre-existing pandas warnings. Ruff, MyPy, 26 focused/existing portfolio tests, and the eight-test PORT-001 contract suite passed.
+
+The retained pilot report has digest `98964cfa2fd0afd65208330bf50f6b25c3eff99d9e0faa9723efca0a6843e555`. Its accepted candidate-set digest is `43a0bd21e8c1286b13e1c4de9010c19580e543cd9b2402cdfc0bb31b2e43b325` and its dossier digest is `3ab51287d89cfdc02a04b4ba1014a85a6716b1a55a086da43d74d4867a3378bd`. A second run reproduced all five JSON artifacts byte for byte.
+
+Evidence is retained under `docs/evidence/port-001/`. The fixture proposes no real allocation and touches no production resource.

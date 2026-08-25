@@ -1,0 +1,59 @@
+{
+  "allocated": false,
+  "authority": {
+    "capital": "prohibited",
+    "orders": "prohibited",
+    "permitted_use": "portfolio_candidate_review_only",
+    "portfolio_allocation": "prohibited",
+    "self_promotion": "prohibited"
+  },
+  "candidate_digests": [
+    "0838fdf5a305d32f9a196a87ac2b2e1f18d81f3c47cfaa6dbd19573abe050de3",
+    "47b3054f6a6aee706816bf23b1506a86f5c2157abfd1444e18113d2592d834db",
+    "30468cdb47e26f315cf360b4eb680240a009effef0c844cbb76af66e592e761a"
+  ],
+  "candidate_set_digest": "541f6e8b78c5ed884b9baa3ccfe19fb027f94f2f902dad6a6bab03bb368cf86e",
+  "constraint_evaluations": [],
+  "decision": "rejected",
+  "dependency": {
+    "candidate_ids": [
+      "carry",
+      "reversion",
+      "trend"
+    ],
+    "correlation": [],
+    "covariance": [],
+    "overlap_observations": 0,
+    "shared_dependency": []
+  },
+  "dossier_digest": "f53ede2d9a189d2766a8601461efeb8044c25de3168666503cb16de8d75cfe93",
+  "evaluated_at": "2026-08-25T18:00:00Z",
+  "policy": {
+    "capacity_stress_haircut": 0.5,
+    "cost_stress_multiplier": 3.0,
+    "max_candidate_weight": 0.5,
+    "max_family_weight": 0.6,
+    "max_hhi": 0.42,
+    "max_stress_loss": 0.1,
+    "max_weighted_dependency": 0.85,
+    "min_candidates": 2,
+    "min_overlap_observations": 40,
+    "portfolio_notional": 1500000.0,
+    "schema_version": "portfolio-candidate-policy-v1.0.0"
+  },
+  "policy_digest": "28e0925cf3f4b8854992290d3726d8c567faf0ded8b756c123417f47306f13de",
+  "proposal": {
+    "notionals": {},
+    "weights": {}
+  },
+  "rejection_reasons": [
+    "candidates require identical overlapping observation timestamps"
+  ],
+  "schema_version": "portfolio-candidate-dossier-v1.0.0",
+  "service": {
+    "determinism": "same canonical inputs produce the same dossier digest",
+    "name": "bulletproof-portfolio-candidate-risk",
+    "version": "1.0.0"
+  },
+  "stress": {}
+}
