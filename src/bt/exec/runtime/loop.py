@@ -131,6 +131,10 @@ class RuntimeLoop:
                         open_orders=self.execution_router.current_open_orders(),
                         positions=list(self.portfolio_runner.portfolio.position_book.all_positions().values()),
                         current_price=float(getattr(bar, "close", 0.0) or 0.0),
+                        current_equity=self.portfolio_runner.portfolio.equity,
+                        starting_equity=self.portfolio_runner.portfolio.initial_cash,
+                        gross_notional_usd=self.portfolio_runner.portfolio.gross_notional(),
+                        bar_ts=ts,
                     )
                     if canary_error is not None:
                         if self.kill_switch is not None:

@@ -2,7 +2,7 @@ exec:
   mode: live_broker
   startup_reconcile_required: true
   block_new_orders_until_reconciled: true
-  require_private_stream_ready: false
+  require_private_stream_ready: true
 
 broker:
   venue: binance
@@ -31,6 +31,14 @@ canary:
   max_notional_usd: 100
   max_order_qty: 0.001
   max_orders_per_hour: 10
+  max_gross_notional_usd: 100
+  max_daily_loss_usd: 25
+  max_session_loss_usd: 25
+  max_duration_seconds: 3600
+  max_market_data_age_seconds: 15
+
+live_authorization:
+  bundle_path: /run/secrets/bulletproof-live-authorization.json
 
 reconcile:
   enabled: true
