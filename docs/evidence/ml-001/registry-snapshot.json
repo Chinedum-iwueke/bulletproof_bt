@@ -1,0 +1,59 @@
+{
+  "events": [
+    {
+      "event_type": "registered",
+      "model_digest": "5e3b8c80a494aaedb33dd61c8484fb59ed1f89254dec52724ebae82193e175a3",
+      "payload": {
+        "family": "ml001-fixture-quality",
+        "version": 1
+      }
+    },
+    {
+      "event_type": "registered",
+      "model_digest": "c4f83a9865954c9ca5a31adeeabf77e1898adc6d000756d67adb308a00e39d73",
+      "payload": {
+        "family": "ml001-fixture-quality",
+        "version": 2
+      }
+    },
+    {
+      "event_type": "activated",
+      "model_digest": "5e3b8c80a494aaedb33dd61c8484fb59ed1f89254dec52724ebae82193e175a3",
+      "payload": {
+        "approved_by": "ml001-independent-review",
+        "reason": "baseline evaluation accepted"
+      }
+    },
+    {
+      "event_type": "activated",
+      "model_digest": "c4f83a9865954c9ca5a31adeeabf77e1898adc6d000756d67adb308a00e39d73",
+      "payload": {
+        "approved_by": "ml001-independent-review",
+        "reason": "challenger lifecycle exercise"
+      }
+    },
+    {
+      "event_type": "activated",
+      "model_digest": "5e3b8c80a494aaedb33dd61c8484fb59ed1f89254dec52724ebae82193e175a3",
+      "payload": {
+        "approved_by": "ml001-independent-review",
+        "reason": "rollback: bounded rollback proof"
+      }
+    }
+  ],
+  "family": "ml001-fixture-quality",
+  "schema_version": "ml-registry-snapshot-v1.0.0",
+  "snapshot_digest": "1d738ee40118551ccfbeb3edabfea609b09a4319958fa55a3ee5772d78c3d605",
+  "versions": [
+    {
+      "model_digest": "5e3b8c80a494aaedb33dd61c8484fb59ed1f89254dec52724ebae82193e175a3",
+      "state": "active",
+      "version": 1
+    },
+    {
+      "model_digest": "c4f83a9865954c9ca5a31adeeabf77e1898adc6d000756d67adb308a00e39d73",
+      "state": "superseded",
+      "version": 2
+    }
+  ]
+}

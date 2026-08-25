@@ -23,6 +23,8 @@ python scripts/ml001_pilot.py --output /tmp/ml001-pilot
 
 The pilot is an intentionally small deterministic contract fixture, not an alpha claim or production model. It performs two identical fits, independent held-out calibration/evaluation, registration, challenger activation, rollback, supported inference and shifted-input abstention without touching production resources.
 
+The retained pilot at `docs/evidence/ml-001/` binds source commit `8dbfc4eaf9c2243ed5e035df68a4ae1dff05413d`. The original and reproduced model digest is `5e3b8c80a494aaedb33dd61c8484fb59ed1f89254dec52724ebae82193e175a3`; registry snapshot digest `1d738ee40118551ccfbeb3edabfea609b09a4319958fa55a3ee5772d78c3d605` and report digest `7e3f250ffb54d5d6e194ad07cee4a065b2bb614ac8ce52f708b99f398bb5cd69` record successful calibration, inference, shift abstention, version activation and rollback.
+
 ## Rollback
 
 Stop new registration, retain all bundles/events, and reactivate a previously evaluated content digest through an independently attributed rollback event. No registry state can authorize a strategy, allocation, or order.
