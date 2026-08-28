@@ -1,0 +1,109 @@
+{
+  "capital_or_order_authority": false,
+  "receipt": {
+    "artifact_digest": "3b6e228cab7f2f776cbebaed670e016a78a78a2c715fdd9cc700ccf255af42ce",
+    "authority": {
+      "allocation": false,
+      "capital": false,
+      "orders": false,
+      "promotion": false
+    },
+    "configuration_digest": "ebdb483c6e017583df7cfc750ff8fbbe1d73af41953aef3b0a0ee2cf01e179aa",
+    "dataset_digest": "f73e2f4e9eb13a4fcf41cf84e3c959eb3dffb2cd71a584a0b57d4c03f67880f6",
+    "input_digest": "a577196044e4a02c9fe67bdbd01639e80e2a86702ac0ef492cad9b92311922a7",
+    "milestone": "PORT-002",
+    "producer": "bt.institutional.portfolio.dependency_dossier_receipt",
+    "producer_version": "1.0.0",
+    "receipt_digest": "70f4ff8045875341e8f324cd2a1f44ff22a309d4dc0362c011b5a51a1c5138be",
+    "result": {
+      "claim": "dependency evidence only; no target weights or allocation authority",
+      "clusters": [
+        {
+          "cluster": 1,
+          "members": [
+            "carry",
+            "trend"
+          ],
+          "weight": 1.0
+        }
+      ],
+      "concentration": {
+        "cluster_max_weight": 1.0,
+        "exposure_weights": {
+          "BTC": 1.0,
+          "binance": 0.392762325272,
+          "bybit": 0.607237674728
+        },
+        "limits": {
+          "maximum_cluster_weight": 1.0,
+          "maximum_exposure_weight": 1.0,
+          "maximum_hhi": 0.55
+        }
+      },
+      "diversification": {
+        "diversification_ratio": 2.95990035222,
+        "effective_candidate_count": 1.91204648223,
+        "hhi": 0.522999837762,
+        "portfolio_volatility": 0.000552327331,
+        "weighted_standalone_volatility": 0.00163483386
+      },
+      "evaluated_at": "2026-03-02T00:00:00Z",
+      "failures": [],
+      "pairwise": [
+        {
+          "confidence_interval_95": [
+            -0.940947997727,
+            -0.841718599763
+          ],
+          "correlation": -0.902706149678,
+          "exposure_dependency": 0.333333333333,
+          "joint_dependency": 0.918795282263,
+          "left": "carry",
+          "lower_tail_dependence": 0.0,
+          "observations": 60,
+          "right": "trend",
+          "shared_exposures": [
+            "BTC"
+          ],
+          "state_dependence": {
+            "risk_off": {
+              "confidence_interval_95": [
+                -0.944413022451,
+                -0.771077070825
+              ],
+              "correlation": -0.885390777818,
+              "observations": 30
+            },
+            "risk_on": {
+              "confidence_interval_95": [
+                -0.960970760401,
+                -0.834882004557
+              ],
+              "correlation": -0.918795282263,
+              "observations": 30
+            }
+          }
+        }
+      ],
+      "port001_dossier_digest": "600430e8695bb39f2085f7e78330ad2e8d85c85a3bb23b837214931cafc8510f",
+      "qualified": true,
+      "schema_version": "port002-dependency-dossier-v1.0.0",
+      "stress": {
+        "assumption": "off-diagonal dependence floored at cluster threshold",
+        "name": "correlation_convergence",
+        "portfolio_volatility": 0.001603631924,
+        "volatility_multiplier": 2.903408604835
+      },
+      "window": {
+        "first": "2026-01-01T00:00:00Z",
+        "last": "2026-03-01T00:00:00Z",
+        "overlap": 60
+      }
+    },
+    "result_digest": "3b6e228cab7f2f776cbebaed670e016a78a78a2c715fdd9cc700ccf255af42ce",
+    "schema_version": "bulletproof-producer-receipt-v1.0.0",
+    "source_commit": "63d20597f6a1c55eb5dbd9b88a772a734b2312ad"
+  },
+  "schema_version": "port002-native-pilot-v1.0.0",
+  "success": true
+}
