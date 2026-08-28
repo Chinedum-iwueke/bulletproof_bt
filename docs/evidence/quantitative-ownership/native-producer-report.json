@@ -1,0 +1,668 @@
+{
+  "capital_or_order_authority": false,
+  "milestones": [
+    "DATA-001",
+    "DATA-002",
+    "DATA-003",
+    "DISC-002",
+    "DISC-003",
+    "DISC-004",
+    "DISC-005",
+    "DISC-007",
+    "ML-002",
+    "ML-003",
+    "ML-004",
+    "RL-001",
+    "RL-002",
+    "RISK-001",
+    "RISK-002"
+  ],
+  "receipts": [
+    {
+      "artifact_digest": "81ac9d2a094687753ec97dbe44c9d09126cb211454b1cc21ffa3922698e4a4b4",
+      "authority": {
+        "allocation": false,
+        "capital": false,
+        "orders": false,
+        "promotion": false
+      },
+      "configuration_digest": "ec4a3889f8df94e5d39459fce1abaf83296d0c42fbc352f2b899ff63867b3370",
+      "dataset_digest": "936ed6f949aa04b63e750ed7409e051722fa9aadbe26db73f02206c0db4ea479",
+      "input_digest": "a072fc013e1412ff37c9efc5fdb70d6164224dc0bcab4402c4c6fa7fe5193d78",
+      "milestone": "DATA-001",
+      "producer": "bt.institutional.data.reference_snapshot_receipt",
+      "producer_version": "1.0.0",
+      "receipt_digest": "dc523146018693fb0fb6d83eb3768aa87f8def8ee0e274535e1720ed02e37aba",
+      "result": {
+        "active_listing_count": 1,
+        "as_of": "2026-02-01T00:00:00Z",
+        "record_count": 1,
+        "records": [
+          {
+            "available_at": "2026-01-01T00:00:00Z",
+            "effective_from": "2026-01-01T00:00:00Z",
+            "effective_to": null,
+            "instrument_id": "btc",
+            "listing_id": "btc-perp",
+            "status": "active",
+            "venue_id": "bybit"
+          }
+        ],
+        "schema_version": "data001-reference-snapshot-v1.0.0"
+      },
+      "result_digest": "200a0e19aa881508d27e19fc517ac29dc82deb0e284adc4909a52ca75a282174",
+      "schema_version": "bulletproof-producer-receipt-v1.0.0",
+      "source_commit": "597a7697226b82f4c28f5e152c7df1067babba09"
+    },
+    {
+      "artifact_digest": "489ac2c819f90ccc7ca7130004fabd7b9ae46ac44f38cdc5df9a944f396ba4f0",
+      "authority": {
+        "allocation": false,
+        "capital": false,
+        "orders": false,
+        "promotion": false
+      },
+      "configuration_digest": "a0685d4e5421bf1633f8c62b9a295564969e9e225b40cfa9ef2d5ff085c2acad",
+      "dataset_digest": "7a7da76e919112a74510c412468daddb6abde226a37011e5243a1e700d3cb3b3",
+      "input_digest": "7a7da76e919112a74510c412468daddb6abde226a37011e5243a1e700d3cb3b3",
+      "milestone": "DATA-002",
+      "producer": "bt.institutional.data.market_catalog_receipt",
+      "producer_version": "1.0.0",
+      "receipt_digest": "81c0a5611373a21cd75417e886029e3119d51a65cb68c3d0114f56959c80d664",
+      "result": {
+        "partition_count": 1,
+        "partitions": [
+          {
+            "available_at": "2026-01-31T00:00:01Z",
+            "content_digest": "6d322b1d51100532bc1bf679f5fc8c23d3c1c78a619c5e2ee505a5cf8565d03a",
+            "duplicate_count": 0,
+            "listing_id": "btc-perp",
+            "observed_end": "2026-01-31T00:00:00Z",
+            "observed_start": "2026-01-01T00:00:00Z",
+            "partition_id": "part-1",
+            "row_count": 1200,
+            "venue_id": "bybit"
+          }
+        ],
+        "reference_receipt_digest": "dc523146018693fb0fb6d83eb3768aa87f8def8ee0e274535e1720ed02e37aba",
+        "row_count": 1200,
+        "schema_version": "data002-market-catalog-v1.0.0"
+      },
+      "result_digest": "4ce445ee812cb499db325090d5ec887e41b1aefb28f76580c7747d0d398b3f63",
+      "schema_version": "bulletproof-producer-receipt-v1.0.0",
+      "source_commit": "597a7697226b82f4c28f5e152c7df1067babba09"
+    },
+    {
+      "artifact_digest": "2bcb1ce1f5e94f78ba9f1d115616d24612b55de2eba264ad23bcf934efc46549",
+      "authority": {
+        "allocation": false,
+        "capital": false,
+        "orders": false,
+        "promotion": false
+      },
+      "configuration_digest": "2678a29f1dc746a5041b24e97af55105e55215a55dc56171566f8f0ec521ef89",
+      "dataset_digest": "7a7da76e919112a74510c412468daddb6abde226a37011e5243a1e700d3cb3b3",
+      "input_digest": "fd8451d26db652d12495db53593a2731f92736c5aa0e2d67785a1e6284d04066",
+      "milestone": "DATA-003",
+      "producer": "bt.institutional.data.lake_quality_receipt",
+      "producer_version": "1.0.0",
+      "receipt_digest": "8c8475ba297fbf4cc8dc0ca128a7badf6725993983cdb2d2d0c8a30cd2727d77",
+      "result": {
+        "admissible": true,
+        "catalog_receipt_digest": "81c0a5611373a21cd75417e886029e3119d51a65cb68c3d0114f56959c80d664",
+        "failures": [],
+        "objects": [
+          {
+            "byte_size": 19,
+            "content_digest": "6d322b1d51100532bc1bf679f5fc8c23d3c1c78a619c5e2ee505a5cf8565d03a",
+            "integrity_ok": true,
+            "partition_id": "part-1",
+            "registered_content_digest": "6d322b1d51100532bc1bf679f5fc8c23d3c1c78a619c5e2ee505a5cf8565d03a"
+          }
+        ],
+        "schema_version": "data003-lake-quality-v1.0.0"
+      },
+      "result_digest": "9f1527f73b7f422a14a340adbce69c3d0bdeaf5f533b0c67eab865adcd7fd2f7",
+      "schema_version": "bulletproof-producer-receipt-v1.0.0",
+      "source_commit": "597a7697226b82f4c28f5e152c7df1067babba09"
+    },
+    {
+      "artifact_digest": "03277305ce1972cc0d63c050cb9cb42e3888bec8cd62586fb4ffc0988f58a516",
+      "authority": {
+        "allocation": false,
+        "capital": false,
+        "orders": false,
+        "promotion": false
+      },
+      "configuration_digest": "06ed0821793361fc5ebe04e1ff2e2e1b67f67bba53546dc2e2cedf67a4812c87",
+      "dataset_digest": "7a7da76e919112a74510c412468daddb6abde226a37011e5243a1e700d3cb3b3",
+      "input_digest": "0ec85346051651fad4e5651478574416040b351dea9d5aa78622c7d04b464f36",
+      "milestone": "DISC-002",
+      "producer": "bt.institutional.discovery.opportunity_map_receipt",
+      "producer_version": "1.0.0",
+      "receipt_digest": "bdb6fbb12c461f34bde448a9efaba7245777069463ee0e160d7f57bb2407ec2a",
+      "result": {
+        "baseline_mean": 0.0,
+        "candidate_mean": 0.03,
+        "cost_mean": 0.005,
+        "incremental_net_effect": 0.024999999999999998,
+        "lower_95": 0.024999999999999998,
+        "observations": 40,
+        "qualified": true,
+        "schema_version": "disc002-opportunity-map-v1.0.0",
+        "standard_error": 0.0,
+        "upper_95": 0.024999999999999998
+      },
+      "result_digest": "03277305ce1972cc0d63c050cb9cb42e3888bec8cd62586fb4ffc0988f58a516",
+      "schema_version": "bulletproof-producer-receipt-v1.0.0",
+      "source_commit": "597a7697226b82f4c28f5e152c7df1067babba09"
+    },
+    {
+      "artifact_digest": "0cac35bac10ddb926e3a3b1c357980d00a5f35429ccbf15683a77ed461104eca",
+      "authority": {
+        "allocation": false,
+        "capital": false,
+        "orders": false,
+        "promotion": false
+      },
+      "configuration_digest": "e45d37c2ab143f243b5315d94ab748ad6f7f27e1d58952fc1f443e96d6f0128f",
+      "dataset_digest": "7a7da76e919112a74510c412468daddb6abde226a37011e5243a1e700d3cb3b3",
+      "input_digest": "b34f41ec7b6dfbd95f2dd78bfc4586fce3ef6e57feeae382c45862e2345e0dc2",
+      "milestone": "DISC-003",
+      "producer": "bt.institutional.discovery.factor_program_receipt",
+      "producer_version": "1.0.0",
+      "receipt_digest": "ee7f29b9eb24ade7827777d72335337b57310ca43cd287c89b979ac1810c23be",
+      "result": {
+        "factors": {
+          "momentum": {
+            "expression": {
+              "effective_lag": 1,
+              "field": "return",
+              "op": "field"
+            },
+            "unit": "dimensionless"
+          }
+        },
+        "schema_version": "disc003-factor-program-v1.0.0",
+        "trial_count": 2,
+        "trials": [
+          {
+            "ordinal": 1,
+            "parameters": {
+              "window": 2
+            },
+            "trial_digest": "b7696729cfe7226072d030aa53489c1a7566923a6b640618eca59058b01ff49b"
+          },
+          {
+            "ordinal": 2,
+            "parameters": {
+              "window": 4
+            },
+            "trial_digest": "9855eb873723b4da2148eab40416caa8efe0174e896f628a82ab4a08d1cd94fe"
+          }
+        ]
+      },
+      "result_digest": "0cac35bac10ddb926e3a3b1c357980d00a5f35429ccbf15683a77ed461104eca",
+      "schema_version": "bulletproof-producer-receipt-v1.0.0",
+      "source_commit": "597a7697226b82f4c28f5e152c7df1067babba09"
+    },
+    {
+      "artifact_digest": "45dd6d9dbd942d331229878f9b31c1be3b827b7c2e309acd2025086e4bee85b2",
+      "authority": {
+        "allocation": false,
+        "capital": false,
+        "orders": false,
+        "promotion": false
+      },
+      "configuration_digest": "da309a20dd6acab99875a14fbd75760546d2b7b30fa5dee06b76bf3f46d0a5c2",
+      "dataset_digest": "7a7da76e919112a74510c412468daddb6abde226a37011e5243a1e700d3cb3b3",
+      "input_digest": "5300e2e9dfa7d4558452604e4c12ddf51a3b1199a418536772e87ac63251b0fd",
+      "milestone": "DISC-004",
+      "producer": "bt.institutional.discovery.search_proposal_receipt",
+      "producer_version": "1.0.0",
+      "receipt_digest": "899d4f547c367329a9c591971914edfc1fac48fba031dc16cef9ee43a8e77cb2",
+      "result": {
+        "budget": 2,
+        "history_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "method": "random",
+        "program_receipt_digest": "ee7f29b9eb24ade7827777d72335337b57310ca43cd287c89b979ac1810c23be",
+        "proposals": [
+          {
+            "ordinal": 1,
+            "parameters": {
+              "window": 2
+            },
+            "trial_digest": "b7696729cfe7226072d030aa53489c1a7566923a6b640618eca59058b01ff49b"
+          },
+          {
+            "ordinal": 2,
+            "parameters": {
+              "window": 4
+            },
+            "trial_digest": "9855eb873723b4da2148eab40416caa8efe0174e896f628a82ab4a08d1cd94fe"
+          }
+        ],
+        "schema_version": "disc004-search-proposal-v1.0.0",
+        "seed": 20260828
+      },
+      "result_digest": "c41172ad7d5647601f1cfd10afe36d7294d4fe8d3dc0cd7a1de2f50f583564ef",
+      "schema_version": "bulletproof-producer-receipt-v1.0.0",
+      "source_commit": "597a7697226b82f4c28f5e152c7df1067babba09"
+    },
+    {
+      "artifact_digest": "f780df6831f1b5008375a52741358467e42d62f1157ffb0f71b7e03f37694f56",
+      "authority": {
+        "allocation": false,
+        "capital": false,
+        "orders": false,
+        "promotion": false
+      },
+      "configuration_digest": "c39f68e0aba28c7ef02d8a5f76f89b52be9a8f72549e3c69c07b3eb6b09530e5",
+      "dataset_digest": "7a7da76e919112a74510c412468daddb6abde226a37011e5243a1e700d3cb3b3",
+      "input_digest": "77d094ec39815116c470da56ce1ca0571fc2d58d32e2d0cc407fe85ddc379d9f",
+      "milestone": "DISC-005",
+      "producer": "bt.institutional.discovery.symbolic_candidate_receipt",
+      "producer_version": "1.0.0",
+      "receipt_digest": "e9653713b5bcff246e7e0c8c9c7672f95c1083bedc7e48e6242ce354c86db3b3",
+      "result": {
+        "accepted": [
+          {
+            "candidate": {
+              "expression": "lagged_return_plus_constant",
+              "operators": [
+                "add"
+              ]
+            },
+            "candidate_digest": "5c4eede3c7abefc12f52e15b547ac9b7bd8fb7005bd99e2a17b5c9e71bda451a",
+            "reason": null
+          }
+        ],
+        "base_program_receipt_digest": "ee7f29b9eb24ade7827777d72335337b57310ca43cd287c89b979ac1810c23be",
+        "rejected": [
+          {
+            "candidate": {
+              "expression": "forbidden",
+              "operators": [
+                "network"
+              ]
+            },
+            "candidate_digest": "7cc0bc99664b1f74871ed6f813c30a92ef604ccff6449524c50fc50560ddbb80",
+            "reason": "operator_not_allowed"
+          }
+        ],
+        "schema_version": "disc005-symbolic-candidates-v1.0.0"
+      },
+      "result_digest": "f780df6831f1b5008375a52741358467e42d62f1157ffb0f71b7e03f37694f56",
+      "schema_version": "bulletproof-producer-receipt-v1.0.0",
+      "source_commit": "597a7697226b82f4c28f5e152c7df1067babba09"
+    },
+    {
+      "artifact_digest": "cf7f5c19553b7a6943a6b96493a3f15857621ff24c27b8666d5aa381f322cb1b",
+      "authority": {
+        "allocation": false,
+        "capital": false,
+        "orders": false,
+        "promotion": false
+      },
+      "configuration_digest": "e7fcc53de2b14105e7e7f5b943b3eb32811c5ac79ad70f10fee4de31137921d2",
+      "dataset_digest": "7a7da76e919112a74510c412468daddb6abde226a37011e5243a1e700d3cb3b3",
+      "input_digest": "dc0e825a4ee2d2da7d2d7895b245a7e8eab219106285967d216acc8353eb21ed",
+      "milestone": "DISC-007",
+      "producer": "bt.institutional.discovery.selection_audit_receipt",
+      "producer_version": "1.0.0",
+      "receipt_digest": "81ff00625961a7fafe5dd7fe2d07c538d2ad89d6a613ccef18612af59f8ed3f0",
+      "result": {
+        "bh_discoveries": [
+          "b7696729cfe7226072d030aa53489c1a7566923a6b640618eca59058b01ff49b"
+        ],
+        "bonferroni_p_value": 0.02,
+        "family_size": 2,
+        "nominal_p_value": 0.01,
+        "pbo": 0.5,
+        "schema_version": "disc007-selection-audit-v1.0.0",
+        "selection_risk_detected": false,
+        "winner_digest": "b7696729cfe7226072d030aa53489c1a7566923a6b640618eca59058b01ff49b"
+      },
+      "result_digest": "cf7f5c19553b7a6943a6b96493a3f15857621ff24c27b8666d5aa381f322cb1b",
+      "schema_version": "bulletproof-producer-receipt-v1.0.0",
+      "source_commit": "597a7697226b82f4c28f5e152c7df1067babba09"
+    },
+    {
+      "artifact_digest": "4c25dfc059642d627b95d3bcb98865b878e410485515cb08225d2c93ef31cd10",
+      "authority": {
+        "allocation": false,
+        "capital": false,
+        "orders": false,
+        "promotion": false
+      },
+      "configuration_digest": "68335192df7734943a68963e652f31209746cc84267fe1e7ae9ff351dd3370b3",
+      "dataset_digest": "7a7da76e919112a74510c412468daddb6abde226a37011e5243a1e700d3cb3b3",
+      "input_digest": "f1640a9d28da50e3944c1e5a5eb7b79049fe29267cd31f91526c165726c6f5b9",
+      "milestone": "ML-002",
+      "producer": "bt.institutional.ml.causal_materialization_receipt",
+      "producer_version": "1.0.0",
+      "receipt_digest": "1a5478a231fc916af2386bf57b1b13d4d85c39b52a62193fe15358959f31da4e",
+      "result": {
+        "columns": 2,
+        "embargo": 2,
+        "factor_receipt_digest": "ee7f29b9eb24ade7827777d72335337b57310ca43cd287c89b979ac1810c23be",
+        "feature_lags": [
+          1,
+          2
+        ],
+        "features_digest": "59f98feaa1f1e4b1fe13215c84d2c1f7633ff78169e1b9fa6a9e89f47dc29c46",
+        "folds": [
+          {
+            "test_end": 22,
+            "test_rows": 4,
+            "test_start": 18,
+            "train_end": 15,
+            "train_rows": 15,
+            "train_start": 0
+          },
+          {
+            "test_end": 30,
+            "test_rows": 5,
+            "test_start": 25,
+            "train_end": 22,
+            "train_rows": 22,
+            "train_start": 0
+          }
+        ],
+        "labels_digest": "0731b6d5c65f7ceb7a36ce6e98bbed6783835a2ac70e8c20a5a5e052cf0df440",
+        "purge": 2,
+        "rows": 40,
+        "schema_version": "ml002-causal-materialization-v1.0.0",
+        "timestamps_digest": "b23aa6d1f8d34eaae328a4a670b0972d16aefd7d99c901a13aac8121056e38a8"
+      },
+      "result_digest": "4c25dfc059642d627b95d3bcb98865b878e410485515cb08225d2c93ef31cd10",
+      "schema_version": "bulletproof-producer-receipt-v1.0.0",
+      "source_commit": "597a7697226b82f4c28f5e152c7df1067babba09"
+    },
+    {
+      "artifact_digest": "195dd350bab8237e1e4a86227557d5a659efda4185cfe6130f9653b856fb3edf",
+      "authority": {
+        "allocation": false,
+        "capital": false,
+        "orders": false,
+        "promotion": false
+      },
+      "configuration_digest": "593c139125dad18d32840a8c3b2a33ec1b5928cf7e96028b79dc2427dc9d392a",
+      "dataset_digest": "7a7da76e919112a74510c412468daddb6abde226a37011e5243a1e700d3cb3b3",
+      "input_digest": "d7458694d156f6c6952234f0b58271403eeca180362fcad54d7fdf75f7b8b29e",
+      "milestone": "ML-003",
+      "producer": "bt.institutional.ml.model_family_evaluation_receipt",
+      "producer_version": "1.0.0",
+      "receipt_digest": "033140f7f916df27df552c1d96b5efa9d58acd86a80eebcb3dd84ede3af8546a",
+      "result": {
+        "materialization_receipt_digest": "1a5478a231fc916af2386bf57b1b13d4d85c39b52a62193fe15358959f31da4e",
+        "minimum_increment": 0.1,
+        "qualified_families": [
+          "candidate"
+        ],
+        "schema_version": "ml003-model-family-evaluation-v1.0.0",
+        "scorecards": {
+          "candidate": {
+            "overall": {
+              "accuracy": 1.0,
+              "brier": 0.039999999999999994,
+              "log_loss": 0.2231435513142097
+            },
+            "prediction_digest": "8dac3f5d7c15bde86bc575952fbc4232e63edd29b80b58d114ad8d679b87a25f",
+            "regimes": {
+              "calm": {
+                "accuracy": 1.0,
+                "brier": 0.04,
+                "log_loss": 0.2231435513142097
+              },
+              "volatile": {
+                "accuracy": 1.0,
+                "brier": 0.04,
+                "log_loss": 0.2231435513142097
+              }
+            }
+          },
+          "linear_baseline": {
+            "overall": {
+              "accuracy": 0.5,
+              "brier": 0.25,
+              "log_loss": 0.6931471805599453
+            },
+            "prediction_digest": "a67eab51a3f5f562587f8fa4c07b59a035575bac7e68670b08196a3be040b64b",
+            "regimes": {
+              "calm": {
+                "accuracy": 0.5,
+                "brier": 0.25,
+                "log_loss": 0.6931471805599453
+              },
+              "volatile": {
+                "accuracy": 0.5,
+                "brier": 0.25,
+                "log_loss": 0.6931471805599453
+              }
+            }
+          }
+        },
+        "strongest_baseline_accuracy": 0.5
+      },
+      "result_digest": "656c7bbf89230aead6f3f7f847b58c5d3c40ea5d5ef46adebcb8cbb2e2fb261f",
+      "schema_version": "bulletproof-producer-receipt-v1.0.0",
+      "source_commit": "597a7697226b82f4c28f5e152c7df1067babba09"
+    },
+    {
+      "artifact_digest": "3cd41aafc2cfabb437c2c9030fd92d0eabf34544131f358cdf00986c10814137",
+      "authority": {
+        "allocation": false,
+        "capital": false,
+        "orders": false,
+        "promotion": false
+      },
+      "configuration_digest": "8446bcf43a6a98a391a498573e0caf880bba718d9680f8113965de6c8d08b30f",
+      "dataset_digest": "7a7da76e919112a74510c412468daddb6abde226a37011e5243a1e700d3cb3b3",
+      "input_digest": "da9d26e7ac2bce87dc8c502625c4e6b83249164584f6bbaa8c16ad96af80538d",
+      "milestone": "ML-004",
+      "producer": "bt.institutional.ml.calibration_receipt",
+      "producer_version": "1.0.0",
+      "receipt_digest": "8eaebbeec360ba365810a31148faf8578861545629b306ed5ea86b4f034f4237",
+      "result": {
+        "abstention_fraction": 0.0,
+        "abstention_threshold": 0.6,
+        "ece": 0.2,
+        "evaluation_receipt_digest": "033140f7f916df27df552c1d96b5efa9d58acd86a80eebcb3dd84ede3af8546a",
+        "family": "candidate",
+        "maximum_ece": 0.25,
+        "qualified": true,
+        "reliability": [
+          {
+            "confidence": 0.20000000000000004,
+            "count": 20,
+            "lower": 0.2,
+            "observed": 0.0,
+            "upper": 0.4
+          },
+          {
+            "confidence": 0.8000000000000002,
+            "count": 20,
+            "lower": 0.8,
+            "observed": 1.0,
+            "upper": 1.0
+          }
+        ],
+        "schema_version": "ml004-calibration-abstention-v1.0.0"
+      },
+      "result_digest": "3cd41aafc2cfabb437c2c9030fd92d0eabf34544131f358cdf00986c10814137",
+      "schema_version": "bulletproof-producer-receipt-v1.0.0",
+      "source_commit": "597a7697226b82f4c28f5e152c7df1067babba09"
+    },
+    {
+      "artifact_digest": "d882bfdbe84b4b9f9b8f89d43a30c75275de24f787558cc2cea7887abc2e4f96",
+      "authority": {
+        "allocation": false,
+        "capital": false,
+        "orders": false,
+        "promotion": false
+      },
+      "configuration_digest": "bc2fa29e1b6fd405dc459246ef1a4a587a1e24d74a87cc74c5b610662ec7978a",
+      "dataset_digest": "7a7da76e919112a74510c412468daddb6abde226a37011e5243a1e700d3cb3b3",
+      "input_digest": "c9ecf9ebcd2cd88d9da94946c88c70c79922e3b96d4473c67d55c37a99958e9c",
+      "milestone": "RL-001",
+      "producer": "bt.institutional.rl.offline_dataset_receipt",
+      "producer_version": "1.0.0",
+      "receipt_digest": "052973a108a076a869af9e50d9f2856e3a05dc8e4cfcb198f6599ce034e35a2a",
+      "result": {
+        "action_counts": {
+          "hold": 20,
+          "trade": 20
+        },
+        "episode_count": 10,
+        "minimum_action_support": 0.5,
+        "qualified": true,
+        "schema_version": "rl001-offline-dataset-v1.0.0",
+        "shadow_receipt_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "transition_count": 40,
+        "transition_digest": "c9ecf9ebcd2cd88d9da94946c88c70c79922e3b96d4473c67d55c37a99958e9c",
+        "unsupported_actions": []
+      },
+      "result_digest": "d882bfdbe84b4b9f9b8f89d43a30c75275de24f787558cc2cea7887abc2e4f96",
+      "schema_version": "bulletproof-producer-receipt-v1.0.0",
+      "source_commit": "597a7697226b82f4c28f5e152c7df1067babba09"
+    },
+    {
+      "artifact_digest": "c476bc3476b50b360921d055579c2ed01630842b32be30a7e4ea621ed61467ba",
+      "authority": {
+        "allocation": false,
+        "capital": false,
+        "orders": false,
+        "promotion": false
+      },
+      "configuration_digest": "829a094e040b55dce09d888aef8710de6cb11be78e725331fded9ab993978806",
+      "dataset_digest": "7a7da76e919112a74510c412468daddb6abde226a37011e5243a1e700d3cb3b3",
+      "input_digest": "dcf10fe1334d8f806932099f875ed7cf019edeb4bf38e56f3687079f05747be4",
+      "milestone": "RL-002",
+      "producer": "bt.institutional.rl.off_policy_evaluation_receipt",
+      "producer_version": "1.0.0",
+      "receipt_digest": "8e188b5b151b455152e0a10ac0ba272d7b0e24e32564a46eca750b84204035cd",
+      "result": {
+        "dataset_receipt_digest": "052973a108a076a869af9e50d9f2856e3a05dc8e4cfcb198f6599ce034e35a2a",
+        "effective_sample_size": 40.0,
+        "estimates": {
+          "direct": 0.018,
+          "doubly_robust": 0.02,
+          "ips": 0.02,
+          "snips": 0.02
+        },
+        "estimator_disagreement_limit": 0.01,
+        "failures": [],
+        "lower_bounds": {
+          "direct": 0.018,
+          "doubly_robust": 0.02,
+          "ips": 0.02,
+          "snips": 0.02
+        },
+        "maximum_importance_weight": 1.0,
+        "schema_version": "rl002-off-policy-evaluation-v1.0.0",
+        "shadow_eligible": true,
+        "standard_error": 0.0
+      },
+      "result_digest": "c476bc3476b50b360921d055579c2ed01630842b32be30a7e4ea621ed61467ba",
+      "schema_version": "bulletproof-producer-receipt-v1.0.0",
+      "source_commit": "597a7697226b82f4c28f5e152c7df1067babba09"
+    },
+    {
+      "artifact_digest": "8cdc817f4d3b65c854f9b4be9e8f34309b70084e5e207cc29421f020cb93873d",
+      "authority": {
+        "allocation": false,
+        "capital": false,
+        "orders": false,
+        "promotion": false
+      },
+      "configuration_digest": "690d728e83acd367b7cb7539a0bfeb70ff085d21d28b701bae0bee7294d01a82",
+      "dataset_digest": "7a7da76e919112a74510c412468daddb6abde226a37011e5243a1e700d3cb3b3",
+      "input_digest": "3e742e27b552329581c2042f48ac4c1c3d7a034ecee510d7db886b222384e2b7",
+      "milestone": "RISK-001",
+      "producer": "bt.institutional.risk.stress_dossier_receipt",
+      "producer_version": "1.0.0",
+      "receipt_digest": "b1961b71a15486b8f10e563fc0d2be1b7d60ffd29b2b9d425cb4f5d44b4d44c9",
+      "result": {
+        "admissible": true,
+        "expected_shortfall": 0.0010000000000000002,
+        "failures": [],
+        "maximum_drawdown": 0.001000000000000112,
+        "maximum_drawdown_duration": 1,
+        "run_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "scenarios": {
+          "correlation_break": {
+            "breached": false,
+            "first_breaching_step": null,
+            "maximum_loss": 0.02
+          },
+          "liquidity_freeze": {
+            "breached": false,
+            "first_breaching_step": null,
+            "maximum_loss": 0.02
+          },
+          "model_failure": {
+            "breached": false,
+            "first_breaching_step": null,
+            "maximum_loss": 0.02
+          },
+          "price_gap": {
+            "breached": false,
+            "first_breaching_step": null,
+            "maximum_loss": 0.02
+          },
+          "prolonged_drawdown": {
+            "breached": false,
+            "first_breaching_step": null,
+            "maximum_loss": 0.02
+          }
+        },
+        "schema_version": "risk001-stress-dossier-v1.0.0",
+        "tail_probability": 0.1,
+        "var": 0.001
+      },
+      "result_digest": "8cdc817f4d3b65c854f9b4be9e8f34309b70084e5e207cc29421f020cb93873d",
+      "schema_version": "bulletproof-producer-receipt-v1.0.0",
+      "source_commit": "597a7697226b82f4c28f5e152c7df1067babba09"
+    },
+    {
+      "artifact_digest": "524143f3d3eac6957fbf5cb7431b924369471f6728c52d539e31eb4200525977",
+      "authority": {
+        "allocation": false,
+        "capital": false,
+        "orders": false,
+        "promotion": false
+      },
+      "configuration_digest": "78311921b8526dc4249e24403c7135033c3ecb96601764197fd6fbb3390be848",
+      "dataset_digest": "7a7da76e919112a74510c412468daddb6abde226a37011e5243a1e700d3cb3b3",
+      "input_digest": "8dc9f73e5cb067a4c5d079c46ed1be8ddcc9b11e50b5c5f36ea5fa3898ceb7a5",
+      "milestone": "RISK-002",
+      "producer": "bt.institutional.risk.venue_rule_receipt",
+      "producer_version": "1.0.0",
+      "receipt_digest": "ff5da38f35c66bd1bca2dbc793618cad6cf181a261bcb38f08e09c0de8897f06",
+      "result": {
+        "allowed": true,
+        "effective_funding_rate": "0.0002",
+        "equity_after_funding_and_fees": "30970.0000",
+        "failures": [],
+        "initial_margin_required": "25000.000",
+        "liquidation_buffer": "30470.00000",
+        "maintenance_margin": "500.00000",
+        "mark_deviation": "0",
+        "notional": "50000.000",
+        "position_state_digest": "5bee9c0141b4b7c899a1fe7599b7485e863828797437bc18961acd653cdd0a21",
+        "rule_pack_digest": "7d5019f0bb64fcf4eca31a2a78ec35157ebbd409662c4ff5136b3656fe9c3d4b",
+        "schema_version": "risk002-venue-rule-receipt-v1.0.0",
+        "selected_margin_tier": 1,
+        "stress_receipt_digest": "b1961b71a15486b8f10e563fc0d2be1b7d60ffd29b2b9d425cb4f5d44b4d44c9"
+      },
+      "result_digest": "524143f3d3eac6957fbf5cb7431b924369471f6728c52d539e31eb4200525977",
+      "schema_version": "bulletproof-producer-receipt-v1.0.0",
+      "source_commit": "597a7697226b82f4c28f5e152c7df1067babba09"
+    }
+  ],
+  "report_digest": "5fc1b293fcc0e1cebcdc29fa7fe36b36d0f8ee99a081f650651ce3dae054bb2e",
+  "schema_version": "quantitative-native-producer-pilot-v1.0.0",
+  "source_commit": "597a7697226b82f4c28f5e152c7df1067babba09",
+  "success": true
+}
