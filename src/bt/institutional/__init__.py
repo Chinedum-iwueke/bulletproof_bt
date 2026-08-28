@@ -11,6 +11,7 @@ from .execution import (
     execution_journal_receipt,
     verify_event,
 )
+from .microstructure import MicrostructureStateError, microstructure_state, microstructure_state_receipt
 
 __all__ = [
     "PortfolioDependencyError",
@@ -24,6 +25,9 @@ __all__ = [
     "canonical_event",
     "execution_journal_receipt",
     "verify_event",
+    "MicrostructureStateError",
+    "microstructure_state",
+    "microstructure_state_receipt",
     "dependency_dossier_receipt",
     "verify_receipt",
 ]
