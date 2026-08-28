@@ -1,0 +1,128 @@
+{
+  "capital_or_order_authority": false,
+  "receipt": {
+    "artifact_digest": "e01ebec3d7e93019992dea02faa6a7d09187374abf0896684d1c9206aca30472",
+    "authority": {
+      "allocation": false,
+      "capital": false,
+      "orders": false,
+      "promotion": false
+    },
+    "configuration_digest": "dd4d9b5a8ae2ea589973c404436538855201d7fd23131b431b90fd87d14094bd",
+    "dataset_digest": "ef72c54266bd42ac3a7822aff698b216aaf51a8a9dc09d9278d510eda3602a71",
+    "input_digest": "04f83e9623f98d80ca993ae609b9825f17d2ba2770f7379f757aa4eb338ea0d8",
+    "milestone": "PORT-003",
+    "producer": "bt.institutional.construction.construction_dossier_receipt",
+    "producer_version": "1.0.0",
+    "receipt_digest": "c196ca8f43a1c67c49284b111df44083ba8e076cdb75097b90844ebc5e414825",
+    "result": {
+      "benchmark_ladder": {
+        "equal_weight": {
+          "metrics": {
+            "expected_return": 0.053333333333,
+            "hhi": 0.333333333333,
+            "return_to_risk": 0.350150487626,
+            "volatility": 0.152315462117
+          },
+          "robust_objective": -0.0403,
+          "weights": {
+            "carry": 0.333333333333,
+            "trend": 0.333333333333,
+            "value": 0.333333333333
+          }
+        },
+        "risk_budget": {
+          "metrics": {
+            "expected_return": 0.050206108825,
+            "hhi": 0.342182559822,
+            "return_to_risk": 0.343950239078,
+            "volatility": 0.145969105762
+          },
+          "robust_objective": -0.035836886883,
+          "weights": {
+            "carry": 0.390458161854,
+            "trend": 0.260305441236,
+            "value": 0.34923639691
+          }
+        }
+      },
+      "candidate_ids": [
+        "carry",
+        "trend",
+        "value"
+      ],
+      "claim": "construction evidence only; no allocation, capital or order authority",
+      "covariance": {
+        "input_digest": "4bf986f34751bc0938f1e598a925049f61ceb95a1ba89ab29a33e07a84970350",
+        "minimum_eigenvalue": 0.038893725382,
+        "shrinkage": 0.2
+      },
+      "dependency_receipt_digest": "387501bd680ed2603eb426530a961cf4b41ccc538edef77bd04c69627b07c39a",
+      "failures": [],
+      "optimized": {
+        "deterministic_replay": true,
+        "metrics": {
+          "expected_return": 0.04885,
+          "hhi": 0.3518,
+          "return_to_risk": 0.338384043559,
+          "volatility": 0.144362599035
+        },
+        "robust_objective": -0.03531974,
+        "sensitivity_l1": 0.008640535079,
+        "turnover_l1": 0.2,
+        "weights": {
+          "carry": 0.42,
+          "trend": 0.23,
+          "value": 0.35
+        }
+      },
+      "risk_receipt_digest": "225721ba00d969529423966b2a5db4489488d7cf5f63928782782edd62519748",
+      "rounding": {
+        "sum": 1.0,
+        "weight_increment": 0.01
+      },
+      "schema_version": "port003-construction-dossier-v1.0.0",
+      "selection": {
+        "fallback_used": false,
+        "method": "robust_optimizer",
+        "metrics": {
+          "expected_return": 0.04885,
+          "hhi": 0.3518,
+          "return_to_risk": 0.338384043559,
+          "volatility": 0.144362599035
+        },
+        "weights": {
+          "carry": 0.42,
+          "trend": 0.23,
+          "value": 0.35
+        }
+      },
+      "solver": {
+        "covariance_shrinkage": 0.2,
+        "iterations": 500,
+        "name": "projected-gradient-robust-mean-variance",
+        "risk_aversion": 4.0,
+        "step_size": 0.5,
+        "uncertainty_penalty": 0.25,
+        "version": "1.0.0"
+      },
+      "solver_digest": "4757287e9232b7ebf2ebc7a3fa7c99927164e848e45bff43cc7726cbed54ebcd",
+      "valid": true
+    },
+    "result_digest": "e01ebec3d7e93019992dea02faa6a7d09187374abf0896684d1c9206aca30472",
+    "schema_version": "bulletproof-producer-receipt-v1.0.0",
+    "source_commit": "d4080a94149b3a36642562feda853d9403887a87"
+  },
+  "schema_version": "port003-native-pilot-v1.0.0",
+  "solver_specification": {
+    "covariance_shrinkage": 0.2,
+    "iterations": 500,
+    "name": "projected-gradient-robust-mean-variance",
+    "risk_aversion": 4.0,
+    "step_size": 0.5,
+    "uncertainty_penalty": 0.25,
+    "version": "1.0.0"
+  },
+  "solver_specification_digest": "4757287e9232b7ebf2ebc7a3fa7c99927164e848e45bff43cc7726cbed54ebcd",
+  "success": true
+}
