@@ -3,6 +3,14 @@
 from .receipt import ProducerReceipt, build_receipt, verify_receipt
 from .portfolio import PortfolioDependencyError, dependency_dossier_receipt
 from .construction import PortfolioConstructionError, construction_dossier_receipt
+from .execution import (
+    CanonicalEventError,
+    CanonicalEventJournal,
+    CanonicalExecutionEvent,
+    canonical_event,
+    execution_journal_receipt,
+    verify_event,
+)
 
 __all__ = [
     "PortfolioDependencyError",
@@ -10,6 +18,12 @@ __all__ = [
     "ProducerReceipt",
     "build_receipt",
     "construction_dossier_receipt",
+    "CanonicalEventError",
+    "CanonicalEventJournal",
+    "CanonicalExecutionEvent",
+    "canonical_event",
+    "execution_journal_receipt",
+    "verify_event",
     "dependency_dossier_receipt",
     "verify_receipt",
 ]
