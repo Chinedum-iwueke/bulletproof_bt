@@ -1,0 +1,44 @@
+{
+  "capital_or_order_authority": false,
+  "event_schema_specification": {
+    "schema_version": "canonical-execution-event-v1.0.0"
+  },
+  "event_schema_specification_digest": "b3355f730326b7bb355a32b3b341145f30844587e29dcb62447af7bad8a9c6f6",
+  "receipt": {
+    "artifact_digest": "d8d3eed44e173281b9cc09a11d643e81f5ac5945c24b31a1efd47c170e6ea397",
+    "authority": {
+      "allocation": false,
+      "capital": false,
+      "orders": false,
+      "promotion": false
+    },
+    "configuration_digest": "801dcef7970d4836d8796830a5f0abe0ef8141ed232d210d3714b05f076b482e",
+    "dataset_digest": "4f0824ed7d974add6b2488e2783d092ac25d640b433ca334b654bfba961e132f",
+    "input_digest": "2328f4171cc2d7dc69df2e021ad477b73abc2319fac0ef7c39640a408683fce7",
+    "milestone": "EXEC-001",
+    "producer": "bt.institutional.execution.execution_journal_receipt",
+    "producer_version": "1.0.0",
+    "receipt_digest": "63e1a21d355c72b841ea7d6366859e098d369551c2623a5e805de8663a3a3a5c",
+    "result": {
+      "active_event_count": 3,
+      "claim": "canonical event and replay evidence only; no allocation, capital or order authority",
+      "data_reference_receipt_digest": "22cee2d9e8b819f319b3a247eaefe458e7565b3d52b38ac1a0a943fdab163424",
+      "duplicate_event_count": 0,
+      "event_count": 3,
+      "event_schema_digest": "b3355f730326b7bb355a32b3b341145f30844587e29dcb62447af7bad8a9c6f6",
+      "event_schema_version": "canonical-execution-event-v1.0.0",
+      "journal_schema_version": "canonical-execution-journal-v1.0.0",
+      "late_event_count": 1,
+      "market_catalog_receipt_digest": "66604b7003456736ee6db8d238e47e7db7a2c3c6a48fee2514c0f89044c9cdff",
+      "reconstructable": true,
+      "replay_digest": "ff486a4f97df5cd10873c12291b826d28ac42b79aed2b2ecc35bec2805c88218",
+      "schema_version": "exec001-canonical-journal-dossier-v1.0.0",
+      "sequence_gaps": []
+    },
+    "result_digest": "2031d49deb6f59206ee29688c64c465795579693ae43a7f13bd87cbfa1c0c81b",
+    "schema_version": "bulletproof-producer-receipt-v1.0.0",
+    "source_commit": "0a48a320200c9841dee804ad0990269c01981ddd"
+  },
+  "schema_version": "exec001-native-pilot-v1.0.0",
+  "success": true
+}
