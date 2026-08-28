@@ -1,0 +1,143 @@
+{
+  "capital_or_order_authority": false,
+  "model_specification": {
+    "schema_version": "exec002-microstructure-model-v1.0.0"
+  },
+  "model_specification_digest": "27d73de1bba9dcf507dab8a9618b7f8384abf1851b75cc8d3a674249952fc23b",
+  "receipt": {
+    "artifact_digest": "3b02027f693e2e21a2d04dc896ea9906173e627db694428ef2fc4066eb58048e",
+    "authority": {
+      "allocation": false,
+      "capital": false,
+      "orders": false,
+      "promotion": false
+    },
+    "configuration_digest": "e09da4138b1845ee5756938981298f3c65764705540354159f8d2d7181748fdd",
+    "dataset_digest": "9e69895731b749f772af7238efa76b36fdbde423284f04442b85a58d20164a38",
+    "input_digest": "41b94625072368b3eb1aaa6409415a4a03a8ac8f6354cbae86561dc753da3b4c",
+    "milestone": "EXEC-002",
+    "producer": "bt.institutional.microstructure.microstructure_state_receipt",
+    "producer_version": "1.0.0",
+    "receipt_digest": "1988100824f76b42c7efbe6267b489325a08af69490ab982d15b9f0e1648ace7",
+    "result": {
+      "claim": "microstructure evidence only; observed, inferred and unavailable fields remain distinct",
+      "data003_receipt_digest": "a674009c8de2d57981bc7daaa31fc088f330dcf65ee57bfde64b13cb03db9dd2",
+      "exec001_receipt_digest": "76a8acf792c165242a87a91d39eeb46877c6271b7e2448dd72924340b4229892",
+      "model_schema_digest": "27d73de1bba9dcf507dab8a9618b7f8384abf1851b75cc8d3a674249952fc23b",
+      "model_schema_version": "exec002-microstructure-model-v1.0.0",
+      "schema_version": "exec002-microstructure-dossier-v1.0.0",
+      "state": {
+        "as_of": "2026-08-28T13:00:20+00:00",
+        "coverage": {
+          "inferred": 0,
+          "observed": 9,
+          "unavailable": 0
+        },
+        "fields": {
+          "basis": {
+            "limitations": [],
+            "source_event_ids": [
+              "index_price-5",
+              "mark_price-4"
+            ],
+            "status": "observed",
+            "uncertainty": "none",
+            "value": "0.01"
+          },
+          "best_ask": {
+            "limitations": [],
+            "source_event_ids": [
+              "order_book-1"
+            ],
+            "status": "observed",
+            "uncertainty": "none",
+            "value": "101"
+          },
+          "best_bid": {
+            "limitations": [],
+            "source_event_ids": [
+              "order_book-1"
+            ],
+            "status": "observed",
+            "uncertainty": "none",
+            "value": "100"
+          },
+          "depth_imbalance": {
+            "limitations": [],
+            "source_event_ids": [
+              "order_book-1"
+            ],
+            "status": "observed",
+            "uncertainty": "none",
+            "value": "0.25"
+          },
+          "funding_rate": {
+            "limitations": [],
+            "source_event_ids": [
+              "funding-6"
+            ],
+            "status": "observed",
+            "uncertainty": "none",
+            "value": "0.0001"
+          },
+          "liquidation_notional": {
+            "limitations": [],
+            "source_event_ids": [
+              "liquidation-8"
+            ],
+            "status": "observed",
+            "uncertainty": "none",
+            "value": "25000"
+          },
+          "open_interest": {
+            "limitations": [],
+            "source_event_ids": [
+              "open_interest-7"
+            ],
+            "status": "observed",
+            "uncertainty": "none",
+            "value": "1200000"
+          },
+          "spread": {
+            "limitations": [],
+            "source_event_ids": [
+              "order_book-1"
+            ],
+            "status": "observed",
+            "uncertainty": "none",
+            "value": "1"
+          },
+          "trade_imbalance": {
+            "limitations": [],
+            "source_event_ids": [
+              "trade-2",
+              "trade-3"
+            ],
+            "status": "observed",
+            "uncertainty": "none",
+            "value": "0.3333333333333333333333333333"
+          }
+        },
+        "limitations": [],
+        "schema_version": "exec002-microstructure-model-v1.0.0",
+        "source_event_digests": [
+          "9daca85a199a6bcbcf73ab3aa262be544b72c6ec25359f8bf1a2d0247e899068",
+          "f1b245666214ef5eeedd29c445bbc6c43f77b224f53542c94cb6cf00d2184069",
+          "ba9f7973fd45e9b9b32eb2f75a5f2f9139d33750498674edf9188ea2b7dca9e0",
+          "731711107eb746342e004b01df181187f80d898d426f37ba7e8caa53065b7e30",
+          "2cff1509ab6a749d721eed43d5eb4e9e0c6dde30b512ecba9a5a7f1d8f3f8927",
+          "5f24e7c3eb69a8a06fe68c5eba875de3a60255e2978c98faf2a010188676e0e2",
+          "ffb88dd495cacf52b3b590942c405d214bb5bf416169acae81b7b275e8c953e2",
+          "cd1c2e28706563ffd67afb4e2404bf1ec64407c7ec04e11ea7177511b8617b06"
+        ],
+        "state_digest": "808b035cde967608755aecc0ce48bb9ddf6f62c58194df22c2704aafc069bb99",
+        "venue_reset_observed": false
+      }
+    },
+    "result_digest": "fe0c46e8eb6b0534c82af66dc5455936108fb48f510e0529348c6efb710a0ee3",
+    "schema_version": "bulletproof-producer-receipt-v1.0.0",
+    "source_commit": "e5754155250b858fceba6028ae1f6c0ffd2a020e"
+  },
+  "schema_version": "exec002-native-pilot-v1.0.0",
+  "success": true
+}
