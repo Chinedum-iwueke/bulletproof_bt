@@ -67,6 +67,28 @@ def test_csi_card_reuses_registered_strategy_and_preserves_sixteen_variants() ->
     assert set(proposal["authority"].values()) == {"prohibited"}
 
 
+def test_compiler_reuses_other_registered_hypotheses_by_id() -> None:
+    value = submission(
+        hypothesis="L1-H10A",
+        grid={"z0": (0.8,), "tp_r": (0.5,)},
+        dataset=DatasetBinding(
+            snapshot_id="snapshot",
+            digest="2" * 64,
+            available_fields=("ohlcv",),
+            universe="BTC perpetuals",
+            timeframe="1m",
+        ),
+    )
+    proposal = compile(value)
+    assert proposal["resolution"]["hypothesis_path"].endswith(
+        "l1_h10a_mean_reversion_small_tp.yaml"
+    )
+    assert proposal["resolution"]["strategy_identity"] == (
+        "l1_h10a_mean_reversion_small_tp"
+    )
+    assert proposal["search"]["variant_count"] == 1
+
+
 def test_legacy_tier_requires_visible_resolution() -> None:
     with pytest.raises(BridgeError, match="ambiguous"):
         compile(submission(tier="Tier2"))

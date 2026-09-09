@@ -112,6 +112,45 @@ def _strategy_identity(contract: HypothesisContract) -> str:
     return identity
 
 
+def _resolve_registered_hypothesis(
+    repository_root: Path, requested: str
+) -> tuple[str, HypothesisContract]:
+    hypothesis_root = (repository_root / "research" / "hypotheses").resolve()
+    key = requested.strip().casefold()
+    matches: list[tuple[str, HypothesisContract]] = []
+    for path in sorted(hypothesis_root.glob("*.yaml")):
+        resolved = path.resolve(strict=True)
+        if path.is_symlink() or not resolved.is_relative_to(hypothesis_root):
+            raise BridgeError("registered hypothesis path escapes the repository")
+        raw = yaml.safe_load(resolved.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            continue
+        entry = raw.get("entry")
+        aliases = {
+            str(raw.get("hypothesis_id", "")).strip().casefold(),
+            str(raw.get("title", "")).strip().casefold(),
+            path.stem.casefold(),
+        }
+        if isinstance(entry, dict):
+            aliases.add(str(entry.get("strategy", "")).strip().casefold())
+        aliases.discard("")
+        if key in aliases:
+            matches.append(
+                (
+                    resolved.relative_to(repository_root.resolve()).as_posix(),
+                    HypothesisContract.from_dict(raw),
+                )
+            )
+    if not matches:
+        raise BridgeError(
+            "hypothesis is not registered; bounded engineering generation is required"
+        )
+    if len(matches) > 1:
+        paths = [path for path, _ in matches]
+        raise BridgeError(f"hypothesis identity is ambiguous across registered contracts: {paths}")
+    return matches[0]
+
+
 def _validate_grid(
     contract: HypothesisContract,
     requested: dict[str, tuple[Any, ...]],
@@ -159,17 +198,10 @@ def compile_submission(
         submission.tier,
         legacy_resolution=submission.legacy_tier_resolution,
     )
-    registry = {
-        "csi-gated displacement trend": "research/hypotheses/l7_h1_csi_gated_displacement_trend.yaml",
-        "l7-h1": "research/hypotheses/l7_h1_csi_gated_displacement_trend.yaml",
-        "l7_h1_csi_gated_displacement_trend": "research/hypotheses/l7_h1_csi_gated_displacement_trend.yaml",
-    }
-    key = submission.hypothesis.strip().lower()
-    relative = registry.get(key)
-    if relative is None:
-        raise BridgeError("hypothesis is not registered; bounded engineering generation is required")
+    relative, contract = _resolve_registered_hypothesis(
+        repository_root, submission.hypothesis
+    )
     path = repository_root / relative
-    contract = HypothesisContract.from_yaml(path)
     grid, variant_count = _validate_grid(contract, submission.grid, max_variants=max_variants)
     required_sources = set()
     if _strategy_identity(contract) == "l7_h1_csi_gated_displacement_trend":
