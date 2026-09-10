@@ -34,6 +34,7 @@ class ResearchGraphV1Strategy(Strategy):
         self._graph = dict(research_graph)
         self._parameters = dict(parameters or {})
         self._raw_history: dict[str, dict[str, deque[float]]] = defaultdict(lambda: defaultdict(lambda: deque(maxlen=4096)))
+        self._close_history: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=4096))
         self._value_history: dict[str, dict[str, deque[float]]] = defaultdict(lambda: defaultdict(lambda: deque(maxlen=4096)))
         self._bars_held: dict[str, int] = {}
         self._previous_close: dict[str, float] = {}
@@ -64,17 +65,23 @@ class ResearchGraphV1Strategy(Strategy):
         raw = _finite(getattr(bar, source, None))
         if transform == "identity":
             return raw
+        if transform == "calendar_day":
+            return float(pd.Timestamp(bar.ts).dayofweek)
         if transform == "true_range":
             prev = self._previous_close.get(symbol, bar.close)
             return max(bar.high - bar.low, abs(bar.high - prev), abs(bar.low - prev))
         if transform == "half_range_over_close":
             return 0.5 * (bar.high - bar.low) / bar.close if bar.close else None
         if transform == "return":
-            prev = self._previous_close.get(symbol)
+            window = self._window(feature)
+            closes = self._close_history[symbol]
+            prev = closes[-window] if len(closes) >= window else None
             return bar.close / prev - 1.0 if prev not in (None, 0) else None
 
         inputs = feature.get("inputs", [])
         base = values.get(str(inputs[0])) if isinstance(inputs, list) and inputs else raw
+        if transform == "abs":
+            return abs(base) if base is not None else None
         history = self._raw_history[symbol][str(feature["id"])]
         window = self._window(feature)
         prior = list(history)[-window:]
@@ -159,6 +166,7 @@ class ResearchGraphV1Strategy(Strategy):
                 if held >= max_hold:
                     signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL if side == Side.BUY else Side.BUY, signal_type="research_graph_time_exit", confidence=1.0, metadata={"strategy": "research_graph_v1", "close_only": True, "exit_reason": "max_hold_bars", "bars_held": held}))
                 self._previous_close[symbol] = bar.close
+                self._close_history[symbol].append(bar.close)
                 continue
             self._bars_held.pop(symbol, None)
             values: dict[str, float] = {}
@@ -176,12 +184,19 @@ class ResearchGraphV1Strategy(Strategy):
                     values[feature_id] = output
             passed, conditions, thresholds = self._gates(values)
             if passed:
-                direction = str(self._graph.get("entry", {}).get("direction", "bar_direction"))
-                entry_side = Side.BUY if direction == "long" or (direction == "bar_direction" and bar.close >= bar.open) else Side.SELL
+                entry = self._graph.get("entry", {})
+                direction = str(entry.get("direction", "bar_direction"))
+                direction_value = values.get(str(entry.get("direction_feature", "")))
+                entry_side = Side.BUY if (
+                    direction == "long"
+                    or (direction == "bar_direction" and bar.close >= bar.open)
+                    or (direction == "feature_sign" and direction_value is not None and direction_value >= 0)
+                ) else Side.SELL
                 atr_value = next((value for key, value in values.items() if key.lower().startswith("atr")), bar.high - bar.low)
                 stop_distance = max(abs(float(atr_value)) * stop_multiple, 1e-12)
                 trace = make_decision_trace("portable_graph_entry", "research_graph_v1", conditions_bool_map=conditions, gate_values=values, gate_thresholds=thresholds)
                 signals.append(Signal(ts=ts, symbol=symbol, side=entry_side, signal_type="research_graph_entry", confidence=1.0, metadata={"strategy": "research_graph_v1", "stop_distance": stop_distance, "stop_price": bar.close - stop_distance if entry_side == Side.BUY else bar.close + stop_distance, "decision_trace": trace, "feature_values": values, "compiler_version": "research_graph_compiler_v1"}))
                 self._bars_held[symbol] = 0
             self._previous_close[symbol] = bar.close
+            self._close_history[symbol].append(bar.close)
         return signals

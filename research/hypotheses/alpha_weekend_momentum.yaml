@@ -1,0 +1,77 @@
+metadata:
+  hypothesis_id: "ALPHA-WEEKEND-MOMENTUM"
+  title: "BTC Weekend Lagged-Return Momentum"
+  description: "Test whether lagged 60-minute BTC perpetual returns continue during UTC weekends after costs."
+  research_layer: "ALPHA"
+  hypothesis_family: "calendar_gated_momentum"
+  version: "1.0.0"
+  author: "bulletproof_bt"
+  created_at: "2026-09-10T00:00:00Z"
+hypothesis_id: "ALPHA-WEEKEND-MOMENTUM"
+title: "BTC Weekend Lagged-Return Momentum"
+description: "Test whether lagged 60-minute BTC perpetual returns continue during UTC weekends after costs."
+research_layer: "ALPHA"
+hypothesis_family: "calendar_gated_momentum"
+version: "1.0.0"
+parameter_grid:
+  momentum_lookback_bars: [60]
+  momentum_threshold: [0.0025, 0.005]
+  stop_atr_multiple: [2.0, 3.0]
+  max_hold_bars: [30, 60]
+  atr_window: [60]
+  r_per_trade: [0.005]
+entry:
+  strategy: "alpha_weekend_momentum"
+  signal_timeframe: "1m"
+  timeframe: "1m"
+  base_execution_timeframe: "1m"
+  order_timing: "bar_close_submit_next_bar_execution"
+  no_pyramiding: true
+exit:
+  stop_kind: "atr_multiple"
+  stop_model: "fixed_atr_multiple"
+  stop_update_policy: "frozen_at_entry"
+  atr_source_timeframe: "1m"
+  time_exit_bars_param: "max_hold_bars"
+  exit_monitoring_timeframe: "1m"
+execution_semantics:
+  signal_timeframe: "1m"
+  base_execution_timeframe: "1m"
+  exit_monitoring_timeframe: "1m"
+  base_data_frequency_expected: "1m"
+  strategy_family: "calendar_gated_momentum"
+  family_pattern: "weekend_lagged_return_continuation"
+  stop_model: "fixed_atr_multiple"
+  stop_update_policy: "frozen_at_entry"
+  tp_update_policy: "none"
+  hold_time_unit: "base_bars"
+  atr_source_timeframe: "1m"
+  risk_accounting: "engine_canonical_R"
+  no_pyramiding: true
+evaluation:
+  required_tiers: ["Tier2", "Tier3"]
+logging:
+  required_fields: [decision_trace, momentum_60m, day_of_week, stop_price]
+runtime_controls:
+  enabled: true
+  max_variants: 8
+truth_contract:
+  version: "1.0"
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  parity_required_for_fast_path: true
+  fast_path_generation: forbidden
+  research_memory_requires_certification: true
+generation_provenance:
+  schema_version: engine_hypothesis_yaml_v1
+  source_card_hash: pending_card_compilation
+  compiler_version: research_graph_compiler_v1

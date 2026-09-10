@@ -21,7 +21,7 @@ IR_VERSION = "research_strategy_ir_v1"
 COMPILER_VERSION = "research_graph_compiler_v1"
 READINESS_STATES = {"registry_ready", "graph_compilable", "implementation_required", "data_blocked", "semantics_blocked", "unsupported"}
 DATASETS = {"ohlcv", "trades", "funding", "open_interest", "mark_price", "index_price", "liquidations", "benchmark", "research_panel"}
-PORTABLE_TRANSFORMS = {"identity", "sma", "ema", "atr", "true_range", "return", "zscore", "percentile_rank", "half_range_over_close", "true_range_over"}
+PORTABLE_TRANSFORMS = {"identity", "sma", "ema", "atr", "true_range", "return", "zscore", "percentile_rank", "half_range_over_close", "true_range_over", "calendar_day", "abs"}
 PORTABLE_OPS = {">", ">=", "<", "<=", "=="}
 EXACT_TRUTH = {
     "strict_utc": True, "missing_bars": "no_decision", "interpolation": "forbidden",
@@ -32,6 +32,7 @@ ENGINE_TRUTH_BLOCK = {
     "version": "1.0", "profile": "production", "no_lookahead": True, **EXACT_TRUTH,
     "truth_gate_required": True, "parity_required_for_fast_path": True,
     "research_memory_requires_certification": True,
+    "fast_path_generation": "forbidden",
 }
 
 
@@ -84,7 +85,7 @@ def validate_hypothesis_card(card: dict[str, Any], *, require_confirmed: bool = 
     provenance = card.get("field_provenance") if isinstance(card.get("field_provenance"), dict) else {}
     for field in ("claim", "entry", "exit"):
         state = provenance.get(field, {}).get("state") if isinstance(provenance.get(field), dict) else None
-        if state in {"unresolved", "unsupported", "inferred", "recommended"}:
+        if require_confirmed and state in {"unresolved", "unsupported", "inferred", "recommended"}:
             errors.append(f"card_blocking_field_{field}_not_confirmed")
     return errors
 

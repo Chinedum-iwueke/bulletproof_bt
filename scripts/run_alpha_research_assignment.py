@@ -36,6 +36,12 @@ from bt.governance.research_bridge import (
     compile_submission,
     materialize_approved_contract,
 )
+from bt.governance.alpha_strategy_pipeline import (
+    canonical_hash,
+    confirm_card,
+    draft_weekend_momentum_card,
+    qualify_card,
+)
 from bt.hypotheses.contract import HypothesisContract
 from bt.logging.run_bundle import finalize_run_bundle
 from bt.validation.experiment_truth import validate_experiment_root, write_truth_report
@@ -357,6 +363,24 @@ def held_out_evaluation(run_dir: Path, test_start: str) -> dict[str, Any]:
     }
 
 
+def period_evaluation(run_dir: Path, start: str, end: str) -> dict[str, Any]:
+    trades_path = run_dir / "trades.csv"
+    try:
+        trades = pd.read_csv(trades_path)
+    except pd.errors.EmptyDataError:
+        trades = pd.DataFrame()
+    if trades.empty:
+        return {"trade_count": 0, "mean_net_r": 0.0}
+    entry = pd.to_datetime(trades["entry_ts"], utc=True, errors="coerce")
+    sample = trades.loc[(entry >= pd.Timestamp(start)) & (entry <= pd.Timestamp(end))]
+    net_column = "r_net" if "r_net" in sample else "r_multiple_net"
+    net = pd.to_numeric(sample[net_column], errors="coerce").dropna()
+    return {
+        "trade_count": int(len(net)),
+        "mean_net_r": float(net.mean()) if len(net) else 0.0,
+    }
+
+
 def execute_registered(
     assignment: dict[str, Any], repository: Path, output: Path
 ) -> dict[str, Any]:
@@ -374,49 +398,79 @@ def execute_registered(
         ),
         None,
     )
-    if source is None:
+    qualification = assignment.get("qualification")
+    if source is None and not isinstance(qualification, dict):
         raise BridgeError(
             "hypothesis is not registered; bounded engineering generation is required"
         )
-    registered = HypothesisContract.from_yaml(source)
-    grid = {name: (values[0],) for name, values in registered.schema.parameter_grid.items()}
-    proposal = compile_submission(
-        HypothesisSubmission(
-            original_text=assignment["question"],
-            hypothesis=identity,
-            tier=assignment["tier"],
-            grid=grid,
-            dataset=DatasetBinding(
-                snapshot_id=assignment["dataset_build_id"],
-                digest=assignment["dataset_digest"],
-                available_fields=available_fields(Path(assignment["dataset_path"])),
-                universe=assignment["instrument"],
-                timeframe=assignment["timeframe"],
-            ),
-        ),
-        repository_root=repository,
-        repository_commit=assignment["base_ref"],
-        max_variants=assignment["max_variants"],
-    )
     output.mkdir(parents=True, exist_ok=False)
-    card = question_card(assignment, disposition="reuse_registered_strategy") | {
-        "hypothesis_id": registered.schema.metadata.hypothesis_id,
-        "hypothesis_title": registered.schema.metadata.title,
-        "proposal_digest": proposal["proposal_digest"],
-    }
-    (output / "hypothesis-card.json").write_bytes(canonical(card) + b"\n")
-    approved = proposal | {"state": "approved"}
-    contract_path = output / "approved-hypothesis.yaml"
-    contract_receipt = materialize_approved_contract(
-        approved, repository_root=repository, output=contract_path
-    )
-    contract = HypothesisContract.from_yaml(contract_path)
+    if isinstance(qualification, dict):
+        if qualification.get("qualified") is not True:
+            raise BridgeError("unqualified strategy cannot execute")
+        card = qualification["card"]
+        if canonical_hash(card) != qualification["card_digest"]:
+            raise BridgeError("qualified card digest changed before execution")
+        contract = HypothesisContract.from_dict(
+            qualification["artifact_bundle"]["engine_hypothesis_yaml"]
+        )
+        contract_digest = digest(qualification["artifact_bundle"]["engine_hypothesis_yaml"])
+        proposal = {
+            "proposal_digest": canonical_hash(qualification["artifact_bundle"]["strategy_spec"]),
+            "search": {"variant_count": qualification["variant_count"]},
+        }
+        contract_receipt = {"content_digest": contract_digest}
+        (output / "hypothesis-card.json").write_bytes(canonical(card) + b"\n")
+        (output / "approved-hypothesis.json").write_bytes(
+            canonical(qualification["artifact_bundle"]["engine_hypothesis_yaml"]) + b"\n"
+        )
+    else:
+        registered = HypothesisContract.from_yaml(source)
+        grid = {name: (values[0],) for name, values in registered.schema.parameter_grid.items()}
+        proposal = compile_submission(
+            HypothesisSubmission(
+                original_text=assignment["question"], hypothesis=identity,
+                tier=assignment["tier"], grid=grid,
+                dataset=DatasetBinding(
+                    snapshot_id=assignment["dataset_build_id"], digest=assignment["dataset_digest"],
+                    available_fields=available_fields(Path(assignment["dataset_path"])),
+                    universe=assignment["instrument"], timeframe=assignment["timeframe"],
+                ),
+            ), repository_root=repository, repository_commit=assignment["base_ref"],
+            max_variants=assignment["max_variants"],
+        )
+        card = question_card(assignment, disposition="reuse_registered_strategy") | {
+            "hypothesis_id": registered.schema.metadata.hypothesis_id,
+            "hypothesis_title": registered.schema.metadata.title,
+            "proposal_digest": proposal["proposal_digest"],
+        }
+        (output / "hypothesis-card.json").write_bytes(canonical(card) + b"\n")
+        approved = proposal | {"state": "approved"}
+        contract_path = output / "approved-hypothesis.yaml"
+        contract_receipt = materialize_approved_contract(
+            approved, repository_root=repository, output=contract_path
+        )
+        contract = HypothesisContract.from_yaml(contract_path)
     variants = contract.to_run_specs()
-    if len(variants) != 1:
-        raise BridgeError("ALPHA-002 initial execution must contain one registered variant")
+    if len(variants) > assignment["max_variants"]:
+        raise BridgeError("qualified strategy exceeds the immutable variant budget")
+
+    execution_data_path = Path(assignment["dataset_path"])
+    window_digest = assignment["dataset_digest"]
+    if assignment.get("window_start") and assignment.get("window_end"):
+        start = pd.Timestamp(assignment["window_start"])
+        end = pd.Timestamp(assignment["window_end"])
+        selected = pd.read_parquet(
+            execution_data_path,
+            filters=[("ts", ">=", start.to_pydatetime()), ("ts", "<", end.to_pydatetime())],
+        )
+        if selected.empty:
+            raise BridgeError("immutable execution window contains no admitted rows")
+        execution_data_path = output / "execution-window.parquet"
+        selected.to_parquet(execution_data_path, index=False)
+        window_digest = file_digest(execution_data_path)
 
     lightweight = pd.read_parquet(
-        assignment["dataset_path"], columns=["ts", "symbol", "close"]
+        execution_data_path, columns=["ts", "symbol", "close"]
     )
     code_digest = digest(assignment["base_ref"].encode())
     rep, leakage = representation(assignment, lightweight, code_digest)
@@ -442,36 +496,43 @@ def execute_registered(
         tiers=("Tier2",),
         seeds=(7,),
         resources={"max_workers": 1},
-        budget=SearchBudget(1, 1, 86400, 1),
+        budget=SearchBudget(len(variants), len(variants), 86400, 1),
         stopping_rule=StoppingRule(kind="exhaustive"),
     )
     experiment = output / "experiment"
     runs = experiment / "runs"
     runs.mkdir(parents=True)
     phase = assignment["tier"].lower()
-    result = execute_hypothesis_variant(
-        contract=contract,
-        spec=variants[0],
-        tier="Tier3" if assignment["tier"] == "Tier3" else "Tier2",
-        config_path=str(repository / "configs/engine.yaml"),
-        data_path=assignment["dataset_path"],
-        out_root=str(runs),
-        run_slug="trial-0001",
-        phase=phase,
-    )
-    run_dir = Path(result["run_dir"])
-    for name, document in (
-        ("market_model_bundle.json", model.document()),
-        ("representation_contract.json", rep.document()),
-        ("representation_leakage_report.json", leakage),
-        ("search_plan.json", search.document()),
-    ):
-        (run_dir / name).write_bytes(canonical(document) + b"\n")
+    results = []
+    run_dirs = []
+    for index, spec in enumerate(variants, start=1):
+        result = execute_hypothesis_variant(
+            contract=contract, spec=spec,
+            tier="Tier3" if assignment["tier"] == "Tier3" else "Tier2",
+            config_path=str(repository / "configs/engine.yaml"),
+            data_path=str(execution_data_path), out_root=str(runs),
+            run_slug=f"trial-{index:04d}", phase=phase,
+        )
+        run_dir = Path(result["run_dir"])
+        for name, document in (
+            ("market_model_bundle.json", model.document()),
+            ("representation_contract.json", rep.document()),
+            ("representation_leakage_report.json", leakage),
+            ("search_plan.json", search.document()),
+        ):
+            (run_dir / name).write_bytes(canonical(document) + b"\n")
+        results.append(result)
+        run_dirs.append(run_dir)
     truth = validate_experiment_root(experiment)
     write_truth_report(truth, experiment / "summaries")
     if truth.status != "PASS":
         raise BridgeError(f"native truth validation failed: {truth.hard_failures}")
-    trial = search.trials()[0]
+    trials = search.trials()
+    validation = [period_evaluation(path, rep.split.validation_start, rep.split.validation_end) for path in run_dirs]
+    selected_index = max(range(len(validation)), key=lambda item: (validation[item]["mean_net_r"], validation[item]["trade_count"], -item))
+    trial = trials[selected_index]
+    result = results[selected_index]
+    run_dir = run_dirs[selected_index]
     lineage = {
         "repository_commit": assignment["base_ref"],
         "code_digest": code_digest,
@@ -487,22 +548,29 @@ def execute_registered(
         "search_family_id": search.family_id,
         "trial_id": trial["trial_id"],
         "attempt": 1,
+        "parent_dataset_digest": assignment["dataset_digest"],
+        "execution_window_digest": window_digest,
     }
-    bundle = finalize_run_bundle(run_dir, output / "run-bundles", lineage=lineage)
-    retained_bundle = retain_bundle(
-        output / "run-bundles" / "bundles" / bundle["bundle_digest"],
-        Path(assignment["bundle_root"]),
-        bundle,
-    )
+    bundles = []
+    retained = []
+    for index, candidate_run in enumerate(run_dirs):
+        candidate_lineage = {**lineage, "trial_id": trials[index]["trial_id"]}
+        item = finalize_run_bundle(candidate_run, output / f"run-bundles-{index:04d}", lineage=candidate_lineage)
+        bundles.append(item)
+        retained.append(retain_bundle(
+            output / f"run-bundles-{index:04d}" / "bundles" / item["bundle_digest"],
+            Path(assignment["bundle_root"]), item,
+        ))
+    bundle = bundles[selected_index]
+    retained_bundle = retained[selected_index]
     holdout = held_out_evaluation(run_dir, rep.split.test_start)
     manifest = json.loads(
         (retained_bundle / "run_bundle_manifest.json").read_text(
             encoding="utf-8"
         )
     )
-    memory = record_alpha_memory(
-        Path(assignment["memory_database"]), assignment=assignment, bundle=bundle
-    )
+    memory_receipts = [record_alpha_memory(Path(assignment["memory_database"]), assignment=assignment, bundle=item) for item in bundles]
+    memory = memory_receipts[selected_index]
     metrics = {
         key: value
         for key, value in result.items()
@@ -513,6 +581,9 @@ def execute_registered(
             "oos_trade_count": holdout["trade_count"],
             "oos_mean_net_r": holdout["mean_net_r"],
             "double_cost_oos_mean_net_r": holdout["double_cost_mean_net_r"],
+            "declared_variant_count": len(variants),
+            "selected_variant_index": selected_index,
+            "selection_basis": "validation_mean_net_r",
         }
     )
     started_at = datetime.fromtimestamp(run_dir.stat().st_mtime, tz=UTC)
@@ -546,14 +617,14 @@ def execute_registered(
     }
     attempt = base_attempt(
         assignment,
-        hypothesis_id=registered.schema.metadata.hypothesis_id,
+        hypothesis_id=contract.schema.metadata.hypothesis_id,
         hypothesis_digest=contract_receipt["content_digest"],
     ) | {
-        "trial_count": 1,
+        "trial_count": len(variants),
         "outcome": "candidate" if passed_edge else "negative",
         "failure_stage": None,
         "gate_report": gate_report,
-        "evidence_digests": [bundle["bundle_digest"], truth.to_dict()["report_digest"]]
+        "evidence_digests": [*[item["bundle_digest"] for item in bundles], truth.to_dict()["report_digest"]]
         if "report_digest" in truth.to_dict()
         else [bundle["bundle_digest"], digest(truth.to_dict())],
     }
@@ -574,9 +645,9 @@ def execute_registered(
         },
         "source": proposal_source,
         "resolution": {
-            "hypothesis_id": registered.schema.metadata.hypothesis_id,
+            "hypothesis_id": contract.schema.metadata.hypothesis_id,
             "hypothesis_digest": contract_receipt["content_digest"],
-            "strategy": registered.schema.entry["strategy"],
+            "strategy": contract.schema.entry["strategy"],
         },
         "dataset": {
             "dataset_build_id": assignment["dataset_build_id"],
@@ -589,9 +660,11 @@ def execute_registered(
         },
         "search": {
             "stopping_rule": "exhaustive",
-            "variant_count": 1,
+            "variant_count": len(variants),
             "max_variants": assignment["max_variants"],
             "search_plan_digest": search.digest,
+            "selection_basis": "validation_mean_net_r",
+            "selected_variant_index": selected_index,
         },
         "required_gates": [
             "truth",
@@ -676,14 +749,54 @@ def main() -> int:
         raise SystemExit("dataset bytes differ from immutable assignment")
     if digest({"question": " ".join(assignment["question"].split())}) != assignment["question_digest"]:
         raise SystemExit("question digest differs from immutable assignment")
-    try:
-        result = execute_registered(assignment, repository, args.output)
-    except BridgeError as exc:
-        if "not registered" not in str(exc):
-            raise
-        result = engineering_required(assignment, args.output, str(exc))
+    stage = assignment.get("stage", "execute")
+    if stage == "draft":
+        try:
+            card = draft_weekend_momentum_card(assignment)
+            result = {"disposition": "hypothesis_draft_ready", "hypothesis_card": card}
+        except ValueError as exc:
+            result = {
+                "disposition": "strategy_engineering_required",
+                "engineering_requirement": {
+                    "schema_version": "alpha-strategy-engineering-requirement-v1.0.0",
+                    "question": assignment["question"],
+                    "question_digest": assignment["question_digest"],
+                    "reason": str(exc),
+                    "required_deliverables": [
+                        "hypothesis_card_v1",
+                        "hypothesis YAML",
+                        "strategy.py or reviewed research_graph_v1 mapping",
+                        "causality and leakage tests",
+                        "classic-engine integration test",
+                    ],
+                    "authority": AUTHORITY,
+                },
+            }
+    elif stage == "qualify":
+        card = confirm_card(
+            assignment["hypothesis_card"],
+            actor=assignment["card_approval"]["actor"],
+            confirmed_at=assignment["card_approval"]["approved_at"],
+        )
+        qualification = qualify_card(card, repository_root=str(repository))
+        result = {
+            "disposition": (
+                "strategy_qualified"
+                if qualification["qualified"]
+                else "strategy_engineering_required"
+            ),
+            "qualification": qualification,
+        }
+    else:
+        try:
+            result = execute_registered(assignment, repository, args.output)
+        except BridgeError as exc:
+            if "not registered" not in str(exc):
+                raise
+            result = engineering_required(assignment, args.output, str(exc))
     receipt = {
-        "schema_version": "alpha002-native-receipt-v1.0.0",
+        "schema_version": "alpha003-governed-receipt-v1.0.0",
+        "stage": stage,
         "campaign_digest": assignment["campaign_digest"],
         "question_digest": assignment["question_digest"],
         "dataset_digest": assignment["dataset_digest"],
@@ -697,7 +810,7 @@ def main() -> int:
     print(json.dumps({
         "disposition": receipt["disposition"],
         "receipt_digest": receipt["receipt_digest"],
-        "trial_count": receipt["alpha_campaign_attempt"]["trial_count"],
+        "trial_count": receipt.get("alpha_campaign_attempt", {}).get("trial_count", 0),
     }, sort_keys=True))
     return 0
 
