@@ -34,7 +34,10 @@ def test_weekend_question_compiles_to_approved_portable_graph() -> None:
     result = qualify_card(confirmed, repository_root=".")
     assert result["qualified"] is True
     assert result["artifact_bundle"]["compile_readiness"]["status"] == "registry_ready"
-    assert result["artifact_bundle"]["run_config"]["strategy"]["name"] == "alpha_weekend_momentum"
+    assert (
+        result["artifact_bundle"]["run_config"]["strategy"]["name"]
+        == "alpha_weekend_momentum"
+    )
     assert result["variant_count"] == 8
 
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Execute one immutable Hermes ALPHA-002 assignment in Bulletproof."""
+
 from __future__ import annotations
 
 import argparse
@@ -65,7 +66,9 @@ def canonical(value: Any) -> bytes:
 
 
 def digest(value: Any) -> str:
-    return hashlib.sha256(value if isinstance(value, bytes) else canonical(value)).hexdigest()
+    return hashlib.sha256(
+        value if isinstance(value, bytes) else canonical(value)
+    ).hexdigest()
 
 
 def file_digest(path: Path) -> str:
@@ -131,7 +134,9 @@ def base_attempt(
 def engineering_required(
     assignment: dict[str, Any], output: Path, reason: str
 ) -> dict[str, Any]:
-    card = question_card(assignment, disposition="bounded_strategy_engineering_required")
+    card = question_card(
+        assignment, disposition="bounded_strategy_engineering_required"
+    )
     artifact = {
         **card,
         "reason": reason,
@@ -258,7 +263,9 @@ def available_fields(path: Path) -> tuple[str, ...]:
         import pyarrow.parquet as pq
 
         columns = set(pq.ParquetFile(path).schema_arrow.names)
-    fields = {"ohlcv"} if {"open", "high", "low", "close", "volume"} <= columns else set()
+    fields = (
+        {"ohlcv"} if {"open", "high", "low", "close", "volume"} <= columns else set()
+    )
     if "funding_rate" in columns:
         fields.add("funding")
     if "open_interest" in columns:
@@ -381,6 +388,45 @@ def period_evaluation(run_dir: Path, start: str, end: str) -> dict[str, Any]:
     }
 
 
+def weekend_regime_comparison(
+    frame: pd.DataFrame, *, lookback: int = 60
+) -> dict[str, Any]:
+    """Measure the registered predictive association without treating it as PnL."""
+    ordered = frame.sort_values(["symbol", "ts"]).copy()
+    grouped = ordered.groupby("symbol", sort=False)["close"]
+    ordered["lagged_return"] = grouped.pct_change(lookback)
+    ordered["next_return"] = grouped.transform(
+        lambda series: series.pct_change().shift(-1)
+    )
+    ordered["signed_next_return"] = (
+        ordered["lagged_return"].apply(lambda value: 1.0 if value > 0 else -1.0)
+        * ordered["next_return"]
+    )
+    timestamps = pd.to_datetime(ordered["ts"], utc=True)
+    ordered["regime"] = timestamps.dt.dayofweek.map(
+        lambda day: "weekend" if day >= 5 else "weekday"
+    )
+    usable = ordered.dropna(subset=["lagged_return", "next_return"])
+    groups = {}
+    for regime in ("weekend", "weekday"):
+        sample = usable.loc[usable["regime"] == regime, "signed_next_return"]
+        groups[regime] = {
+            "observations": int(len(sample)),
+            "mean_signed_next_return": float(sample.mean()) if len(sample) else 0.0,
+        }
+    return {
+        "schema_version": "alpha-weekend-regime-comparison-v1.0.0",
+        "measurement": "causal predictive association; not executable PnL",
+        "feature": f"trailing_{lookback}_bar_return_sign",
+        "target": "next_bar_return",
+        "groups": groups,
+        "weekend_minus_weekday": (
+            groups["weekend"]["mean_signed_next_return"]
+            - groups["weekday"]["mean_signed_next_return"]
+        ),
+    }
+
+
 def execute_registered(
     assignment: dict[str, Any], repository: Path, output: Path
 ) -> dict[str, Any]:
@@ -391,7 +437,9 @@ def execute_registered(
             for path in sorted((repository / "research/hypotheses").glob("*.yaml"))
             if identity.casefold()
             in {
-                HypothesisContract.from_yaml(path).schema.metadata.hypothesis_id.casefold(),
+                HypothesisContract.from_yaml(
+                    path
+                ).schema.metadata.hypothesis_id.casefold(),
                 HypothesisContract.from_yaml(path).schema.metadata.title.casefold(),
                 path.stem.casefold(),
             }
@@ -413,29 +461,43 @@ def execute_registered(
         contract = HypothesisContract.from_dict(
             qualification["artifact_bundle"]["engine_hypothesis_yaml"]
         )
-        contract_digest = digest(qualification["artifact_bundle"]["engine_hypothesis_yaml"])
+        contract_digest = digest(
+            qualification["artifact_bundle"]["engine_hypothesis_yaml"]
+        )
         proposal = {
-            "proposal_digest": canonical_hash(qualification["artifact_bundle"]["strategy_spec"]),
+            "proposal_digest": canonical_hash(
+                qualification["artifact_bundle"]["strategy_spec"]
+            ),
             "search": {"variant_count": qualification["variant_count"]},
         }
         contract_receipt = {"content_digest": contract_digest}
         (output / "hypothesis-card.json").write_bytes(canonical(card) + b"\n")
         (output / "approved-hypothesis.json").write_bytes(
-            canonical(qualification["artifact_bundle"]["engine_hypothesis_yaml"]) + b"\n"
+            canonical(qualification["artifact_bundle"]["engine_hypothesis_yaml"])
+            + b"\n"
         )
     else:
         registered = HypothesisContract.from_yaml(source)
-        grid = {name: (values[0],) for name, values in registered.schema.parameter_grid.items()}
+        grid = {
+            name: (values[0],)
+            for name, values in registered.schema.parameter_grid.items()
+        }
         proposal = compile_submission(
             HypothesisSubmission(
-                original_text=assignment["question"], hypothesis=identity,
-                tier=assignment["tier"], grid=grid,
+                original_text=assignment["question"],
+                hypothesis=identity,
+                tier=assignment["tier"],
+                grid=grid,
                 dataset=DatasetBinding(
-                    snapshot_id=assignment["dataset_build_id"], digest=assignment["dataset_digest"],
+                    snapshot_id=assignment["dataset_build_id"],
+                    digest=assignment["dataset_digest"],
                     available_fields=available_fields(Path(assignment["dataset_path"])),
-                    universe=assignment["instrument"], timeframe=assignment["timeframe"],
+                    universe=assignment["instrument"],
+                    timeframe=assignment["timeframe"],
                 ),
-            ), repository_root=repository, repository_commit=assignment["base_ref"],
+            ),
+            repository_root=repository,
+            repository_commit=assignment["base_ref"],
             max_variants=assignment["max_variants"],
         )
         card = question_card(assignment, disposition="reuse_registered_strategy") | {
@@ -461,7 +523,10 @@ def execute_registered(
         end = pd.Timestamp(assignment["window_end"])
         selected = pd.read_parquet(
             execution_data_path,
-            filters=[("ts", ">=", start.to_pydatetime()), ("ts", "<", end.to_pydatetime())],
+            filters=[
+                ("ts", ">=", start.to_pydatetime()),
+                ("ts", "<", end.to_pydatetime()),
+            ],
         )
         if selected.empty:
             raise BridgeError("immutable execution window contains no admitted rows")
@@ -507,11 +572,14 @@ def execute_registered(
     run_dirs = []
     for index, spec in enumerate(variants, start=1):
         result = execute_hypothesis_variant(
-            contract=contract, spec=spec,
+            contract=contract,
+            spec=spec,
             tier="Tier3" if assignment["tier"] == "Tier3" else "Tier2",
             config_path=str(repository / "configs/engine.yaml"),
-            data_path=str(execution_data_path), out_root=str(runs),
-            run_slug=f"trial-{index:04d}", phase=phase,
+            data_path=str(execution_data_path),
+            out_root=str(runs),
+            run_slug=f"row_{index:04d}",
+            phase=phase,
         )
         run_dir = Path(result["run_dir"])
         for name, document in (
@@ -523,13 +591,45 @@ def execute_registered(
             (run_dir / name).write_bytes(canonical(document) + b"\n")
         results.append(result)
         run_dirs.append(run_dir)
+    trials = search.trials()
+    validation = [
+        period_evaluation(path, rep.split.validation_start, rep.split.validation_end)
+        for path in run_dirs
+    ]
+    selected_index = max(
+        range(len(validation)),
+        key=lambda item: (
+            validation[item]["mean_net_r"],
+            validation[item]["trade_count"],
+            -item,
+        ),
+    )
+    selection_audit = {
+        "schema_version": "alpha-selection-bias-audit-v1.0.0",
+        "declared_variant_count": len(variants),
+        "evaluated_variant_count": len(validation),
+        "selection_partition": "validation",
+        "selection_metric": "mean_net_r",
+        "held_out_test_consulted": False,
+        "stopping_rule": "exhaustive",
+        "selected_variant_index": selected_index,
+        "validation_results": validation,
+        "search_plan_digest": search.digest,
+    }
+    selection_audit["record_digest"] = digest(selection_audit)
+    regime_comparison = weekend_regime_comparison(lightweight)
+    regime_comparison["record_digest"] = digest(regime_comparison)
+    for candidate_run in run_dirs:
+        (candidate_run / "selection_bias_audit.json").write_bytes(
+            canonical(selection_audit) + b"\n"
+        )
+        (candidate_run / "weekend_regime_comparison.json").write_bytes(
+            canonical(regime_comparison) + b"\n"
+        )
     truth = validate_experiment_root(experiment)
     write_truth_report(truth, experiment / "summaries")
     if truth.status != "PASS":
         raise BridgeError(f"native truth validation failed: {truth.hard_failures}")
-    trials = search.trials()
-    validation = [period_evaluation(path, rep.split.validation_start, rep.split.validation_end) for path in run_dirs]
-    selected_index = max(range(len(validation)), key=lambda item: (validation[item]["mean_net_r"], validation[item]["trade_count"], -item))
     trial = trials[selected_index]
     result = results[selected_index]
     run_dir = run_dirs[selected_index]
@@ -555,21 +655,31 @@ def execute_registered(
     retained = []
     for index, candidate_run in enumerate(run_dirs):
         candidate_lineage = {**lineage, "trial_id": trials[index]["trial_id"]}
-        item = finalize_run_bundle(candidate_run, output / f"run-bundles-{index:04d}", lineage=candidate_lineage)
+        item = finalize_run_bundle(
+            candidate_run,
+            output / f"run-bundles-{index:04d}",
+            lineage=candidate_lineage,
+        )
         bundles.append(item)
-        retained.append(retain_bundle(
-            output / f"run-bundles-{index:04d}" / "bundles" / item["bundle_digest"],
-            Path(assignment["bundle_root"]), item,
-        ))
+        retained.append(
+            retain_bundle(
+                output / f"run-bundles-{index:04d}" / "bundles" / item["bundle_digest"],
+                Path(assignment["bundle_root"]),
+                item,
+            )
+        )
     bundle = bundles[selected_index]
     retained_bundle = retained[selected_index]
     holdout = held_out_evaluation(run_dir, rep.split.test_start)
     manifest = json.loads(
-        (retained_bundle / "run_bundle_manifest.json").read_text(
-            encoding="utf-8"
-        )
+        (retained_bundle / "run_bundle_manifest.json").read_text(encoding="utf-8")
     )
-    memory_receipts = [record_alpha_memory(Path(assignment["memory_database"]), assignment=assignment, bundle=item) for item in bundles]
+    memory_receipts = [
+        record_alpha_memory(
+            Path(assignment["memory_database"]), assignment=assignment, bundle=item
+        )
+        for item in bundles
+    ]
     memory = memory_receipts[selected_index]
     metrics = {
         key: value
@@ -588,10 +698,17 @@ def execute_registered(
     )
     started_at = datetime.fromtimestamp(run_dir.stat().st_mtime, tz=UTC)
     ended_at = datetime.now(UTC)
+    independent_review_complete = bool(
+        qualification is None
+        or qualification.get("review", {})
+        .get("gates", {})
+        .get("independent_review_complete")
+    )
     passed_edge = bool(
         holdout["adequate_support"]
         and holdout["positive_net_edge"]
         and holdout["cost_stress_passed"]
+        and independent_review_complete
     )
     failed_gates = [
         name
@@ -602,6 +719,8 @@ def execute_registered(
         )
         if not passed
     ]
+    if not independent_review_complete:
+        failed_gates.append("independent_specification_review")
     gate_report = {
         "truth_certified": True,
         "point_in_time_valid": True,
@@ -609,7 +728,7 @@ def execute_registered(
         "out_of_sample_evaluated": True,
         "cost_stress_evaluated": True,
         "selection_bias_audited": True,
-        "independent_review_complete": False,
+        "independent_review_complete": independent_review_complete,
         "shadow_eligible": False,
         "production_eligible": False,
         "capital_authority": False,
@@ -624,7 +743,12 @@ def execute_registered(
         "outcome": "candidate" if passed_edge else "negative",
         "failure_stage": None,
         "gate_report": gate_report,
-        "evidence_digests": [*[item["bundle_digest"] for item in bundles], truth.to_dict()["report_digest"]]
+        "evidence_digests": [
+            *[item["bundle_digest"] for item in bundles],
+            selection_audit["record_digest"],
+            regime_comparison["record_digest"],
+            truth.to_dict()["report_digest"],
+        ]
         if "report_digest" in truth.to_dict()
         else [bundle["bundle_digest"], digest(truth.to_dict())],
     }
@@ -682,7 +806,11 @@ def execute_registered(
         "proposal_digest": digest(proposal_without_digest),
     }
     publication_envelope = {
-        "schema_version": "alpha002-publication-envelope-v1.0.0",
+        "schema_version": (
+            "alpha003-publication-envelope-v1.0.0"
+            if isinstance(qualification, dict)
+            else "alpha002-publication-envelope-v1.0.0"
+        ),
         "bridge_proposal": bridge_proposal,
         "hypothesis_card": card,
         "experiment": {
@@ -710,6 +838,8 @@ def execute_registered(
             "search_plan_digest": search.digest,
             "result_disposition": "accepted" if passed_edge else "rejected",
             "held_out_evaluation": holdout,
+            "selection_bias_audit": selection_audit,
+            "weekend_regime_comparison": regime_comparison,
         },
         "memory_receipt": memory,
         "durable_bundle_path": str(retained_bundle),
@@ -721,7 +851,7 @@ def execute_registered(
         "proposal": proposal,
         "truth": truth.to_dict(),
         "bundle": bundle,
-        "metrics": result,
+        "metrics": metrics,
         "alpha_campaign_attempt": attempt,
         "publication_envelope": publication_envelope,
     }
@@ -747,7 +877,10 @@ def main() -> int:
     panel = Path(assignment["dataset_path"])
     if file_digest(panel) != assignment["dataset_digest"]:
         raise SystemExit("dataset bytes differ from immutable assignment")
-    if digest({"question": " ".join(assignment["question"].split())}) != assignment["question_digest"]:
+    if (
+        digest({"question": " ".join(assignment["question"].split())})
+        != assignment["question_digest"]
+    ):
         raise SystemExit("question digest differs from immutable assignment")
     stage = assignment.get("stage", "execute")
     if stage == "draft":
@@ -807,11 +940,18 @@ def main() -> int:
     receipt["receipt_digest"] = digest(receipt)
     args.receipt.parent.mkdir(parents=True, exist_ok=True)
     args.receipt.write_bytes(canonical(receipt) + b"\n")
-    print(json.dumps({
-        "disposition": receipt["disposition"],
-        "receipt_digest": receipt["receipt_digest"],
-        "trial_count": receipt.get("alpha_campaign_attempt", {}).get("trial_count", 0),
-    }, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "disposition": receipt["disposition"],
+                "receipt_digest": receipt["receipt_digest"],
+                "trial_count": receipt.get("alpha_campaign_attempt", {}).get(
+                    "trial_count", 0
+                ),
+            },
+            sort_keys=True,
+        )
+    )
     return 0
 
 

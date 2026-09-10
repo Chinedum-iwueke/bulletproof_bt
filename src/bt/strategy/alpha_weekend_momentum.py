@@ -1,4 +1,5 @@
 """Causal BTC weekend lagged-return momentum research strategy."""
+
 from __future__ import annotations
 
 from collections import defaultdict, deque
@@ -73,54 +74,98 @@ class AlphaWeekendMomentumStrategy(Strategy):
                             side=Side.SELL if position == Side.BUY else Side.BUY,
                             signal_type="alpha_weekend_momentum_time_exit",
                             confidence=1.0,
-                            metadata={"strategy": "alpha_weekend_momentum", "close_only": True, "is_exit": True, "exit_reason": "max_hold_bars", "bars_held": held},
+                            metadata={
+                                "strategy": "alpha_weekend_momentum",
+                                "close_only": True,
+                                "is_exit": True,
+                                "exit_reason": "max_hold_bars",
+                                "bars_held": held,
+                            },
                         )
                     )
             else:
                 self._held.pop(symbol, None)
                 if len(closes) >= self._lookback and len(ranges) >= self._atr_window:
                     momentum = bar.close / closes[-self._lookback] - 1.0
-                    atr = sum(list(ranges)[-self._atr_window:]) / self._atr_window
+                    atr = sum(list(ranges)[-self._atr_window :]) / self._atr_window
                     weekend = pd.Timestamp(ts).dayofweek >= 5
                     passed = weekend and abs(momentum) >= self._threshold and atr > 0
                     if passed:
                         side = Side.BUY if momentum > 0 else Side.SELL
                         stop_distance = atr * self._stop_multiple
-                        stop_price = bar.close - stop_distance if side == Side.BUY else bar.close + stop_distance
+                        stop_price = (
+                            bar.close - stop_distance
+                            if side == Side.BUY
+                            else bar.close + stop_distance
+                        )
                         trace = make_decision_trace(
                             reason_code="weekend_lagged_momentum",
                             setup_class="weekend_momentum",
                             hypothesis_branch="entry",
-                            conditions_bool_map={"utc_weekend": weekend, "momentum_threshold": abs(momentum) >= self._threshold},
+                            conditions_bool_map={
+                                "utc_weekend": weekend,
+                                "momentum_threshold": abs(momentum) >= self._threshold,
+                            },
                             blockers_bool_map={},
                             permission_layer_state={},
-                            parameter_combination={"momentum_lookback_bars": self._lookback, "momentum_threshold": self._threshold, "stop_atr_multiple": self._stop_multiple, "max_hold_bars": self._max_hold},
-                            gate_values={"momentum_60m": momentum, "day_of_week": float(pd.Timestamp(ts).dayofweek), "atr_60": atr},
-                            gate_thresholds={"momentum_threshold": self._threshold, "weekend_day": 5.0},
+                            parameter_combination={
+                                "momentum_lookback_bars": self._lookback,
+                                "momentum_threshold": self._threshold,
+                                "stop_atr_multiple": self._stop_multiple,
+                                "max_hold_bars": self._max_hold,
+                            },
+                            gate_values={
+                                "momentum_60m": momentum,
+                                "day_of_week": float(pd.Timestamp(ts).dayofweek),
+                                "atr_60": atr,
+                            },
+                            gate_thresholds={
+                                "momentum_threshold": self._threshold,
+                                "weekend_day": 5.0,
+                            },
                             gate_margins={"momentum": abs(momentum) - self._threshold},
                             most_binding_gate="momentum_threshold",
                         )
                         signals.append(
                             Signal(
-                                ts=ts, symbol=symbol, side=side,
-                                signal_type="alpha_weekend_momentum_entry", confidence=1.0,
+                                ts=ts,
+                                symbol=symbol,
+                                side=side,
+                                signal_type="alpha_weekend_momentum_entry",
+                                confidence=1.0,
                                 metadata={
-                                    "strategy": "alpha_weekend_momentum", "strategy_id": "ALPHA-WEEKEND-MOMENTUM",
-                                    "family_variant": "weekend-60m", "family_pattern": "calendar_gated_continuation",
-                                    "entry_reason": "weekend_lagged_momentum", "entry_price": bar.close,
-                                    "entry_reference_price": bar.close, "intended_entry_price": bar.close,
-                                    "signal_timeframe": "1m", "execution_timeframe": "1m",
-                                    "risk_accounting": "engine_canonical_R", "r_per_trade": self._r_per_trade,
-                                    "sizing_mode": "risk_at_stop", "cap_policy": "allow_clip_with_truth",
-                                    "stop_model": "atr_multiple", "stop_price": stop_price,
-                                    "entry_stop_price": stop_price, "stop_distance": stop_distance,
-                                    "momentum_60m": momentum, "day_of_week": pd.Timestamp(ts).day_name(),
+                                    "strategy": "alpha_weekend_momentum",
+                                    "strategy_id": "ALPHA-WEEKEND-MOMENTUM",
+                                    "family_variant": "weekend-60m",
+                                    "family_pattern": "calendar_gated_continuation",
+                                    "entry_reason": "weekend_lagged_momentum",
+                                    "entry_price": bar.close,
+                                    "entry_reference_price": bar.close,
+                                    "intended_entry_price": bar.close,
+                                    "signal_timeframe": "1m",
+                                    "execution_timeframe": "1m",
+                                    "risk_accounting": "engine_canonical_R",
+                                    "r_per_trade": self._r_per_trade,
+                                    "sizing_mode": "risk_at_stop",
+                                    "cap_policy": "allow_clip_with_truth",
+                                    "stop_model": "atr_multiple",
+                                    "stop_price": stop_price,
+                                    "entry_stop_price": stop_price,
+                                    "stop_distance": stop_distance,
+                                    "momentum_60m": momentum,
+                                    "day_of_week": pd.Timestamp(ts).day_name(),
                                     "decision_trace": trace,
                                 },
                             )
                         )
                         self._held[symbol] = 0
             previous = closes[-1] if closes else bar.close
-            ranges.append(max(bar.high - bar.low, abs(bar.high - previous), abs(bar.low - previous)))
+            ranges.append(
+                max(
+                    bar.high - bar.low,
+                    abs(bar.high - previous),
+                    abs(bar.low - previous),
+                )
+            )
             closes.append(bar.close)
         return signals
