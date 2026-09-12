@@ -64,6 +64,13 @@ def test_duplicate_fill_execution_is_not_applied_twice():
     assert result["duplicate_fills_suppressed"] == 1
 
 
+def test_duplicate_broker_event_is_suppressed_exactly_once():
+    acknowledged = event()
+    result = replay_oms(commands=[command()], events=[acknowledged, acknowledged])
+    assert result["duplicate_events_suppressed"] == 1
+    assert len(result["events"]) == 1
+
+
 def test_execution_identity_content_conflict_fails_closed():
     events = [event("acknowledged", 1), event("partially_filled", 2, execution_id="x1", fill_quantity="0.4", fill_price="100"), event("partially_filled", 3, execution_id="x1", fill_quantity="0.3", fill_price="100")]
     with pytest.raises(OmsError, match="execution_id"):
@@ -74,6 +81,18 @@ def test_cancel_requires_a_known_target_order():
     cancel = command(command_id="cancel", idempotency_key="cancel:1", action="cancel", target_client_order_id="missing")
     with pytest.raises(OmsError, match="cancel command"):
         replay_oms(commands=[cancel], events=[])
+
+
+def test_cancel_command_can_reference_the_canonical_client_order():
+    cancel = command(
+        command_id="cancel",
+        idempotency_key="cancel:1",
+        action="cancel",
+        target_client_order_id=client_order_id("trial:1", "bybit"),
+    )
+    result = replay_oms(commands=[command(), cancel], events=[event()])
+    assert len(result["commands"]) == 2
+    assert result["orders"][0]["state"] == "acknowledged"
 
 
 def test_overfill_and_noncontiguous_events_fail_closed():
@@ -120,6 +139,13 @@ def test_stale_snapshot_and_balance_or_position_break_freeze():
     remote = snapshot(observed_at=stale_at, available_at=stale_at, positions={"BTCUSDT": "1"}, balances={"USDT": "99"})
     result = reconcile(journal, remote)
     assert {item["category"] for item in result["discrepancies"]} == {"stale_snapshot", "position_quantity", "balance_quantity"}
+
+
+def test_snapshot_future_availability_fails_point_in_time_guard():
+    journal = replay_oms(commands=[command()], events=[event()])
+    future = (NOW + timedelta(seconds=1)).isoformat()
+    with pytest.raises(OmsError, match="point-in-time"):
+        reconcile(journal, snapshot(observed_at=future, available_at=future))
 
 
 def test_restart_replay_is_digest_identical():
