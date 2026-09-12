@@ -5,7 +5,11 @@ import urllib.parse
 
 import pytest
 
-from bt.exec.adapters.base import BrokerOrderAmendRequest, BrokerOrderCancelRequest, BrokerOrderRequest
+from bt.exec.adapters.base import (
+    BrokerOrderAmendRequest,
+    BrokerOrderCancelRequest,
+    BrokerOrderRequest,
+)
 from bt.exec.adapters.bybit.adapter import BybitBrokerAdapter
 from bt.exec.adapters.bybit.client_rest import BybitRESTClient
 from bt.exec.adapters.bybit.client_ws_private import BybitPrivateWSClient
@@ -110,3 +114,74 @@ def test_live_environment_mutations_allowed_only_after_enable() -> None:
         BrokerOrderRequest(client_order_id="x", symbol="BTCUSDT", side="buy", qty=1.0, order_type="market", limit_price=None)
     )
     assert order_id == "by-123"
+
+
+def test_instrument_rules_include_dynamic_quantity_and_notional_limits() -> None:
+    cfg = resolve_bybit_config(
+        {
+            "broker": {
+                "venue": "bybit",
+                "environment": "demo",
+                "symbols": ["BTCUSDT"],
+                "ws": {"enabled": False},
+                "auth": {
+                    "api_key_env": "BYBIT_API_KEY",
+                    "api_secret_env": "BYBIT_API_SECRET",
+                },
+            }
+        }
+    )
+
+    def opener(_req, _timeout):
+        return _Resp(
+            {
+                "retCode": 0,
+                "retMsg": "OK",
+                "result": {
+                    "list": [
+                        {
+                            "symbol": "BTCUSDT",
+                            "priceFilter": {"tickSize": "0.10"},
+                            "lotSizeFilter": {
+                                "qtyStep": "0.001",
+                                "minOrderQty": "0.001",
+                                "maxOrderQty": "100",
+                                "minNotionalValue": "5",
+                            },
+                        }
+                    ]
+                },
+            }
+        )
+
+    rest = BybitRESTClient(
+        base_url=cfg.rest_base_url,
+        api_key="key",
+        api_secret="secret",
+        recv_window_ms=cfg.recv_window_ms,
+        timeout_ms=cfg.request_timeout_ms,
+        max_retries=0,
+        retry_backoff_ms=0,
+        opener=opener,
+    )
+    adapter = BybitBrokerAdapter(
+        config=cfg,
+        rest_client=rest,
+        ws_public=BybitPublicWSClient(
+            url=cfg.public_ws_url, topics=[], symbols=cfg.symbols, enabled=False
+        ),
+        ws_private=BybitPrivateWSClient(
+            url=cfg.private_ws_url,
+            topics=[],
+            api_key="key",
+            api_secret="secret",
+            enabled=False,
+        ),
+    )
+    spec = adapter.get_instrument("BTCUSDT")
+    assert spec is not None
+    assert (spec.lot_size, spec.min_order_qty, spec.min_notional_value) == (
+        0.001,
+        0.001,
+        5.0,
+    )
