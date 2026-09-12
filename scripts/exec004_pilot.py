@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from bt.institutional.oms import (
-    OMS_SCHEMA_VERSION,
+    OMS_SPECIFICATION,
     client_order_id,
     oms_reconciliation_receipt,
     reconcile_oms,
@@ -66,7 +66,7 @@ def main() -> int:
     )
     report = {
         "schema_version": "exec004-native-pilot-v1.0.0", "success": receipt.result["qualified"],
-        "capital_or_order_authority": False, "oms_specification": {"schema_version": OMS_SCHEMA_VERSION},
+        "capital_or_order_authority": False, "oms_specification": OMS_SPECIFICATION,
         "oms_specification_digest": receipt.result["oms_schema_digest"], "receipt": receipt.as_dict(),
         "adversarial_stale_snapshot": {"decision": adverse["decision"], "submission_allowed": adverse["submission_allowed"]},
     }

@@ -28,6 +28,16 @@ TRANSITIONS = {
     "partially_filled": {"partially_filled", "filled", "cancel_requested", "cancelled", "expired"},
     "cancel_requested": {"partially_filled", "filled", "cancelled", "expired"},
 }
+OMS_SPECIFICATION = {
+    "schema_version": OMS_SCHEMA_VERSION,
+    "command_identity": "sha256(venue_id,idempotency_key)",
+    "command_actions": sorted(COMMAND_ACTIONS),
+    "event_types": sorted(EVENT_TYPES),
+    "terminal_states": sorted(TERMINAL_STATES),
+    "reconciliation_domains": ["orders", "fills", "positions", "balances", "snapshot_freshness"],
+    "material_action": "freeze_and_investigate",
+    "authority": {"allocation": False, "capital": False, "orders": False, "promotion": False},
+}
 
 
 class OmsError(ValueError):
@@ -366,7 +376,7 @@ def oms_reconciliation_receipt(
     )
     result = {
         "schema_version": OMS_SCHEMA_VERSION,
-        "oms_schema_digest": digest({"schema_version": OMS_SCHEMA_VERSION}),
+        "oms_schema_digest": digest(OMS_SPECIFICATION),
         "journal": journal,
         "reconciliation": reconciliation,
         "dependency_receipts": {
