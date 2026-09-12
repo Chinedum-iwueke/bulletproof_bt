@@ -20,6 +20,11 @@ METRICS = {
     "reject_rate": ("maximum", "venue"),
     "reconciliation_breaks": ("maximum", "infrastructure"),
 }
+DEPENDENCY_PRODUCERS = {
+    "EXEC-005": "bt.institutional.execution_calibration.execution_calibration_receipt",
+    "EXEC-008": "bt.institutional.adapter_certification.adapter_certification_receipt",
+    "SHADOW-002": "bt.institutional.shadow_monitoring.shadow_monitoring_receipt",
+}
 EXECUTION_DEGRADATION_SPECIFICATION = {
     "schema_version": EXECUTION_DEGRADATION_SCHEMA_VERSION,
     "dependencies": ["EXEC-005", "EXEC-008", "SHADOW-002", "GOV-003", "PLAT-005"],
@@ -95,7 +100,11 @@ def _dependency(
     value: ProducerReceipt | dict[str, Any], milestone: str
 ) -> dict[str, Any]:
     item = value.as_dict() if isinstance(value, ProducerReceipt) else dict(value)
-    if not verify_receipt(item) or item.get("milestone") != milestone:
+    if (
+        not verify_receipt(item)
+        or item.get("milestone") != milestone
+        or item.get("producer") != DEPENDENCY_PRODUCERS[milestone]
+    ):
         raise ExecutionDegradationError(
             f"EXEC-009 requires an exact {milestone} receipt"
         )
@@ -401,6 +410,17 @@ def execution_degradation_receipt(
         candidate_lifecycle=candidate_lifecycle,
         configuration=configuration,
     )
+    adapter = dependencies["EXEC-008"]["result"]
+    observed_venues = {item["venue"] for item in result["observations"]}
+    observed_environments = {item["environment"] for item in result["observations"]}
+    if (
+        adapter.get("qualified") is not True
+        or observed_venues != {adapter.get("venue")}
+        or observed_environments != {adapter.get("environment")}
+    ):
+        raise ExecutionDegradationError(
+            "EXEC-008 qualification does not match the observed venue and environment"
+        )
     result.update(
         {
             "degradation_schema_digest": digest(EXECUTION_DEGRADATION_SPECIFICATION),

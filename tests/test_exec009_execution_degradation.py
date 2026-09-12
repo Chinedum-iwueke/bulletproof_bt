@@ -37,9 +37,16 @@ LIFECYCLE = {
 
 
 def dependency(milestone: str, **result):
+    producers = {
+        "EXEC-005": "bt.institutional.execution_calibration.execution_calibration_receipt",
+        "EXEC-008": "bt.institutional.adapter_certification.adapter_certification_receipt",
+        "SHADOW-002": "bt.institutional.shadow_monitoring.shadow_monitoring_receipt",
+    }
+    if milestone == "EXEC-008":
+        result = {"venue": "bybit", "environment": "demo", **result}
     return build_receipt(
         milestone=milestone,
-        producer=f"fixture.{milestone.lower()}",
+        producer=producers[milestone],
         producer_version="1.0.0",
         source_commit=COMMIT,
         inputs={},
@@ -216,7 +223,7 @@ def test_receipt_rejects_a_different_shadow_candidate():
 def test_receipt_rejects_dependency_dataset_drift():
     drifted = build_receipt(
         milestone="EXEC-005",
-        producer="fixture.exec-005",
+        producer="bt.institutional.execution_calibration.execution_calibration_receipt",
         producer_version="1.0.0",
         source_commit=COMMIT,
         inputs={},
@@ -229,6 +236,53 @@ def test_receipt_rejects_dependency_dataset_drift():
         execution_degradation_receipt(
             exec005_receipt=drifted,
             exec008_receipt=dependency("EXEC-008"),
+            shadow002_receipt=dependency("SHADOW-002", candidate_digest=CANDIDATE),
+            governance_policy_digest=digest({"gov003": "active"}),
+            platform_observability_digest=digest({"plat005": "current"}),
+            candidate_lifecycle=LIFECYCLE,
+            observations=[observation(1)],
+            known_at=NOW,
+            prior_status="monitoring",
+            dataset_digest=DATASET,
+            source_commit=COMMIT,
+            configuration=CONFIG,
+        )
+
+
+def test_receipt_rejects_wrong_dependency_producer():
+    forged = build_receipt(
+        milestone="EXEC-005",
+        producer="fixture.exec005",
+        producer_version="1.0.0",
+        source_commit=COMMIT,
+        inputs={},
+        dataset_digest=DATASET,
+        configuration={},
+        artifacts={},
+        result={"qualified": True},
+    )
+    with pytest.raises(ExecutionDegradationError, match="exact EXEC-005"):
+        execution_degradation_receipt(
+            exec005_receipt=forged,
+            exec008_receipt=dependency("EXEC-008"),
+            shadow002_receipt=dependency("SHADOW-002", candidate_digest=CANDIDATE),
+            governance_policy_digest=digest({"gov003": "active"}),
+            platform_observability_digest=digest({"plat005": "current"}),
+            candidate_lifecycle=LIFECYCLE,
+            observations=[observation(1)],
+            known_at=NOW,
+            prior_status="monitoring",
+            dataset_digest=DATASET,
+            source_commit=COMMIT,
+            configuration=CONFIG,
+        )
+
+
+def test_receipt_rejects_adapter_qualification_for_another_venue():
+    with pytest.raises(ExecutionDegradationError, match="observed venue"):
+        execution_degradation_receipt(
+            exec005_receipt=dependency("EXEC-005"),
+            exec008_receipt=dependency("EXEC-008", venue="binance"),
             shadow002_receipt=dependency("SHADOW-002", candidate_digest=CANDIDATE),
             governance_policy_digest=digest({"gov003": "active"}),
             platform_observability_digest=digest({"plat005": "current"}),

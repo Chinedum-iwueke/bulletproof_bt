@@ -15,16 +15,23 @@ from bt.institutional.receipt import build_receipt, digest, verify_receipt
 
 
 def dependency(milestone: str, dataset_digest: str, source_commit: str) -> dict:
+    producers = {
+        "EXEC-005": "bt.institutional.execution_calibration.execution_calibration_receipt",
+        "EXEC-008": "bt.institutional.adapter_certification.adapter_certification_receipt",
+    }
+    result = {"qualified": True}
+    if milestone == "EXEC-008":
+        result.update({"venue": "bybit", "environment": "demo"})
     return build_receipt(
         milestone=milestone,
-        producer=f"bt.exec009.fixture.{milestone.lower()}",
+        producer=producers[milestone],
         producer_version="1.0.0",
         source_commit=source_commit,
         inputs={"fixture": "exec009-bounded-replay"},
         dataset_digest=dataset_digest,
         configuration={},
         artifacts={},
-        result={"qualified": True},
+        result=result,
     ).as_dict()
 
 
@@ -93,7 +100,7 @@ def main() -> int:
     }
     dependencies["SHADOW-002"] = build_receipt(
         milestone="SHADOW-002",
-        producer="bt.exec009.fixture.shadow002",
+        producer="bt.institutional.shadow_monitoring.shadow_monitoring_receipt",
         producer_version="1.0.0",
         source_commit=source_commit,
         inputs={"fixture": "exec009-bounded-replay"},
