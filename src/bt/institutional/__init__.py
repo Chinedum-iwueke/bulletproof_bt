@@ -18,6 +18,11 @@ from .execution_calibration import (
     calibrate_execution_quality,
     execution_calibration_receipt,
 )
+from .capacity import (
+    PortfolioCapacityError,
+    capacity_dossier_receipt,
+    portfolio_capacity,
+)
 
 __all__ = [
     "PortfolioDependencyError",
@@ -36,6 +41,9 @@ __all__ = [
     "ExecutionCalibrationError",
     "calibrate_execution_quality",
     "execution_calibration_receipt",
+    "PortfolioCapacityError",
+    "capacity_dossier_receipt",
+    "portfolio_capacity",
     "microstructure_state",
     "microstructure_state_receipt",
     "oms_reconciliation_receipt",
