@@ -23,6 +23,13 @@ from .capacity import (
     capacity_dossier_receipt,
     portfolio_capacity,
 )
+from .risk_budget import (
+    RISK_BUDGET_SCHEMA_VERSION,
+    RISK_BUDGET_SPECIFICATION,
+    DynamicRiskBudgetError,
+    dynamic_risk_budget,
+    dynamic_risk_budget_receipt,
+)
 
 __all__ = [
     "PortfolioDependencyError",
@@ -44,6 +51,11 @@ __all__ = [
     "PortfolioCapacityError",
     "capacity_dossier_receipt",
     "portfolio_capacity",
+    "RISK_BUDGET_SCHEMA_VERSION",
+    "RISK_BUDGET_SPECIFICATION",
+    "DynamicRiskBudgetError",
+    "dynamic_risk_budget",
+    "dynamic_risk_budget_receipt",
     "microstructure_state",
     "microstructure_state_receipt",
     "oms_reconciliation_receipt",
