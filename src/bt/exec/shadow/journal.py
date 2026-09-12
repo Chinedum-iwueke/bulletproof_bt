@@ -1,4 +1,5 @@
 """Hash-chained prospective execution journal and deterministic replay."""
+
 from __future__ import annotations
 
 import hashlib
@@ -165,23 +166,32 @@ def replay_journal(
     bindings: dict[str, str] | None = None
     cost_totals = {"fee_cost": 0.0, "slippage_cost": 0.0, "spread_cost": 0.0}
     sealed = False
-    for line_number, raw in enumerate(path.read_text(encoding="ascii").splitlines(), start=1):
+    sealed_at: str | None = None
+    for line_number, raw in enumerate(
+        path.read_text(encoding="ascii").splitlines(), start=1
+    ):
         try:
             record = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise JournalError(f"invalid JSON at journal line {line_number}") from exc
         core = {key: value for key, value in record.items() if key != "record_digest"}
         if record.get("record_digest") != _digest(core):
-            raise JournalError(f"record digest mismatch at sequence {expected_sequence}")
+            raise JournalError(
+                f"record digest mismatch at sequence {expected_sequence}"
+            )
         if record.get("sequence") != expected_sequence:
             raise JournalError(f"out-of-order sequence at line {line_number}")
         if record.get("previous_digest") != previous:
             raise JournalError(f"digest chain mismatch at sequence {expected_sequence}")
         event_id = str(record.get("event_id", ""))
         if not event_id or event_id in seen:
-            raise JournalError(f"duplicate or missing event_id at sequence {expected_sequence}")
+            raise JournalError(
+                f"duplicate or missing event_id at sequence {expected_sequence}"
+            )
         if record.get("payload_digest") != _digest(record.get("payload")):
-            raise JournalError(f"payload digest mismatch at sequence {expected_sequence}")
+            raise JournalError(
+                f"payload digest mismatch at sequence {expected_sequence}"
+            )
         _validate_observed_at(str(record.get("observed_at", "")))
         event_type = str(record.get("event_type"))
         counts[event_type] = counts.get(event_type, 0) + 1
@@ -190,12 +200,19 @@ def replay_journal(
                 raise JournalError("first event must be session_started")
             payload = record.get("payload") or {}
             authority = payload.get("authority") or {}
-            if any(authority.get(key) != "prohibited" for key in ("capital", "live_orders", "venue_mutation")):
-                raise JournalError("shadow journal does not prohibit capital and venue mutation")
+            if any(
+                authority.get(key) != "prohibited"
+                for key in ("capital", "live_orders", "venue_mutation")
+            ):
+                raise JournalError(
+                    "shadow journal does not prohibit capital and venue mutation"
+                )
             bindings = _validate_bindings(payload.get("bindings") or {})
         if sealed:
             raise JournalError("records exist after session seal")
         sealed = event_type == "session_sealed"
+        if sealed:
+            sealed_at = str(record["observed_at"])
         if event_type == "fill":
             payload = record.get("payload") or {}
             for field in cost_totals:
@@ -205,12 +222,15 @@ def replay_journal(
         expected_sequence += 1
     if bindings is None:
         raise JournalError("journal is empty")
-    if expected_bindings is not None and bindings != _validate_bindings(expected_bindings):
+    if expected_bindings is not None and bindings != _validate_bindings(
+        expected_bindings
+    ):
         raise JournalError("journal bindings do not match expected bindings")
     return {
         "schema_version": "shadow-replay-report-v1.0.0",
         "success": sealed,
         "sealed": sealed,
+        "sealed_at": sealed_at,
         "event_count": expected_sequence - 1,
         "event_ids": sorted(seen),
         "event_counts": counts,
