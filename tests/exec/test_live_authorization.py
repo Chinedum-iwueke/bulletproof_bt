@@ -17,8 +17,45 @@ from bt.exec.services.live_authorization import (
     validate_live_authorization_bundle,
 )
 from bt.exec.services.live_controls import CanaryGuard, load_canary_policy
+from bt.institutional.adapter_certification import (
+    REQUIRED_DRILLS,
+    adapter_certification_receipt,
+)
+from bt.institutional.receipt import build_receipt, digest
 
 NOW = datetime(2026, 8, 25, 12, 0, tzinfo=UTC)
+
+
+def connector_certification() -> dict:
+    dataset_digest = digest({"fixture": "live-authorization"})
+    dependencies = {
+        milestone: build_receipt(
+            milestone=milestone,
+            producer=f"test.{milestone.lower()}",
+            producer_version="1.0.0",
+            source_commit="a" * 40,
+            inputs={},
+            dataset_digest=dataset_digest,
+            configuration={},
+            artifacts={},
+            result={"qualified": True},
+        ).as_dict()
+        for milestone in ("EXEC-003", "EXEC-004", "EXEC-007")
+    }
+    return adapter_certification_receipt(
+        venue="bybit",
+        environment="live",
+        product_type="perpetual",
+        evidence_class="venue_observed",
+        observed_at=NOW.replace(hour=11),
+        valid_until=NOW.replace(hour=13),
+        endpoint_identity="api.bybit.com",
+        drill_results={name: True for name in REQUIRED_DRILLS},
+        dependency_receipts=dependencies,
+        dataset_digest=dataset_digest,
+        source_commit="a" * 40,
+        configuration={"environment": "live-certification-fixture"},
+    ).as_dict()
 
 
 def config() -> dict:
@@ -45,6 +82,7 @@ def config() -> dict:
 
 
 def bundle() -> dict:
+    certification = connector_certification()
     return finalize_live_authorization_bundle(
         {
             "schema_version": "live-canary-authorization-bundle-v1.0.0",
@@ -79,8 +117,9 @@ def bundle() -> dict:
                         "status": "qualified",
                     },
                     "live_connector_certification": {
-                        "digest": "3" * 64,
+                        "digest": certification["receipt_digest"],
                         "status": "certified",
+                        "receipt": certification,
                     },
                     "operational_readiness": {
                         "digest": "4" * 64,
@@ -148,6 +187,17 @@ def test_authorization_requires_enabled_canary_controls() -> None:
         validate_live_authorization_bundle(bundle(), changed_config, now=NOW)
 
 
+def test_status_and_digest_cannot_substitute_for_exact_current_certification() -> None:
+    changed = bundle()
+    changed["plan"]["evidence"]["live_connector_certification"] = {
+        "digest": "3" * 64,
+        "status": "certified",
+    }
+    changed = finalize_live_authorization_bundle(changed)
+    with pytest.raises(LiveAuthorizationError, match="exact receipt"):
+        validate_live_authorization_bundle(changed, config(), now=NOW)
+
+
 def test_bundle_file_requires_exact_owner_and_mode(tmp_path) -> None:
     path = tmp_path / "authorization.json"
     path.write_text(json.dumps(bundle()), encoding="utf-8")
@@ -182,20 +232,28 @@ def test_canary_rejects_stale_future_loss_and_gross_risk() -> None:
         "gross_notional_usd": 0.0,
         "wall_clock": NOW,
     }
-    assert guard.validate_intent(
-        **kwargs, bar_ts=pd.Timestamp("2026-08-25T11:59:55Z")
-    ) is None
-    assert guard.validate_intent(
-        **kwargs, bar_ts=pd.Timestamp("2026-08-25T11:00:00Z")
-    ) == "market_data_not_wall_clock_fresh"
-    assert guard.validate_intent(
-        **(kwargs | {"current_equity": 989.0}),
-        bar_ts=pd.Timestamp("2026-08-25T11:59:55Z"),
-    ) == "max_daily_loss_usd_exceeded"
-    assert guard.validate_intent(
-        **(kwargs | {"gross_notional_usd": 75.0}),
-        bar_ts=pd.Timestamp("2026-08-25T11:59:55Z"),
-    ) == "max_gross_notional_usd_exceeded"
+    assert (
+        guard.validate_intent(**kwargs, bar_ts=pd.Timestamp("2026-08-25T11:59:55Z"))
+        is None
+    )
+    assert (
+        guard.validate_intent(**kwargs, bar_ts=pd.Timestamp("2026-08-25T11:00:00Z"))
+        == "market_data_not_wall_clock_fresh"
+    )
+    assert (
+        guard.validate_intent(
+            **(kwargs | {"current_equity": 989.0}),
+            bar_ts=pd.Timestamp("2026-08-25T11:59:55Z"),
+        )
+        == "max_daily_loss_usd_exceeded"
+    )
+    assert (
+        guard.validate_intent(
+            **(kwargs | {"gross_notional_usd": 75.0}),
+            bar_ts=pd.Timestamp("2026-08-25T11:59:55Z"),
+        )
+        == "max_gross_notional_usd_exceeded"
+    )
 
 
 def test_canary_rejects_an_expired_session() -> None:
@@ -212,14 +270,17 @@ def test_canary_rejects_an_expired_session() -> None:
         limit_price=None,
         reason="live-001-duration-test",
     )
-    assert guard.validate_intent(
-        intent=intent,
-        open_orders=[],
-        positions=[],
-        current_price=50_000.0,
-        current_equity=1_000.0,
-        starting_equity=1_000.0,
-        gross_notional_usd=0.0,
-        bar_ts=pd.Timestamp("2026-08-25T11:59:55Z"),
-        wall_clock=NOW,
-    ) == "max_duration_seconds_exceeded"
+    assert (
+        guard.validate_intent(
+            intent=intent,
+            open_orders=[],
+            positions=[],
+            current_price=50_000.0,
+            current_equity=1_000.0,
+            starting_equity=1_000.0,
+            gross_notional_usd=0.0,
+            bar_ts=pd.Timestamp("2026-08-25T11:59:55Z"),
+            wall_clock=NOW,
+        )
+        == "max_duration_seconds_exceeded"
+    )
