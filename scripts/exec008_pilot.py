@@ -49,6 +49,8 @@ def main() -> int:
             "tests/exec/test_c8_connector_certification.py",
             "tests/exec/test_binance_adapter_c3.py",
             "tests/exec/test_bybit_adapter_phase5.py",
+            "tests/exec/test_order_lifecycle_phase3.py",
+            "tests/exec/test_live_controls_phase6.py",
             "tests/exec/test_live_authorization.py",
         ],
         check=False,

@@ -12,6 +12,8 @@ environment-specific, expiring, and fail-closed.
   suppression, and emergency kill.
 - Distinct deterministic-conformance and venue-observed evidence classes.
 - An immutable EXEC-008 producer receipt and an admission validator.
+- Binance private-stream reconnect with fresh listen-key acquisition; Bybit and
+  Binance reconnect/re-authentication are both exercised by deterministic drills.
 - Micro-live authorization now requires the exact current live-environment receipt;
   a claimed status and digest are insufficient.
 
