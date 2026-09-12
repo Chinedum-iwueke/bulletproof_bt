@@ -12,6 +12,7 @@ from .execution import (
     verify_event,
 )
 from .microstructure import MicrostructureStateError, microstructure_state, microstructure_state_receipt
+from .oms import OmsError, oms_reconciliation_receipt, reconcile_oms, replay_oms
 
 __all__ = [
     "PortfolioDependencyError",
@@ -26,8 +27,12 @@ __all__ = [
     "execution_journal_receipt",
     "verify_event",
     "MicrostructureStateError",
+    "OmsError",
     "microstructure_state",
     "microstructure_state_receipt",
+    "oms_reconciliation_receipt",
+    "reconcile_oms",
+    "replay_oms",
     "dependency_dossier_receipt",
     "verify_receipt",
 ]
