@@ -27,6 +27,7 @@ dev = [
 
 [project.scripts]
 bt = "bt.cli:main"
+bt-exec-safety = "bt.exec.cli.safety_control:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

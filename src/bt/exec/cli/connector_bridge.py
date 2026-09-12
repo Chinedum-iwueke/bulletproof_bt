@@ -15,6 +15,7 @@ from bt.exec.adapters.bybit import BybitBrokerAdapter, BybitRESTClient, resolve_
 from bt.exec.adapters.bybit.client_ws_private import BybitPrivateWSClient
 from bt.exec.adapters.bybit.client_ws_public import BybitPublicWSClient
 from bt.institutional.realtime_risk import require_realtime_risk_authorization
+from bt.institutional.runtime_safety import contain_runtime, require_runtime_ready
 
 
 def _adapter(payload: dict[str, Any]):
@@ -96,6 +97,13 @@ def _fill(value: Any) -> dict[str, Any]:
 def execute(payload: dict[str, Any]) -> dict[str, Any]:
     action = str(payload.get("action", "snapshot"))
     if action == "submit_order":
+        safety_path = str(payload.get("safety_state_path") or os.environ.get("INVARIANCE_EXECUTION_SAFETY_STATE", "")).strip()
+        journal_path = str(payload.get("safety_journal_path") or os.environ.get("INVARIANCE_EXECUTION_SAFETY_JOURNAL", "")).strip()
+        if not safety_path:
+            raise ValueError("execution_safety_state_required")
+        if not journal_path:
+            raise ValueError("execution_safety_journal_required")
+        require_runtime_ready(safety_path, journal_path)
         order = payload.get("order") if isinstance(payload.get("order"), dict) else {}
         require_realtime_risk_authorization(
             receipt=payload.get("risk005_receipt", {}),
@@ -163,17 +171,26 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
             return {"ok": True, "action": action, "order_id": order_id, "client_order_id": order["client_order_id"]}
         if action == "cancel_order":
             if payload["environment"] == "live":
-                if payload.get("live_canary_approved") is not True:
-                    raise ValueError("live_canary_approval_required")
                 adapter.set_live_mutations_enabled(True)
             adapter.cancel_order(BrokerOrderCancelRequest(
                 order_id=payload.get("order_id"), client_order_id=payload.get("client_order_id"), symbol=payload.get("symbol")
             ))
             return {"ok": True, "action": action}
         if action == "emergency_freeze":
+            safety_path = str(payload.get("safety_state_path") or os.environ.get("INVARIANCE_EXECUTION_SAFETY_STATE", "")).strip()
+            journal_path = str(payload.get("safety_journal_path") or os.environ.get("INVARIANCE_EXECUTION_SAFETY_JOURNAL", "")).strip()
+            if not safety_path or not journal_path:
+                raise ValueError("execution_safety_paths_required")
+            contain_runtime(
+                state_path=safety_path,
+                journal_path=journal_path,
+                action="kill",
+                request_id=str(payload.get("request_id", "")),
+                actor=str(payload.get("actor", "local-emergency-controller")),
+                reason=str(payload.get("reason", "emergency runtime containment")),
+                now=datetime.now(UTC),
+            )
             if payload["environment"] == "live":
-                if payload.get("live_canary_approved") is not True:
-                    raise ValueError("live_canary_approval_required")
                 adapter.set_live_mutations_enabled(True)
             cancelled: list[str] = []
             for order in adapter.fetch_open_orders():
@@ -184,7 +201,11 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
                 ))
                 cancelled.append(order.id)
             closed: list[str] = []
-            if payload.get("close_positions") is True and payload.get("product_type") == "perpetual":
+            if payload.get("close_positions") is True:
+                if payload.get("emergency_reduction_authorized") is not True:
+                    raise ValueError("emergency_reduction_authority_required")
+                if payload.get("product_type") != "perpetual":
+                    raise ValueError("emergency_position_close_requires_perpetual")
                 for position in adapter.fetch_positions():
                     if position.qty <= 0 or position.side is None:
                         continue

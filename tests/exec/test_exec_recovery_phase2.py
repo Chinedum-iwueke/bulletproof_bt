@@ -36,7 +36,9 @@ def test_recovery_resume_with_checkpoint(tmp_path) -> None:
             next_client_order_seq=9,
         )
     )
-    plan = build_recovery_plan(store=store, mode="paper_simulated", restart_policy="resume")
+    plan = build_recovery_plan(
+        store=store, mode="paper_simulated", restart_policy="resume"
+    )
     assert plan.disposition.value == "resume"
     assert plan.checkpoint is not None
     assert plan.checkpoint.sequence == 5
@@ -55,8 +57,12 @@ def test_recovery_incomplete_or_policy_degrade(tmp_path) -> None:
             updated_at=now,
         )
     )
-    incomplete = build_recovery_plan(store=store, mode="shadow", restart_policy="resume")
+    incomplete = build_recovery_plan(
+        store=store, mode="shadow", restart_policy="resume"
+    )
     assert incomplete.disposition.value == "incomplete_prior_state"
 
-    reconcile = build_recovery_plan(store=store, mode="shadow", restart_policy="reconcile_only")
-    assert reconcile.disposition.value == "start_fresh"
+    reconcile = build_recovery_plan(
+        store=store, mode="shadow", restart_policy="reconcile_only"
+    )
+    assert reconcile.disposition.value == "reconciliation_required"
