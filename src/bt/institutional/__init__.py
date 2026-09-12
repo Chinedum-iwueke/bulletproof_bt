@@ -62,6 +62,17 @@ from .shadow_monitoring import (
     monitor_shadow_candidate,
     shadow_monitoring_receipt,
 )
+from .venue_telemetry import (
+    VENUE_TELEMETRY_PRODUCER,
+    VENUE_TELEMETRY_SCHEMA_VERSION,
+    VENUE_TELEMETRY_SPECIFICATION,
+    VenueTelemetryError,
+    VenueTelemetryEvent,
+    replay_venue_telemetry,
+    venue_event,
+    venue_telemetry_receipt,
+    verify_venue_event,
+)
 
 __all__ = [
     "ADMISSION_SCHEMA_VERSION",
@@ -74,6 +85,9 @@ __all__ = [
     "RISK_BUDGET_SPECIFICATION",
     "SHADOW_MONITORING_SCHEMA_VERSION",
     "SHADOW_MONITORING_SPECIFICATION",
+    "VENUE_TELEMETRY_PRODUCER",
+    "VENUE_TELEMETRY_SCHEMA_VERSION",
+    "VENUE_TELEMETRY_SPECIFICATION",
     "CandidateAdmissionError",
     "CanonicalEventError",
     "CanonicalEventJournal",
@@ -89,6 +103,8 @@ __all__ = [
     "ProducerReceipt",
     "RealtimeRiskError",
     "ShadowMonitoringError",
+    "VenueTelemetryError",
+    "VenueTelemetryEvent",
     "build_receipt",
     "calibrate_execution_quality",
     "candidate_admission_receipt",
@@ -113,6 +129,10 @@ __all__ = [
     "replay_oms",
     "require_realtime_risk_authorization",
     "shadow_monitoring_receipt",
+    "replay_venue_telemetry",
+    "venue_event",
+    "venue_telemetry_receipt",
+    "verify_venue_event",
     "verify_event",
     "verify_receipt",
 ]
