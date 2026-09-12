@@ -9,6 +9,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from bt.institutional.adapter_certification import (
+    AdapterCertificationError,
+    require_adapter_certification,
+)
+
 SCHEMA_VERSION = "live-canary-authorization-bundle-v1.0.0"
 
 
@@ -72,7 +77,9 @@ def validate_live_authorization_bundle(
     if bundle.get("schema_version") != SCHEMA_VERSION:
         raise LiveAuthorizationError("unsupported live authorization schema")
     supplied_bundle_digest = bundle.get("bundle_digest")
-    bundle_core = {key: value for key, value in bundle.items() if key != "bundle_digest"}
+    bundle_core = {
+        key: value for key, value in bundle.items() if key != "bundle_digest"
+    }
     if not _is_digest(supplied_bundle_digest) or supplied_bundle_digest != _digest(
         bundle_core
     ):
@@ -81,12 +88,16 @@ def validate_live_authorization_bundle(
         key in _canonical(bundle).decode("ascii").lower()
         for key in ("api_key", "private_key", "password")
     ):
-        raise LiveAuthorizationError("authorization bundle must not contain credentials")
+        raise LiveAuthorizationError(
+            "authorization bundle must not contain credentials"
+        )
 
     plan = bundle.get("plan") or {}
     supplied_plan_digest = plan.get("plan_digest")
     plan_core = {key: value for key, value in plan.items() if key != "plan_digest"}
-    if not _is_digest(supplied_plan_digest) or supplied_plan_digest != _digest(plan_core):
+    if not _is_digest(supplied_plan_digest) or supplied_plan_digest != _digest(
+        plan_core
+    ):
         raise LiveAuthorizationError("live canary plan digest mismatch")
     if plan.get("environment") != "live":
         raise LiveAuthorizationError("canary plan environment must be live")
@@ -102,8 +113,13 @@ def validate_live_authorization_bundle(
         if isinstance(config.get("live_controls"), dict)
         else {}
     )
-    if live_controls.get("enabled") is not True or live_controls.get("canary_mode") is not True:
-        raise LiveAuthorizationError("capital-bearing live mode requires canary controls")
+    if (
+        live_controls.get("enabled") is not True
+        or live_controls.get("canary_mode") is not True
+    ):
+        raise LiveAuthorizationError(
+            "capital-bearing live mode requires canary controls"
+        )
     if str(broker.get("environment")) != "live":
         raise LiveAuthorizationError("runtime broker environment is not live")
     if str(broker.get("venue")) != str(plan.get("venue")):
@@ -152,7 +168,26 @@ def validate_live_authorization_bundle(
         if not _is_digest(item.get("digest")) or item.get("status") != status:
             raise LiveAuthorizationError(f"{name} evidence is not current and {status}")
         if allocated is not None and item.get("allocated") is not allocated:
-            raise LiveAuthorizationError("portfolio candidate evidence exceeded authority")
+            raise LiveAuthorizationError(
+                "portfolio candidate evidence exceeded authority"
+            )
+    certification = evidence["live_connector_certification"]
+    certification_receipt = certification.get("receipt") or {}
+    if certification.get("digest") != certification_receipt.get("receipt_digest"):
+        raise LiveAuthorizationError(
+            "live connector certification digest does not bind its exact receipt"
+        )
+    try:
+        require_adapter_certification(
+            certification_receipt,
+            venue=str(plan.get("venue")),
+            environment="live",
+            now=now,
+        )
+    except AdapterCertificationError as exc:
+        raise LiveAuthorizationError(
+            "live connector certification is not current venue-observed evidence"
+        ) from exc
 
     approval = bundle.get("approval") or {}
     if approval.get("status") != "approved":
