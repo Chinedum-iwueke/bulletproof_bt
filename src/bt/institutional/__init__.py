@@ -37,6 +37,12 @@ from .shadow_monitoring import (
     monitor_shadow_candidate,
     shadow_monitoring_receipt,
 )
+from .candidate_admission import (
+    ADMISSION_SCHEMA_VERSION,
+    ADMISSION_SPECIFICATION,
+    CandidateAdmissionError,
+    candidate_admission_receipt,
+)
 
 __all__ = [
     "PortfolioDependencyError",
@@ -75,4 +81,8 @@ __all__ = [
     "ShadowMonitoringError",
     "monitor_shadow_candidate",
     "shadow_monitoring_receipt",
+    "ADMISSION_SCHEMA_VERSION",
+    "ADMISSION_SPECIFICATION",
+    "CandidateAdmissionError",
+    "candidate_admission_receipt",
 ]
