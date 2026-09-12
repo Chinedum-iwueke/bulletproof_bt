@@ -30,6 +30,13 @@ from .risk_budget import (
     dynamic_risk_budget,
     dynamic_risk_budget_receipt,
 )
+from .shadow_monitoring import (
+    SHADOW_MONITORING_SCHEMA_VERSION,
+    SHADOW_MONITORING_SPECIFICATION,
+    ShadowMonitoringError,
+    monitor_shadow_candidate,
+    shadow_monitoring_receipt,
+)
 
 __all__ = [
     "PortfolioDependencyError",
@@ -63,4 +70,9 @@ __all__ = [
     "replay_oms",
     "dependency_dossier_receipt",
     "verify_receipt",
+    "SHADOW_MONITORING_SCHEMA_VERSION",
+    "SHADOW_MONITORING_SPECIFICATION",
+    "ShadowMonitoringError",
+    "monitor_shadow_candidate",
+    "shadow_monitoring_receipt",
 ]
