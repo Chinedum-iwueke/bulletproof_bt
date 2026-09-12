@@ -26,6 +26,7 @@ from bt.exec.lifecycle import (
 from bt.exec.logging.schemas import FillArtifactRecord, OrderArtifactRecord
 from bt.exec.services.portfolio_runner import PortfolioRunner
 from bt.exec.state import ExecutionStateStore, OrderLifecycleRecord, ProcessedEventRecord
+from bt.institutional.realtime_risk import require_realtime_risk_authorization
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,21 @@ class ExecutionRouter:
         self._local_fills: list[Fill] = []
 
     def submit_order(self, *, order_seq: int, intent: OrderIntent, ts: pd.Timestamp) -> SubmitResult:
+        if self._mode in {"demo_broker", "live_broker"}:
+            metadata = dict(intent.metadata)
+            require_realtime_risk_authorization(
+                receipt=metadata.get("risk005_receipt", {}),
+                order={
+                    "symbol": intent.symbol,
+                    "side": intent.side.value,
+                    "quantity": abs(float(intent.qty)),
+                    "reference_price": metadata.get("risk_reference_price", intent.limit_price),
+                    "reduce_only": metadata.get("reduce_only") is True,
+                },
+                expected_state_version=metadata.get("risk_state_version"),
+                now=ts.to_pydatetime(),
+                maximum_age_seconds=metadata.get("risk_decision_max_age_seconds", 1.0),
+            )
         request = BrokerOrderRequest(
             client_order_id=build_client_order_id(order_seq=order_seq),
             symbol=intent.symbol,
@@ -65,6 +81,7 @@ class ExecutionRouter:
             qty=abs(float(intent.qty)),
             order_type=intent.order_type.value,
             limit_price=intent.limit_price,
+            reduce_only=bool(intent.metadata.get("reduce_only", False)),
             metadata=dict(intent.metadata),
         )
         request_id = self._adapter.submit_order(request)

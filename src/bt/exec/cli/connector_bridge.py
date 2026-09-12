@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import hashlib
+from datetime import UTC, datetime
 from dataclasses import asdict
 from typing import Any
 
@@ -13,6 +14,7 @@ from bt.exec.adapters.binance.client_ws_private import BinancePrivateWSClient
 from bt.exec.adapters.bybit import BybitBrokerAdapter, BybitRESTClient, resolve_bybit_config
 from bt.exec.adapters.bybit.client_ws_private import BybitPrivateWSClient
 from bt.exec.adapters.bybit.client_ws_public import BybitPublicWSClient
+from bt.institutional.realtime_risk import require_realtime_risk_authorization
 
 
 def _adapter(payload: dict[str, Any]):
@@ -92,10 +94,25 @@ def _fill(value: Any) -> dict[str, Any]:
 
 
 def execute(payload: dict[str, Any]) -> dict[str, Any]:
+    action = str(payload.get("action", "snapshot"))
+    if action == "submit_order":
+        order = payload.get("order") if isinstance(payload.get("order"), dict) else {}
+        require_realtime_risk_authorization(
+            receipt=payload.get("risk005_receipt", {}),
+            order={
+                "symbol": order.get("symbol"),
+                "side": order.get("side"),
+                "quantity": order.get("qty"),
+                "reference_price": payload.get("risk_reference_price"),
+                "reduce_only": order.get("reduce_only") is True,
+            },
+            expected_state_version=payload.get("risk_state_version"),
+            now=datetime.now(UTC),
+            maximum_age_seconds=payload.get("risk_decision_max_age_seconds", 1.0),
+        )
     adapter = _adapter(payload)
     adapter.start()
     try:
-        action = str(payload.get("action", "snapshot"))
         if action in {"doctor", "snapshot", "reconcile"}:
             balances = adapter.fetch_balances()
             positions = adapter.fetch_positions()

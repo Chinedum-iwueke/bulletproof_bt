@@ -43,6 +43,14 @@ from .candidate_admission import (
     CandidateAdmissionError,
     candidate_admission_receipt,
 )
+from .realtime_risk import (
+    REALTIME_RISK_SCHEMA_VERSION,
+    REALTIME_RISK_SPECIFICATION,
+    RealtimeRiskError,
+    order_binding,
+    require_realtime_risk_authorization,
+    realtime_risk_decision_receipt,
+)
 
 __all__ = [
     "PortfolioDependencyError",
@@ -85,4 +93,10 @@ __all__ = [
     "ADMISSION_SPECIFICATION",
     "CandidateAdmissionError",
     "candidate_admission_receipt",
+    "REALTIME_RISK_SCHEMA_VERSION",
+    "REALTIME_RISK_SPECIFICATION",
+    "RealtimeRiskError",
+    "order_binding",
+    "require_realtime_risk_authorization",
+    "realtime_risk_decision_receipt",
 ]
