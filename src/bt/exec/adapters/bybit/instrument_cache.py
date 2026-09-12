@@ -10,6 +10,9 @@ class InstrumentSpec:
     symbol: str
     tick_size: float
     lot_size: float
+    min_order_qty: float
+    max_order_qty: float
+    min_notional_value: float
 
 
 class BybitInstrumentCache:
@@ -34,6 +37,11 @@ class BybitInstrumentCache:
             symbol=str(first.get("symbol", symbol)),
             tick_size=float(price_filter.get("tickSize", 0.0) or 0.0),
             lot_size=float(lot_filter.get("qtyStep", 0.0) or 0.0),
+            min_order_qty=float(lot_filter.get("minOrderQty", 0.0) or 0.0),
+            max_order_qty=float(lot_filter.get("maxOrderQty", 0.0) or 0.0),
+            min_notional_value=float(
+                lot_filter.get("minNotionalValue", 0.0) or 0.0
+            ),
         )
         self._cache[symbol] = spec
         return spec
