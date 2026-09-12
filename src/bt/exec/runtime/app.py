@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -52,6 +53,7 @@ from bt.exec.runtime.loop import ReconciliationConfig, RuntimeLoop, RuntimeLoopS
 from bt.exec.runtime.scheduler import HeartbeatScheduler
 from bt.exec.services.execution_router import ExecutionRouter
 from bt.exec.services.kill_switch import KillSwitch
+from bt.institutional.runtime_safety import require_runtime_ready
 from bt.exec.services.live_authorization import load_live_authorization
 from bt.exec.services.live_controls import CanaryGuard, load_canary_policy
 from bt.exec.services.portfolio_runner import PortfolioRunner
@@ -241,6 +243,14 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
     if is_live_mode and environment != "live":
         raise ValueError("exec.mode=live_broker requires broker.environment=live")
 
+    live_controls = config.get("live_controls") if isinstance(config.get("live_controls"), dict) else {}
+    safety_state_path = str(live_controls.get("safety_state_path") or os.environ.get("INVARIANCE_EXECUTION_SAFETY_STATE", "")).strip()
+    safety_journal_path = str(live_controls.get("safety_journal_path") or os.environ.get("INVARIANCE_EXECUTION_SAFETY_JOURNAL", "")).strip()
+    if is_live_mode:
+        if not safety_state_path or not safety_journal_path:
+            raise ValueError("live execution requires durable safety state and journal paths")
+        require_runtime_ready(safety_state_path, safety_journal_path)
+
     live_authorization_receipt: dict[str, Any] | None = None
     if is_live_mode:
         authorization = (
@@ -269,6 +279,8 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
     if persist_state:
         state_store = SQLiteExecutionStateStore(path=state_path)
         plan = build_recovery_plan(store=state_store, mode=mode, restart_policy=restart_policy)
+        if is_live_mode and plan.disposition.value in {"reconciliation_required", "incomplete_prior_state", "corrupt_prior_state"}:
+            raise ValueError(f"live startup blocked: {plan.disposition.value}")
         if plan.checkpoint is not None and plan.disposition.value == "resume":
             checkpoint_ts = plan.checkpoint.last_bar_ts
             order_seq = plan.checkpoint.next_client_order_seq
@@ -405,7 +417,9 @@ def run_exec_session(*, config_path: str, data_path: str, mode: str, out_dir: st
         return reconciliation_record(result)
 
     kill_switch = KillSwitch(
-        allow_reduce_only_exits=bool((config.get("live_controls") or {}).get("allow_reduce_only_when_frozen", True))
+        allow_reduce_only_exits=bool(live_controls.get("allow_reduce_only_when_frozen", True)),
+        state_path=safety_state_path,
+        journal_path=safety_journal_path,
     ) if is_live_mode else None
     canary_guard = CanaryGuard(load_canary_policy(config)) if is_live_mode else None
 

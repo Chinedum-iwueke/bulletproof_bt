@@ -24,9 +24,9 @@ def build_recovery_plan(*, store: ExecutionStateStore, mode: str, restart_policy
 
     if restart_policy == "reconcile_only":
         return RecoveryPlan(
-            disposition=RecoveryDisposition.START_FRESH,
+            disposition=RecoveryDisposition.RECONCILIATION_REQUIRED,
             restart_policy=restart_policy,
-            message="reconcile_only is not implemented in Phase 2; falling back to conservative fresh start.",
+            message="Explicit reconciliation and human recovery authorization are required before restart.",
         )
 
     checkpoint = store.load_latest_checkpoint(latest_session.run_id)

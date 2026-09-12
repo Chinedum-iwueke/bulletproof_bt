@@ -92,6 +92,7 @@ class RecoveryDisposition(str, Enum):
     START_FRESH = "start_fresh"
     INCOMPLETE_PRIOR_STATE = "incomplete_prior_state"
     CORRUPT_PRIOR_STATE = "corrupt_prior_state"
+    RECONCILIATION_REQUIRED = "reconciliation_required"
 
 
 @dataclass(frozen=True)
