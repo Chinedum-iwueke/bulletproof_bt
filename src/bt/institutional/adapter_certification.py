@@ -7,7 +7,7 @@ from typing import Any
 
 from .receipt import ProducerReceipt, build_receipt, digest, verify_receipt
 
-ADAPTER_CERTIFICATION_SCHEMA_VERSION = "exec008-adapter-certification-v1.0.0"
+ADAPTER_CERTIFICATION_SCHEMA_VERSION = "exec008-adapter-certification-v1.1.0"
 REQUIRED_DRILLS = (
     "authentication",
     "server_clock",
@@ -65,6 +65,9 @@ ADAPTER_CERTIFICATION_SPECIFICATION = {
         "deterministic_conformance": "may prove implementation conformance only",
         "venue_observed": "may certify the named environment until its explicit expiry",
     },
+    "dependency_binding": (
+        "exact independently versioned producer receipts; each native dataset digest is retained"
+    ),
     "admission": {
         "demo": "current venue-observed demo evidence is required",
         "micro_live": "current venue-observed live evidence and a later capital gate are required",
@@ -137,8 +140,6 @@ def adapter_certification_receipt(
     dependencies = {
         key: _dependency(value, key) for key, value in dependency_receipts.items()
     }
-    if any(item["dataset_digest"] != dataset_digest for item in dependencies.values()):
-        raise AdapterCertificationError("dependency dataset digests do not match")
     if evidence_class not in {"deterministic_conformance", "venue_observed"}:
         raise AdapterCertificationError("unsupported evidence class")
     environment = environment.strip().lower()
@@ -190,12 +191,16 @@ def adapter_certification_receipt(
             key.lower().replace("-", ""): item["receipt_digest"]
             for key, item in sorted(dependencies.items())
         },
+        "dependency_dataset_digests": {
+            key.lower().replace("-", ""): item["dataset_digest"]
+            for key, item in sorted(dependencies.items())
+        },
         "claim": "adapter certification evidence only; no order, capital, allocation, promotion, or profitability authority",
     }
     return build_receipt(
         milestone="EXEC-008",
         producer="bt.institutional.adapter_certification.adapter_certification_receipt",
-        producer_version="1.0.0",
+        producer_version="1.1.0",
         source_commit=source_commit,
         inputs={"dependencies": dependencies, "drills": normalized_drills},
         dataset_digest=dataset_digest,
