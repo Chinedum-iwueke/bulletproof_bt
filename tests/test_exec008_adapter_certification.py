@@ -107,10 +107,20 @@ def test_failed_drill_and_expiry_fail_closed() -> None:
         )
 
 
-def test_dependency_dataset_mismatch_is_rejected() -> None:
+def test_independently_versioned_dependency_datasets_are_bound() -> None:
     dependencies = {
         name: dependency(name) for name in ("EXEC-003", "EXEC-004", "EXEC-007")
     }
-    dependencies["EXEC-004"]["dataset_digest"] = "b" * 64
-    with pytest.raises(AdapterCertificationError):
-        produce(dependency_receipts=dependencies)
+    dependencies["EXEC-004"] = build_receipt(
+        milestone="EXEC-004",
+        producer="test.exec-004",
+        producer_version="1.0.0",
+        source_commit=COMMIT,
+        inputs={},
+        dataset_digest="b" * 64,
+        configuration={},
+        artifacts={},
+        result={"qualified": True},
+    ).as_dict()
+    receipt = produce(dependency_receipts=dependencies)
+    assert receipt.result["dependency_dataset_digests"]["exec004"] == "b" * 64

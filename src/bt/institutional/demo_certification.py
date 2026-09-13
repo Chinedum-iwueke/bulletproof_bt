@@ -8,7 +8,7 @@ from typing import Any
 from .adapter_certification import require_adapter_certification
 from .receipt import ProducerReceipt, build_receipt, digest, is_sha256, verify_receipt
 
-DEMO_CERTIFICATION_SCHEMA_VERSION = "demo001-production-like-venue-v1.0.0"
+DEMO_CERTIFICATION_SCHEMA_VERSION = "demo001-production-like-venue-v1.1.0"
 VENUE_OBSERVED_DRILLS = (
     "authentication",
     "server_clock",
@@ -50,6 +50,9 @@ DEMO_CERTIFICATION_SPECIFICATION = {
     },
     "terminal_invariant": "no open orders and zero position after every drill",
     "qualification": "all drills pass with permitted provenance and current dependencies",
+    "dependency_binding": (
+        "exact independently versioned producer receipts; each native dataset digest is retained"
+    ),
     "authority": {"allocation": False, "capital": False, "orders": False, "promotion": False},
 }
 
@@ -91,8 +94,6 @@ def demo_certification_receipt(
     if set(dependency_receipts) != set(DEPENDENCIES):
         raise DemoCertificationError("dependency receipt set is incomplete or unexpected")
     dependencies = {name: _dependency(value, name) for name, value in dependency_receipts.items()}
-    if any(item["dataset_digest"] != dataset_digest for item in dependencies.values()):
-        raise DemoCertificationError("dependency dataset digests do not match")
     observed = _utc(observed_at, "observed_at")
     expiry = _utc(valid_until, "valid_until")
     if expiry <= observed:
@@ -158,12 +159,16 @@ def demo_certification_receipt(
             key.lower().replace("-", ""): value["receipt_digest"]
             for key, value in sorted(dependencies.items())
         },
+        "dependency_dataset_digests": {
+            key.lower().replace("-", ""): value["dataset_digest"]
+            for key, value in sorted(dependencies.items())
+        },
         "claim": "production-like Bybit demo operations only; no profitability, capital, live-order, allocation, promotion, or scaling authority",
     }
     return build_receipt(
         milestone="DEMO-001",
         producer="bt.institutional.demo_certification.demo_certification_receipt",
-        producer_version="1.0.0",
+        producer_version="1.1.0",
         source_commit=source_commit,
         inputs={"dependencies": dependencies, "drill_evidence": normalized},
         dataset_digest=dataset_digest,

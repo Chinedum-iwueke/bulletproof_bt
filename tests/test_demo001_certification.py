@@ -134,3 +134,20 @@ def test_dependency_and_credential_boundaries_fail_closed():
         }
     )
     assert "credential_withdrawal_boundary_unproven" in receipt.result["blockers"]
+
+
+def test_independently_versioned_dependency_datasets_are_bound():
+    values = dependencies()
+    values["RISK-005"] = build_receipt(
+        milestone="RISK-005",
+        producer="test.risk-005",
+        producer_version="1.0.0",
+        source_commit=COMMIT,
+        inputs={},
+        dataset_digest="a" * 64,
+        configuration={},
+        artifacts={},
+        result={"qualified": True, "allowed": True},
+    )
+    receipt = produce(dependency_receipts=values)
+    assert receipt.result["dependency_dataset_digests"]["risk005"] == "a" * 64
