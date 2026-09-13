@@ -162,6 +162,18 @@ def test_independently_versioned_dependency_datasets_are_bound() -> None:
     assert receipt.result["dependency_dataset_digests"]["EXEC-001"] == "a" * 64
 
 
+def test_missing_candidate_admission_is_an_auditable_deny() -> None:
+    dependencies = _dependencies()
+    dependencies.pop("RISK-004")
+    receipt = _decision(dependencies=dependencies)
+    assert verify_receipt(receipt)
+    assert receipt.result["decision"] == "deny"
+    assert receipt.result["allowed"] is False
+    assert receipt.result["effective_quantity"] == 0.0
+    assert receipt.result["reasons"] == ["candidate_admission_missing"]
+    assert "RISK-004" not in receipt.result["dependency_receipts"]
+
+
 @pytest.mark.parametrize(
     ("state", "intent", "reason"),
     [
