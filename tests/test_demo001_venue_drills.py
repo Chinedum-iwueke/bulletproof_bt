@@ -5,6 +5,7 @@ import pytest
 from scripts.demo001_venue_drills import (
     bounded_quantity,
     evidence,
+    run,
     stepped_ceiling,
     stepped_floor,
 )
@@ -41,3 +42,13 @@ def test_drill_evidence_retains_only_digest_and_provenance() -> None:
     )
     assert set(item) == {"passed", "origin", "evidence_digest"}
     assert len(item["evidence_digest"]) == 64
+
+
+def test_deployment_commit_is_explicit_and_full_length() -> None:
+    with pytest.raises(ValueError, match="full lowercase Git commit"):
+        run(
+            symbol="BTCUSDT",
+            maximum_notional=Decimal("250"),
+            expected_egress_ip="176.97.192.188",
+            source_commit="short",
+        )
