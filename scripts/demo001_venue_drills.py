@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import subprocess
 import tempfile
 import time
 import urllib.request
@@ -197,7 +196,17 @@ def _cleanup(
     }
 
 
-def run(*, symbol: str, maximum_notional: Decimal, expected_egress_ip: str) -> dict[str, Any]:
+def run(
+    *,
+    symbol: str,
+    maximum_notional: Decimal,
+    expected_egress_ip: str,
+    source_commit: str,
+) -> dict[str, Any]:
+    if len(source_commit) not in {40, 64} or any(
+        char not in "0123456789abcdef" for char in source_commit
+    ):
+        raise ValueError("source_commit must be a full lowercase Git commit")
     observed_at = datetime.now(UTC)
     actual_egress = urllib.request.urlopen(
         "https://api.ipify.org", timeout=10
@@ -500,9 +509,6 @@ def run(*, symbol: str, maximum_notional: Decimal, expected_egress_ip: str) -> d
         if terminal is None or terminal["open_orders"] != 0 or terminal["position_qty"] != 0:
             raise RuntimeError("DEMO-001 failed to prove a flat terminal state")
 
-    source_commit = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], text=True
-    ).strip()
     return {
         "schema_version": "demo001-venue-drill-evidence-v1.0.0",
         "observed_at": observed_at.isoformat(),
@@ -532,6 +538,7 @@ def main() -> int:
     parser.add_argument("--symbol", default="BTCUSDT")
     parser.add_argument("--maximum-demo-notional", type=Decimal, default=Decimal("250"))
     parser.add_argument("--expected-egress-ip", required=True)
+    parser.add_argument("--source-commit", required=True)
     parser.add_argument("--confirm-demo-mutations", action="store_true")
     args = parser.parse_args()
     if not args.confirm_demo_mutations:
@@ -540,6 +547,7 @@ def main() -> int:
         symbol=args.symbol.upper(),
         maximum_notional=args.maximum_demo_notional,
         expected_egress_ip=args.expected_egress_ip,
+        source_commit=args.source_commit,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
