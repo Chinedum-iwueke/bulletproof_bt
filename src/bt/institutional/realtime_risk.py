@@ -8,10 +8,13 @@ from typing import Any
 
 from .receipt import ProducerReceipt, build_receipt, digest, verify_receipt
 
-REALTIME_RISK_SCHEMA_VERSION = "risk005-realtime-risk-v1.1.0"
+REALTIME_RISK_SCHEMA_VERSION = "risk005-realtime-risk-v1.2.0"
 REALTIME_RISK_SPECIFICATION = {
     "schema_version": REALTIME_RISK_SCHEMA_VERSION,
-    "dependencies": ["RISK-002", "RISK-003", "RISK-004", "EXEC-001", "EXEC-004"],
+    "required_dependencies": ["RISK-002", "RISK-003", "EXEC-001", "EXEC-004"],
+    "conditional_dependencies": {
+        "RISK-004": "required for allow; absence produces a deterministic deny"
+    },
     "decision": "deterministic allow, deny, or reduce-only exit against one state version",
     "degraded_mode": "deny exposure increases; permit only verified exposure-reducing exits",
     "dependency_binding": (
@@ -125,8 +128,11 @@ def realtime_risk_decision_receipt(
     dataset_digest: str,
     source_commit: str,
 ) -> ProducerReceipt:
-    expected = {"RISK-002", "RISK-003", "RISK-004", "EXEC-001", "EXEC-004"}
-    if set(dependency_receipts) != expected:
+    required = {"RISK-002", "RISK-003", "EXEC-001", "EXEC-004"}
+    allowed = required | {"RISK-004"}
+    if not required.issubset(dependency_receipts) or not set(
+        dependency_receipts
+    ).issubset(allowed):
         raise RealtimeRiskError("dependency receipt set is incomplete or unexpected")
     receipts = {key: _receipt(value, key) for key, value in dependency_receipts.items()}
     known = _time(known_at, "known_at")
@@ -143,8 +149,9 @@ def realtime_risk_decision_receipt(
     if intent.get("expected_state_version") != version:
         raise RealtimeRiskError("state version race detected")
     candidate_digest = str(intent.get("candidate_digest", ""))
-    admission = receipts["RISK-004"]["result"]
-    if admission.get("candidate_digest") != candidate_digest:
+    admission_receipt = receipts.get("RISK-004")
+    admission = admission_receipt["result"] if admission_receipt else None
+    if admission is not None and admission.get("candidate_digest") != candidate_digest:
         raise RealtimeRiskError("RISK-004 candidate binding does not match")
 
     quantity = _number(intent.get("quantity"), "quantity", positive=True)
@@ -180,7 +187,9 @@ def realtime_risk_decision_receipt(
     budget = receipts["RISK-003"]["result"]
     if budget.get("qualified") is not True:
         reasons.append("risk_budget_not_qualified")
-    if (
+    if admission is None:
+        reasons.append("candidate_admission_missing")
+    elif (
         admission.get("eligible_for_authority_review") is not True
         or admission.get("requested_action") not in {"allocate", "scale"}
         or _time(admission.get("expires_at"), "admission.expires_at") <= known
@@ -295,7 +304,7 @@ def realtime_risk_decision_receipt(
     return build_receipt(
         milestone="RISK-005",
         producer="bt.institutional.realtime_risk.realtime_risk_decision_receipt",
-        producer_version="1.1.0",
+        producer_version="1.2.0",
         source_commit=source_commit,
         inputs={"intent": intent, "state": state, "dependencies": receipts},
         dataset_digest=dataset_digest,

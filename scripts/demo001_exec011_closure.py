@@ -94,7 +94,9 @@ def collect_history(symbol: str) -> tuple[dict[str, Any], str, datetime]:
         params={"category": "linear", "symbol": symbol, "limit": 200},
     ).result.get("list", [])
     owned_orders = [
-        item for item in orders if str(item.get("orderLinkId", "")).startswith("demo001-")
+        item
+        for item in orders
+        if str(item.get("orderLinkId", "")).startswith("demo001-")
     ]
     if not owned_orders:
         raise RuntimeError("no DEMO-001 venue order history was found")
@@ -103,9 +105,13 @@ def collect_history(symbol: str) -> tuple[dict[str, Any], str, datetime]:
         "/v5/execution/list",
         params={"category": "linear", "symbol": symbol, "limit": 200},
     ).result.get("list", [])
-    owned_executions = [item for item in executions if str(item.get("orderId")) in order_ids]
+    owned_executions = [
+        item for item in executions if str(item.get("orderId")) in order_ids
+    ]
     if len(owned_executions) < 2:
-        raise RuntimeError("DEMO-001 entry and flatten fills are absent from venue history")
+        raise RuntimeError(
+            "DEMO-001 entry and flatten fills are absent from venue history"
+        )
     positions = client.get_private(
         "/v5/position/list", params={"category": "linear", "symbol": symbol}
     ).result.get("list", [])
@@ -128,7 +134,9 @@ def collect_history(symbol: str) -> tuple[dict[str, Any], str, datetime]:
         for item in positions
     )
     if owned_open or position_quantity != 0:
-        raise RuntimeError("Bybit demo account is not in the required flat terminal state")
+        raise RuntimeError(
+            "Bybit demo account is not in the required flat terminal state"
+        )
     if not wallet:
         raise RuntimeError("Bybit demo wallet snapshot is absent")
     return (
@@ -157,7 +165,9 @@ def canonical_events(
         order_links[order_id] = link
         entries.append(
             (
-                milliseconds(raw.get("updatedTime") or raw.get("createdTime"), fetched_at),
+                milliseconds(
+                    raw.get("updatedTime") or raw.get("createdTime"), fetched_at
+                ),
                 f"order:{order_id}",
                 "order",
                 {
@@ -244,14 +254,19 @@ def canonical_events(
                 fetched_at,
                 "reconciliation:terminal",
                 "reconciliation",
-                {"positions": {instrument: str(position_quantity)}, "cash": {"USDT": balance}},
+                {
+                    "positions": {instrument: str(position_quantity)},
+                    "cash": {"USDT": balance},
+                },
                 {"positions": history["positions"], "wallet": wallet},
             ),
         ]
     )
     entries.sort(key=lambda item: (item[0], item[1]))
     events = []
-    for sequence, (exchange_time, event_id, kind, payload, raw) in enumerate(entries, 1):
+    for sequence, (exchange_time, event_id, kind, payload, raw) in enumerate(
+        entries, 1
+    ):
         source_time = max(fetched_at, exchange_time)
         events.append(
             venue_event(
@@ -270,7 +285,9 @@ def canonical_events(
                 raw_reference_digest=digest(raw),
                 normalization_version="1.0.0",
                 payload=payload,
-                reconciliation_id="demo001-terminal" if kind == "reconciliation" else None,
+                reconciliation_id="demo001-terminal"
+                if kind == "reconciliation"
+                else None,
             )
         )
     return events
@@ -315,7 +332,9 @@ def degradation_observation(
         for item in executions
     ]
     rules = evidence["bounded_order_limits"]
-    reference = Decimal(rules["selected_notional"]) / Decimal(rules["selected_quantity"])
+    reference = Decimal(rules["selected_notional"]) / Decimal(
+        rules["selected_quantity"]
+    )
     quantities = [Decimal(str(item.get("execQty") or "0")) for item in executions]
     total_quantity = sum(quantities, Decimal("0"))
     weighted_fill = (
@@ -373,11 +392,12 @@ def main() -> int:
     expected = (set(DEPENDENCY_PRODUCERS) - {"EXEC-008", "EXEC-009"}) | {
         "RISK-002",
         "RISK-003",
-        "RISK-004",
     }
     missing = sorted(expected - set(dependencies))
     if missing:
-        raise RuntimeError(f"exact dependency inventory is incomplete: {', '.join(missing)}")
+        raise RuntimeError(
+            f"exact dependency inventory is incomplete: {', '.join(missing)}"
+        )
     symbol = str(evidence["instrument"])
     history, credential_fingerprint, fetched_at = collect_history(symbol)
     if credential_fingerprint != evidence["credential_fingerprint"]:
@@ -408,13 +428,18 @@ def main() -> int:
             name: evidence["drill_evidence"][drill_map[name]]["passed"] is True
             for name in ADAPTER_DRILLS
         },
-        dependency_receipts={name: dependencies[name] for name in ("EXEC-003", "EXEC-004", "EXEC-007")},
+        dependency_receipts={
+            name: dependencies[name] for name in ("EXEC-003", "EXEC-004", "EXEC-007")
+        },
         dataset_digest=evidence["dataset_digest"],
         source_commit=args.source_commit,
         configuration={"host": "exec2-lagos", "evidence_digest": digest(evidence)},
     )
     rules = evidence["bounded_order_limits"]
-    candidate_digest = dependencies["RISK-004"]["result"].get("candidate_digest")
+    shadow = dependencies["SHADOW-002"]
+    candidate_digest = shadow["result"].get("candidate_digest")
+    if not isinstance(candidate_digest, str):
+        raise RuntimeError("SHADOW-002 receipt lacks its candidate digest")
     risk = realtime_risk_decision_receipt(
         intent={
             "intent_id": f"demo001-preflight-{digest(history)[:16]}",
@@ -424,7 +449,10 @@ def main() -> int:
             "symbol": symbol,
             "side": "buy",
             "quantity": float(Decimal(rules["selected_quantity"])),
-            "price": float(Decimal(rules["selected_notional"]) / Decimal(rules["selected_quantity"])),
+            "price": float(
+                Decimal(rules["selected_notional"])
+                / Decimal(rules["selected_quantity"])
+            ),
             "reduce_only": False,
         },
         state={
@@ -443,7 +471,7 @@ def main() -> int:
         },
         dependency_receipts={
             name: dependencies[name]
-            for name in ("RISK-002", "RISK-003", "RISK-004", "EXEC-001", "EXEC-004")
+            for name in ("RISK-002", "RISK-003", "EXEC-001", "EXEC-004")
         },
         policy={
             "snapshot_expiry_seconds": 30,
@@ -453,13 +481,14 @@ def main() -> int:
             "maximum_order_notional": float(Decimal(rules["maximum_notional"])),
             "maximum_open_orders": 1,
             "maximum_gross_notional": float(Decimal(rules["maximum_notional"])),
-            "maximum_daily_loss": max(1.0, float(Decimal(rules["maximum_notional"]) * Decimal("0.02"))),
+            "maximum_daily_loss": max(
+                1.0, float(Decimal(rules["maximum_notional"]) * Decimal("0.02"))
+            ),
         },
         known_at=fetched_at,
         dataset_digest=digest({"history": history, "purpose": "risk-preflight"}),
         source_commit=args.source_commit,
     )
-    shadow = dependencies["SHADOW-002"]
     shadow_candidate = shadow["result"].get("candidate_digest")
     if not isinstance(shadow_candidate, str):
         raise RuntimeError("SHADOW-002 receipt lacks its candidate digest")
@@ -473,7 +502,11 @@ def main() -> int:
             "status": "demo",
             "candidate_digest": shadow_candidate,
             "record_digest": digest(
-                {"candidate_digest": shadow_candidate, "status": "demo", "history": digest(history)}
+                {
+                    "candidate_digest": shadow_candidate,
+                    "status": "demo",
+                    "history": digest(history),
+                }
             ),
         },
         observations=[degradation_observation(history, evidence, known_at=fetched_at)],
@@ -534,7 +567,14 @@ def main() -> int:
             if name == "RISK-005"
             else dependencies[name]
         )
-        for name in ("EXEC-004", "EXEC-005", "EXEC-006", "EXEC-007", "EXEC-008", "RISK-005")
+        for name in (
+            "EXEC-004",
+            "EXEC-005",
+            "EXEC-006",
+            "EXEC-007",
+            "EXEC-008",
+            "RISK-005",
+        )
     }
     demo = demo_certification_receipt(
         observed_at=datetime.fromisoformat(evidence["observed_at"]),
@@ -589,17 +629,30 @@ def main() -> int:
     }
     report["report_digest"] = digest(report)
     args.raw_output.parent.mkdir(parents=True, exist_ok=True)
-    args.raw_output.write_text(json.dumps(history, indent=2, sort_keys=True) + "\n", encoding="ascii")
+    args.raw_output.write_text(
+        json.dumps(history, indent=2, sort_keys=True) + "\n", encoding="ascii"
+    )
     args.raw_output.chmod(0o600)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="ascii")
+    args.output.write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="ascii"
+    )
     args.output.chmod(0o600)
-    print(json.dumps({
-        "success": report["success"],
-        "receipt_digests": {key: value["receipt_digest"] for key, value in report["receipts"].items()},
-        "venue_history": report["venue_history"],
-        "live_or_capital_authority": False,
-    }, indent=2, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "success": report["success"],
+                "receipt_digests": {
+                    key: value["receipt_digest"]
+                    for key, value in report["receipts"].items()
+                },
+                "venue_history": report["venue_history"],
+                "live_or_capital_authority": False,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0 if report["success"] else 1
 
 
