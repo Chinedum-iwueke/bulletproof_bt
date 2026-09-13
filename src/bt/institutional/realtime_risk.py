@@ -8,12 +8,15 @@ from typing import Any
 
 from .receipt import ProducerReceipt, build_receipt, digest, verify_receipt
 
-REALTIME_RISK_SCHEMA_VERSION = "risk005-realtime-risk-v1.0.0"
+REALTIME_RISK_SCHEMA_VERSION = "risk005-realtime-risk-v1.1.0"
 REALTIME_RISK_SPECIFICATION = {
     "schema_version": REALTIME_RISK_SCHEMA_VERSION,
     "dependencies": ["RISK-002", "RISK-003", "RISK-004", "EXEC-001", "EXEC-004"],
     "decision": "deterministic allow, deny, or reduce-only exit against one state version",
     "degraded_mode": "deny exposure increases; permit only verified exposure-reducing exits",
+    "dependency_binding": (
+        "exact independently versioned producer receipts; each native dataset digest is retained"
+    ),
     "authority": {
         "allocation": False,
         "capital": False,
@@ -126,8 +129,6 @@ def realtime_risk_decision_receipt(
     if set(dependency_receipts) != expected:
         raise RealtimeRiskError("dependency receipt set is incomplete or unexpected")
     receipts = {key: _receipt(value, key) for key, value in dependency_receipts.items()}
-    if any(value["dataset_digest"] != dataset_digest for value in receipts.values()):
-        raise RealtimeRiskError("dependency dataset digests do not match")
     known = _time(known_at, "known_at")
     observed, available = (
         _time(state.get("observed_at"), "state.observed_at"),
@@ -283,6 +284,9 @@ def realtime_risk_decision_receipt(
         "dependency_receipts": {
             key: value["receipt_digest"] for key, value in sorted(receipts.items())
         },
+        "dependency_dataset_digests": {
+            key: value["dataset_digest"] for key, value in sorted(receipts.items())
+        },
         "realtime_risk_schema_digest": digest(REALTIME_RISK_SPECIFICATION),
         "authority": REALTIME_RISK_SPECIFICATION["authority"],
         "claim": "deterministic risk decision evidence only; the execution adapter separately enforces it",
@@ -291,7 +295,7 @@ def realtime_risk_decision_receipt(
     return build_receipt(
         milestone="RISK-005",
         producer="bt.institutional.realtime_risk.realtime_risk_decision_receipt",
-        producer_version="1.0.0",
+        producer_version="1.1.0",
         source_commit=source_commit,
         inputs={"intent": intent, "state": state, "dependencies": receipts},
         dataset_digest=dataset_digest,

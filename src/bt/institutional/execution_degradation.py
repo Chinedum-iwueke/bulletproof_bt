@@ -9,7 +9,7 @@ from typing import Any
 
 from .receipt import ProducerReceipt, build_receipt, digest, is_sha256, verify_receipt
 
-EXECUTION_DEGRADATION_SCHEMA_VERSION = "exec009-execution-degradation-v1.0.0"
+EXECUTION_DEGRADATION_SCHEMA_VERSION = "exec009-execution-degradation-v1.1.0"
 METRICS = {
     "fill_rate": ("minimum", "venue"),
     "ack_latency_ms": ("maximum", "infrastructure"),
@@ -57,6 +57,9 @@ EXECUTION_DEGRADATION_SPECIFICATION = {
         "no_self_modification",
         "no_order_or_capital_authority",
     ],
+    "dependency_binding": (
+        "exact independently versioned producer receipts; each native dataset digest is retained"
+    ),
     "authority": {
         "allocation": False,
         "capital": False,
@@ -389,8 +392,6 @@ def execution_degradation_receipt(
         "EXEC-008": _dependency(exec008_receipt, "EXEC-008"),
         "SHADOW-002": _dependency(shadow002_receipt, "SHADOW-002"),
     }
-    if any(item["dataset_digest"] != dataset_digest for item in dependencies.values()):
-        raise ExecutionDegradationError("dependency dataset digests do not match")
     if not is_sha256(governance_policy_digest):
         raise ExecutionDegradationError("GOV-003 policy digest must be sha256")
     if not is_sha256(platform_observability_digest):
@@ -428,6 +429,10 @@ def execution_degradation_receipt(
                 key.lower().replace("-", ""): value["receipt_digest"]
                 for key, value in sorted(dependencies.items())
             },
+            "dependency_dataset_digests": {
+                key.lower().replace("-", ""): value["dataset_digest"]
+                for key, value in sorted(dependencies.items())
+            },
             "governance_policy_digest": governance_policy_digest,
             "platform_observability_digest": platform_observability_digest,
             "claim": "execution degradation evidence and bounded review proposal only; no self-modification, restoration, order, capital, allocation, or promotion authority",
@@ -436,7 +441,7 @@ def execution_degradation_receipt(
     return build_receipt(
         milestone="EXEC-009",
         producer="bt.institutional.execution_degradation.execution_degradation_receipt",
-        producer_version="1.0.0",
+        producer_version="1.1.0",
         source_commit=source_commit,
         inputs={
             "dependencies": dependencies,
