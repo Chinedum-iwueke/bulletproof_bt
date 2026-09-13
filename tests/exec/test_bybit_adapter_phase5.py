@@ -88,7 +88,7 @@ def test_demo_submit_cancel_amend_payloads_and_ack_not_final() -> None:
     assert any(isinstance(evt, BrokerOrderAcknowledgedEvent) for evt in events)
     assert not any(getattr(getattr(evt, "order", None), "state", None).value == "filled" for evt in events if hasattr(evt, "order"))
     adapter.cancel_order(BrokerOrderCancelRequest(order_id="by-123", client_order_id=None, symbol="BTCUSDT"))
-    adapter.amend_order(BrokerOrderAmendRequest(order_id="by-123", client_order_id=None, new_qty=2.0, new_limit_price=102000.0))
+    adapter.amend_order(BrokerOrderAmendRequest(order_id="by-123", client_order_id=None, symbol="BTCUSDT", new_qty=2.0, new_limit_price=102000.0))
     adapter.stop()
 
     paths = [str(c["path"]) for c in calls]
@@ -98,6 +98,8 @@ def test_demo_submit_cancel_amend_payloads_and_ack_not_final() -> None:
     create_body = json.loads(next(str(c["body"]) for c in calls if str(c["path"]) == "/v5/order/create"))
     assert create_body["orderLinkId"] == "cid-1"
     assert create_body["symbol"] == "BTCUSDT"
+    amend_body = json.loads(next(str(c["body"]) for c in calls if str(c["path"]) == "/v5/order/amend"))
+    assert amend_body["symbol"] == "BTCUSDT"
 
 
 def test_live_environment_mutations_blocked() -> None:

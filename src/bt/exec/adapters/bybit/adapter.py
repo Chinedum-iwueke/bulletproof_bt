@@ -145,6 +145,7 @@ class BybitBrokerAdapter:
             "/v5/order/amend",
             payload={
                 "category": self._config.category,
+                "symbol": request.symbol or self._config.symbols[0],
                 "orderId": request.order_id,
                 "orderLinkId": request.client_order_id,
                 "qty": (None if request.new_qty is None else str(request.new_qty)),

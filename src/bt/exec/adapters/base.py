@@ -67,6 +67,7 @@ class BrokerOrderAmendRequest:
 
     order_id: str | None
     client_order_id: str | None
+    symbol: str | None = None
     new_qty: float | None = None
     new_limit_price: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
