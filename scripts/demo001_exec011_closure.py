@@ -21,6 +21,14 @@ from bt.institutional.demo_certification import (
     DEMO_CERTIFICATION_SPECIFICATION,
     demo_certification_receipt,
 )
+from bt.institutional.execution_degradation import (
+    EXECUTION_DEGRADATION_SPECIFICATION,
+    execution_degradation_receipt,
+)
+from bt.institutional.realtime_risk import (
+    REALTIME_RISK_SPECIFICATION,
+    realtime_risk_decision_receipt,
+)
 from bt.institutional.receipt import digest
 from bt.institutional.venue_telemetry import (
     DEPENDENCY_PRODUCERS,
@@ -268,6 +276,90 @@ def canonical_events(
     return events
 
 
+def degradation_observation(
+    history: dict[str, Any], evidence: dict[str, Any], *, known_at: datetime
+) -> dict[str, Any]:
+    orders = history["orders"]
+    executions = history["executions"]
+    filled_order_ids = {str(item["orderId"]) for item in executions}
+    eligible_orders = [
+        item
+        for item in orders
+        if str(item.get("orderLinkId", "")).endswith(("-limit", "-entry", "-exit"))
+    ]
+    fill_rate = len(filled_order_ids) / max(1, len(eligible_orders))
+    order_created = {
+        str(item["orderId"]): milliseconds(item.get("createdTime"), known_at)
+        for item in orders
+    }
+    lifecycle_ms = [
+        max(
+            0.0,
+            (
+                milliseconds(item.get("updatedTime"), known_at)
+                - order_created[str(item["orderId"])]
+            ).total_seconds()
+            * 1000,
+        )
+        for item in orders
+    ]
+    fill_ms = [
+        max(
+            0.0,
+            (
+                milliseconds(item.get("execTime"), known_at)
+                - order_created.get(str(item["orderId"]), known_at)
+            ).total_seconds()
+            * 1000,
+        )
+        for item in executions
+    ]
+    rules = evidence["bounded_order_limits"]
+    reference = Decimal(rules["selected_notional"]) / Decimal(rules["selected_quantity"])
+    quantities = [Decimal(str(item.get("execQty") or "0")) for item in executions]
+    total_quantity = sum(quantities, Decimal("0"))
+    weighted_fill = (
+        sum(
+            Decimal(str(item.get("execPrice") or "0")) * quantity
+            for item, quantity in zip(executions, quantities, strict=True)
+        )
+        / total_quantity
+    )
+    shortfall = float(abs(weighted_fill - reference) / reference * Decimal("10000"))
+    method = {
+        "fill_rate": "filled order ids / submitted drill orders",
+        "ack_latency_ms": "conservative order lifecycle upper bound",
+        "fill_latency_ms": "execution time minus order creation time",
+        "implementation_shortfall_bps": "absolute weighted fill versus drill reference",
+        "adverse_selection_bps": "pessimistic shortfall proxy; no favorable sign credit",
+        "queue_model_error_bps": "unfilled fraction multiplied by ten bps",
+        "reject_rate": "one deliberate venue rejection / all attempts",
+    }
+    return {
+        "observation_id": f"demo001-{digest(history)[:20]}",
+        "venue": "bybit",
+        "environment": "demo",
+        "strategy_id": "demo001-certification-drill",
+        "listing_id": f"bybit:linear:{evidence['instrument']}",
+        "order_type": "mixed",
+        "size_bucket": "venue-minimum",
+        "regime": "unclassified",
+        "observed_at": history["fetched_at"],
+        "available_at": history["fetched_at"],
+        "source_digest": digest({"history": history, "method": method}),
+        "service_available": True,
+        "venue_rule_current": True,
+        "fill_rate": fill_rate,
+        "ack_latency_ms": max(lifecycle_ms, default=0.0),
+        "fill_latency_ms": max(fill_ms, default=0.0),
+        "implementation_shortfall_bps": shortfall,
+        "adverse_selection_bps": shortfall,
+        "queue_model_error_bps": (1.0 - fill_rate) * 10.0,
+        "reject_rate": 1.0 / (len(eligible_orders) + 1),
+        "reconciliation_breaks": 0,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--evidence", type=Path, required=True)
@@ -278,7 +370,11 @@ def main() -> int:
     args = parser.parse_args()
     evidence = read_object(args.evidence)
     dependencies = read_object(args.dependencies)
-    expected = set(DEPENDENCY_PRODUCERS) | {"RISK-005"}
+    expected = (set(DEPENDENCY_PRODUCERS) - {"EXEC-008", "EXEC-009"}) | {
+        "RISK-002",
+        "RISK-003",
+        "RISK-004",
+    }
     missing = sorted(expected - set(dependencies))
     if missing:
         raise RuntimeError(f"exact dependency inventory is incomplete: {', '.join(missing)}")
@@ -317,8 +413,98 @@ def main() -> int:
         source_commit=args.source_commit,
         configuration={"host": "exec2-lagos", "evidence_digest": digest(evidence)},
     )
+    rules = evidence["bounded_order_limits"]
+    candidate_digest = dependencies["RISK-004"]["result"].get("candidate_digest")
+    risk = realtime_risk_decision_receipt(
+        intent={
+            "intent_id": f"demo001-preflight-{digest(history)[:16]}",
+            "candidate_digest": candidate_digest,
+            "received_at": fetched_at.isoformat(),
+            "expected_state_version": 1,
+            "symbol": symbol,
+            "side": "buy",
+            "quantity": float(Decimal(rules["selected_quantity"])),
+            "price": float(Decimal(rules["selected_notional"]) / Decimal(rules["selected_quantity"])),
+            "reduce_only": False,
+        },
+        state={
+            "state_id": f"bybit-demo-flat-{digest(history)[:16]}",
+            "version": 1,
+            "observed_at": fetched_at.isoformat(),
+            "available_at": fetched_at.isoformat(),
+            "positions": {symbol: 0.0},
+            "connector_healthy": True,
+            "reconciliation_healthy": True,
+            "kill_active": False,
+            "critical_incidents": 0,
+            "open_orders": 0,
+            "gross_notional": 0.0,
+            "daily_pnl": 0.0,
+        },
+        dependency_receipts={
+            name: dependencies[name]
+            for name in ("RISK-002", "RISK-003", "RISK-004", "EXEC-001", "EXEC-004")
+        },
+        policy={
+            "snapshot_expiry_seconds": 30,
+            "decision_deadline_ms": 1000,
+            "allowed_symbols": [symbol],
+            "maximum_order_quantity": float(Decimal(rules["selected_quantity"])),
+            "maximum_order_notional": float(Decimal(rules["maximum_notional"])),
+            "maximum_open_orders": 1,
+            "maximum_gross_notional": float(Decimal(rules["maximum_notional"])),
+            "maximum_daily_loss": max(1.0, float(Decimal(rules["maximum_notional"]) * Decimal("0.02"))),
+        },
+        known_at=fetched_at,
+        dataset_digest=digest({"history": history, "purpose": "risk-preflight"}),
+        source_commit=args.source_commit,
+    )
+    shadow = dependencies["SHADOW-002"]
+    shadow_candidate = shadow["result"].get("candidate_digest")
+    if not isinstance(shadow_candidate, str):
+        raise RuntimeError("SHADOW-002 receipt lacks its candidate digest")
+    degradation = execution_degradation_receipt(
+        exec005_receipt=dependencies["EXEC-005"],
+        exec008_receipt=adapter,
+        shadow002_receipt=shadow,
+        governance_policy_digest=digest({"GOV-003": "active"}),
+        platform_observability_digest=evidence["platform_observability_digest"],
+        candidate_lifecycle={
+            "status": "demo",
+            "candidate_digest": shadow_candidate,
+            "record_digest": digest(
+                {"candidate_digest": shadow_candidate, "status": "demo", "history": digest(history)}
+            ),
+        },
+        observations=[degradation_observation(history, evidence, known_at=fetched_at)],
+        known_at=fetched_at,
+        prior_status="monitoring",
+        dataset_digest=digest({"history": history, "purpose": "degradation"}),
+        source_commit=args.source_commit,
+        configuration={
+            "thresholds": {
+                "fill_rate": 0.8,
+                "ack_latency_ms": 250,
+                "fill_latency_ms": 1000,
+                "implementation_shortfall_bps": 8,
+                "adverse_selection_bps": 6,
+                "queue_model_error_bps": 4,
+                "reject_rate": 0.05,
+                "reconciliation_breaks": 0,
+            },
+            "consecutive_breaches": 2,
+            "recovery_observations": 3,
+            "observation_expiry_seconds": 300,
+        },
+    )
     exec_dependencies = {
-        name: adapter.as_dict() if name == "EXEC-008" else dependencies[name]
+        name: (
+            adapter.as_dict()
+            if name == "EXEC-008"
+            else degradation.as_dict()
+            if name == "EXEC-009"
+            else dependencies[name]
+        )
         for name in DEPENDENCY_PRODUCERS
     }
     events = canonical_events(
@@ -341,7 +527,13 @@ def main() -> int:
         },
     )
     demo_dependencies = {
-        name: adapter.as_dict() if name == "EXEC-008" else dependencies[name]
+        name: (
+            adapter.as_dict()
+            if name == "EXEC-008"
+            else risk.as_dict()
+            if name == "RISK-005"
+            else dependencies[name]
+        )
         for name in ("EXEC-004", "EXEC-005", "EXEC-006", "EXEC-007", "EXEC-008", "RISK-005")
     }
     demo = demo_certification_receipt(
@@ -371,12 +563,18 @@ def main() -> int:
         ),
         "adapter_specification": ADAPTER_CERTIFICATION_SPECIFICATION,
         "adapter_specification_digest": digest(ADAPTER_CERTIFICATION_SPECIFICATION),
+        "risk_specification": REALTIME_RISK_SPECIFICATION,
+        "risk_specification_digest": digest(REALTIME_RISK_SPECIFICATION),
+        "degradation_specification": EXECUTION_DEGRADATION_SPECIFICATION,
+        "degradation_specification_digest": digest(EXECUTION_DEGRADATION_SPECIFICATION),
         "telemetry_specification": VENUE_TELEMETRY_SPECIFICATION,
         "telemetry_specification_digest": digest(VENUE_TELEMETRY_SPECIFICATION),
         "demo_specification": DEMO_CERTIFICATION_SPECIFICATION,
         "demo_specification_digest": digest(DEMO_CERTIFICATION_SPECIFICATION),
         "receipts": {
             "EXEC-008": adapter.as_dict(),
+            "RISK-005": risk.as_dict(),
+            "EXEC-009": degradation.as_dict(),
             "EXEC-011": telemetry.as_dict(),
             "DEMO-001": demo.as_dict(),
         },

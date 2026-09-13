@@ -145,6 +145,23 @@ def test_allows_only_exact_current_order_and_is_deterministic() -> None:
     assert accepted["intent_id"] == "intent-1"
 
 
+def test_independently_versioned_dependency_datasets_are_bound() -> None:
+    dependencies = _dependencies()
+    dependencies["EXEC-001"] = build_receipt(
+        milestone="EXEC-001",
+        producer="tests.exec-001",
+        producer_version="1.0.0",
+        source_commit=COMMIT,
+        inputs={},
+        dataset_digest="a" * 64,
+        configuration={},
+        artifacts={},
+        result={"reconstructable": True},
+    )
+    receipt = _decision(dependencies=dependencies)
+    assert receipt.result["dependency_dataset_digests"]["EXEC-001"] == "a" * 64
+
+
 @pytest.mark.parametrize(
     ("state", "intent", "reason"),
     [

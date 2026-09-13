@@ -220,7 +220,7 @@ def test_receipt_rejects_a_different_shadow_candidate():
         )
 
 
-def test_receipt_rejects_dependency_dataset_drift():
+def test_receipt_binds_independently_versioned_dependency_dataset():
     drifted = build_receipt(
         milestone="EXEC-005",
         producer="bt.institutional.execution_calibration.execution_calibration_receipt",
@@ -232,21 +232,24 @@ def test_receipt_rejects_dependency_dataset_drift():
         artifacts={},
         result={"qualified": True},
     )
-    with pytest.raises(ExecutionDegradationError, match="dataset digests"):
-        execution_degradation_receipt(
-            exec005_receipt=drifted,
-            exec008_receipt=dependency("EXEC-008"),
-            shadow002_receipt=dependency("SHADOW-002", candidate_digest=CANDIDATE),
-            governance_policy_digest=digest({"gov003": "active"}),
-            platform_observability_digest=digest({"plat005": "current"}),
-            candidate_lifecycle=LIFECYCLE,
-            observations=[observation(1)],
-            known_at=NOW,
-            prior_status="monitoring",
-            dataset_digest=DATASET,
-            source_commit=COMMIT,
-            configuration=CONFIG,
-        )
+    receipt = execution_degradation_receipt(
+        exec005_receipt=drifted,
+        exec008_receipt=dependency("EXEC-008"),
+        shadow002_receipt=dependency("SHADOW-002", candidate_digest=CANDIDATE),
+        governance_policy_digest=digest({"gov003": "active"}),
+        platform_observability_digest=digest({"plat005": "current"}),
+        candidate_lifecycle=LIFECYCLE,
+        observations=[observation(1)],
+        known_at=NOW,
+        prior_status="monitoring",
+        dataset_digest=DATASET,
+        source_commit=COMMIT,
+        configuration=CONFIG,
+    )
+    assert (
+        receipt.result["dependency_dataset_digests"]["exec005"]
+        == drifted.dataset_digest
+    )
 
 
 def test_receipt_rejects_wrong_dependency_producer():
@@ -301,6 +304,6 @@ def test_public_institutional_api_exports_exec009_contract():
 
     assert (
         institutional.EXECUTION_DEGRADATION_SCHEMA_VERSION
-        == "exec009-execution-degradation-v1.0.0"
+        == "exec009-execution-degradation-v1.1.0"
     )
     assert institutional.execution_degradation_receipt is execution_degradation_receipt
