@@ -13,8 +13,9 @@ from bt.institutional.adapter_certification import (
     AdapterCertificationError,
     require_adapter_certification,
 )
+from bt.institutional.receipt import verify_receipt
 
-SCHEMA_VERSION = "live-canary-authorization-bundle-v1.0.0"
+SCHEMA_VERSION = "live-canary-authorization-bundle-v1.1.0"
 
 
 class LiveAuthorizationError(ValueError):
@@ -105,6 +106,7 @@ def validate_live_authorization_bundle(
         raise LiveAuthorizationError("canary plan requires the canonical rollback")
     if plan.get("scale_authority") is not False:
         raise LiveAuthorizationError("micro-live plan cannot grant scale authority")
+    current = now.astimezone(UTC)
 
     broker = config.get("broker") if isinstance(config.get("broker"), dict) else {}
     canary = config.get("canary") if isinstance(config.get("canary"), dict) else {}
@@ -158,6 +160,7 @@ def validate_live_authorization_bundle(
     evidence = plan.get("evidence") or {}
     required_evidence = {
         "portfolio_candidate": ("candidate", False),
+        "candidate_admission": ("admitted", None),
         "demo_qualification": ("qualified", None),
         "live_connector_certification": ("certified", None),
         "operational_readiness": ("ready", None),
@@ -171,6 +174,37 @@ def validate_live_authorization_bundle(
             raise LiveAuthorizationError(
                 "portfolio candidate evidence exceeded authority"
             )
+    candidate = evidence["portfolio_candidate"]
+    candidate_digest = candidate.get("candidate_digest")
+    if not _is_digest(candidate_digest):
+        raise LiveAuthorizationError(
+            "portfolio candidate evidence requires candidate_digest"
+        )
+    admission = evidence["candidate_admission"]
+    admission_receipt = admission.get("receipt") or {}
+    if (
+        admission.get("digest") != admission_receipt.get("receipt_digest")
+        or not verify_receipt(admission_receipt)
+        or admission_receipt.get("milestone") != "RISK-004"
+        or admission_receipt.get("producer")
+        != "bt.institutional.candidate_admission.candidate_admission_receipt"
+    ):
+        raise LiveAuthorizationError(
+            "candidate admission does not bind an exact RISK-004 receipt"
+        )
+    admission_result = admission_receipt.get("result") or {}
+    if (
+        admission_result.get("candidate_digest") != candidate_digest
+        or admission_result.get("requested_action") != "admit"
+        or admission_result.get("recommended_action") != "admit"
+        or admission_result.get("eligible_for_authority_review") is not True
+        or admission_result.get("automatic_transition") is not False
+    ):
+        raise LiveAuthorizationError(
+            "candidate admission is not an eligible admit recommendation"
+        )
+    if current >= _time(admission_result.get("expires_at"), field="admission.expires_at"):
+        raise LiveAuthorizationError("candidate admission evidence has expired")
     certification = evidence["live_connector_certification"]
     certification_receipt = certification.get("receipt") or {}
     if certification.get("digest") != certification_receipt.get("receipt_digest"):
@@ -201,7 +235,6 @@ def validate_live_authorization_bundle(
         raise LiveAuthorizationError("approval signature must be a digest")
     approved_at = _time(approval.get("approved_at"), field="approved_at")
     expires_at = _time(approval.get("expires_at"), field="expires_at")
-    current = now.astimezone(UTC)
     if not approved_at <= current < expires_at:
         raise LiveAuthorizationError("live canary approval is not currently valid")
     if _time(plan.get("starts_at"), field="starts_at") > current:
