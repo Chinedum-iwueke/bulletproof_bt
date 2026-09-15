@@ -2,6 +2,28 @@
 
 This note describes the current repository behavior as implemented today.
 
+## Arbitrary whole-minute research durations
+
+The native parser now accepts positive integer durations with `m`, `h`, or `d`
+units, such as `7m`, `12m`, `2h` and `2d`. `1m` remains valid for base-feed
+compatibility. Seconds, fractional durations, calendar months and weeks are not
+accepted. Input is still a strictly increasing, minute-aligned UTC 1m feed per
+symbol; duplicates and out-of-order bars fail before updating bucket state.
+
+All fixed durations use UTC floor alignment anchored to the Unix epoch. Odd
+durations such as 7m continue across midnight; there is no daily bucket reset.
+This preserves prior supported-interval boundary behavior. Strict completeness,
+rollover-only emission and no interpolation remain unchanged. Emitted metadata
+records bucket origin, timestamp convention, base cadence, strictness and
+availability policy. Equivalent spellings such as 120m and 2h are valid but
+remain distinct configuration labels and must not be double-counted as novelty.
+
+The research-spec validators and shared timeframe-boundary helper reuse this
+parser. Strategy-specific qualified cadence restrictions are not bypassed.
+This change supports OHLCV aggregation, not automatic funding/OI/mark/index
+aggregation or authority to use unadmitted data. Freeze timeframe alternatives
+before evaluation and count them toward the finite research search budget.
+
 ## Where resampling is wired
 
 - Resampling implementation lives in `src/bt/data/resample.py` (`TimeframeResampler`).
@@ -60,7 +82,7 @@ This note describes the current repository behavior as implemented today.
 ## New config knob: `data.timeframe`
 
 - `data.timeframe` now provides a single run-level target timeframe override for HTF resampling.
-- Supported values: `1m`, `3m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1d`.
+- Supported values: positive integer `m`, `h`, or `d` durations (including `1m`).
 - Behavior:
   - when set, it overrides `htf_resampler.timeframes` with a single-element list `[data.timeframe]` at engine build time,
   - if `htf_resampler` was absent, it creates one with strict mode enabled,

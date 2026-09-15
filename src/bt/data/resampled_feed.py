@@ -52,6 +52,8 @@ class ResampledDataFeed:
                                 "n_bars": htf_bar.n_bars,
                                 "expected_bars": htf_bar.expected_bars,
                                 "is_complete": htf_bar.is_complete,
+                                "available_at": bar.ts,
+                                "representation": htf_bar.metadata,
                             },
                             violation=not bool(htf_bar.is_complete),
                         )
