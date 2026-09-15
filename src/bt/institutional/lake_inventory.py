@@ -92,59 +92,74 @@ def _bounds(metadata) -> dict:
     }
 
 
-def full_lake_inventory_receipt(*, data_root: Path, source_commit: str, progress=None) -> ProducerReceipt:
+def _ordered_paths(directory: Path):
+    def walk_error(error):
+        raise error
+    walker = os.walk(directory, followlinks=False, onerror=walk_error)
+    try:
+        try:
+            parent, directories, files = next(walker)
+        except StopIteration:
+            return
+    finally:
+        walker.close()
+    for name in sorted(directories + files, key=lambda name: name + "/" if name in directories and not (Path(parent) / name).is_symlink() else name):
+        path = Path(parent) / name
+        if name in directories and not path.is_symlink():
+            yield from _ordered_paths(path)
+        else:
+            yield path
+
+
+def iter_lake_inventory(*, data_root: Path):
+    """Yield accounted objects with bounded memory and deterministic traversal."""
     root = data_root.resolve(strict=True)
-    objects = []
-    for layer in ("raw", "canonical", "manifests"):
+    for layer in ("canonical", "manifests", "raw"):
         directory = root / layer
         if directory.is_symlink():
             raise ValueError("lake_layer_must_not_be_symlink")
         if not directory.exists():
             continue
-        def walk_error(error):
-            raise error
+        for path in _ordered_paths(directory):
+            relative = path.relative_to(root)
+            item = {"partition_id": relative.as_posix(), "execution_eligible": False, "reason_codes": []}
+            if path.is_symlink():
+                item.update(disposition="quarantined", reason_codes=["symbolic_link"])
+                yield item
+                continue
+            try:
+                with _open_beneath(root, relative) as handle:
+                    before = os.fstat(handle.fileno())
+                    item.update(byte_size=before.st_size, content_digest=_sha256(handle))
+                    try:
+                        item.update(_identity(relative))
+                    except ValueError as exc:
+                        item["reason_codes"].append(str(exc))
+                    if path.suffix == ".parquet":
+                        handle.seek(0)
+                        metadata = pq.ParquetFile(handle)
+                        item.update(row_count=metadata.metadata.num_rows, output_columns=metadata.schema_arrow.names)
+                        item.update(_bounds(metadata))
+                    else:
+                        item["reason_codes"].append("non_parquet_requires_dataset_adapter")
+                    after = os.fstat(handle.fileno())
+                if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                    item["reason_codes"].append("file_changed_during_inventory")
+                if path.lstat().st_ino != before.st_ino:
+                    item["reason_codes"].append("path_replaced_during_inventory")
+                item["disposition"] = "quarantined" if item["reason_codes"] else "cataloged_pending_quality"
+            except (OSError, ValueError, TypeError) as exc:
+                item.update(disposition="quarantined")
+                item["reason_codes"].append("unreadable_object:" + type(exc).__name__)
+            yield item
 
-        for parent, directories, files in os.walk(directory, followlinks=False, onerror=walk_error):
-            for name in list(directories):
-                candidate = Path(parent) / name
-                if candidate.is_symlink():
-                    files.append(name)
-                    directories.remove(name)
-            for name in sorted(files):
-                path = Path(parent) / name
-                relative = path.relative_to(root)
-                item = {"partition_id": relative.as_posix(), "execution_eligible": False, "reason_codes": []}
-                if path.is_symlink():
-                    item.update(disposition="quarantined", reason_codes=["symbolic_link"])
-                    objects.append(item)
-                    continue
-                try:
-                    with _open_beneath(root, relative) as handle:
-                        before = os.fstat(handle.fileno())
-                        item.update(byte_size=before.st_size, content_digest=_sha256(handle))
-                        try:
-                            item.update(_identity(relative))
-                        except ValueError as exc:
-                            item["reason_codes"].append(str(exc))
-                        if path.suffix == ".parquet":
-                            handle.seek(0)
-                            metadata = pq.ParquetFile(handle)
-                            item.update(row_count=metadata.metadata.num_rows, output_columns=metadata.schema_arrow.names)
-                            item.update(_bounds(metadata))
-                        else:
-                            item["reason_codes"].append("non_parquet_requires_dataset_adapter")
-                        after = os.fstat(handle.fileno())
-                    if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
-                        item["reason_codes"].append("file_changed_during_inventory")
-                    if path.lstat().st_ino != before.st_ino:
-                        item["reason_codes"].append("path_replaced_during_inventory")
-                    item["disposition"] = "quarantined" if item["reason_codes"] else "cataloged_pending_quality"
-                except (OSError, ValueError, TypeError) as exc:
-                    item.update(disposition="quarantined")
-                    item["reason_codes"].append("unreadable_object:" + type(exc).__name__)
-                objects.append(item)
-                if progress:
-                    progress(len(objects), item["partition_id"])
+
+def full_lake_inventory_receipt(*, data_root: Path, source_commit: str, progress=None) -> ProducerReceipt:
+    objects = []
+    for item in iter_lake_inventory(data_root=data_root):
+        objects.append(item)
+        if progress:
+            progress(len(objects), item["partition_id"])
     objects.sort(key=lambda item: item["partition_id"])
     result = {
         "schema_version": "data002-full-lake-inventory-v1.0.0",
@@ -160,5 +175,68 @@ def full_lake_inventory_receipt(*, data_root: Path, source_commit: str, progress
         producer_version="1.0.0", source_commit=source_commit,
         inputs=objects, dataset_digest=digest(objects),
         configuration={"layers": ["raw", "canonical", "manifests"], "execution_admission": False},
+        artifacts={"inventory_digest": digest(result)}, result=result,
+    )
+
+
+def sharded_lake_inventory_receipt(*, data_root: Path, source_commit: str,
+                                  run_id: str, emit_shard, shard_size=10000,
+                                  progress=None) -> ProducerReceipt:
+    """Retain complete accounting without a million-object in-memory envelope."""
+    if not 1 <= shard_size <= 10000 or not run_id:
+        raise ValueError("inventory requires a bounded shard size and run binding")
+    pending, shards = [], []
+    dispositions = Counter()
+    assets = set()
+    count = 0
+
+    def flush():
+        if not pending:
+            return
+        objects = sorted(pending, key=lambda item: item["partition_id"])
+        result = {
+            "schema_version": "data002-lake-inventory-shard-v1.0.0",
+            "run_id": run_id, "shard_index": len(shards),
+            "objects": objects, "object_count": len(objects),
+            "dispositions": dict(Counter(item["disposition"] for item in objects)),
+            "assets": sorted({(item["market"], item["venue"], item["instrument"])
+                              for item in objects if "instrument" in item}),
+            "claim_boundary": "Partial content accounting only; not a complete inventory or execution admission.",
+        }
+        receipt = build_receipt(
+            milestone="DATA-002", producer="bt.institutional.lake_inventory.lake_inventory_shard_receipt",
+            producer_version="1.0.0", source_commit=source_commit,
+            inputs=objects, dataset_digest=digest(objects),
+            configuration={"run_id": run_id, "shard_index": len(shards)},
+            artifacts={"shard_digest": digest(result)}, result=result,
+        )
+        emit_shard(receipt)
+        shards.append({"shard_index": len(shards), "object_count": len(objects),
+                       "receipt_digest": receipt.receipt_digest, "dataset_digest": receipt.dataset_digest})
+        pending.clear()
+
+    for item in iter_lake_inventory(data_root=data_root):
+        pending.append(item)
+        count += 1
+        dispositions[item["disposition"]] += 1
+        if "instrument" in item:
+            assets.add((item["market"], item["venue"], item["instrument"]))
+        if progress:
+            progress(count, item["partition_id"])
+        if len(pending) == shard_size:
+            flush()
+    flush()
+    result = {
+        "schema_version": "data002-full-lake-inventory-v2.0.0",
+        "run_id": run_id, "shards": shards, "shard_count": len(shards),
+        "object_count": count, "dispositions": dict(dispositions),
+        "assets": sorted(assets), "group_labels_are_optional_metadata": True,
+        "claim_boundary": "Complete content accounting through all bound shards. No contiguous coverage, point-in-time identity, quality, basket eligibility or execution authority is inferred.",
+    }
+    return build_receipt(
+        milestone="DATA-002", producer="bt.institutional.lake_inventory.full_lake_inventory_receipt",
+        producer_version="2.0.0", source_commit=source_commit,
+        inputs=shards, dataset_digest=digest(shards),
+        configuration={"run_id": run_id, "shard_size": shard_size, "execution_admission": False},
         artifacts={"inventory_digest": digest(result)}, result=result,
     )
