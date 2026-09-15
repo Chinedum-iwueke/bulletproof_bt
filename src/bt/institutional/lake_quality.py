@@ -108,7 +108,7 @@ def inventory_objects(inventory: ProducerReceipt, load_shard=None):
         raise ValueError("full-lake quality requires complete inventory shard custody")
     descriptors = inventory.result["shards"]
     if (inventory.result["shard_count"] != len(descriptors)
-            or inventory.dataset_digest != digest(descriptors)
+            or inventory.dataset_digest != digest([item["dataset_digest"] for item in descriptors])
             or inventory.input_digest != digest(descriptors)):
         raise ValueError("inventory root shard binding mismatch")
     previous_path = None

@@ -22,10 +22,15 @@ def test_complete_root_binds_every_bounded_shard(monkeypatch, tmp_path):
     assert receipt.result["object_count"] == 23
     assert receipt.result["shard_count"] == 5
     assert receipt.result["assets"] == [("perp", "bybit", "ETHUSDT")]
-    assert receipt.dataset_digest == digest(receipt.result["shards"])
+    assert receipt.dataset_digest == digest([item["dataset_digest"] for item in receipt.result["shards"]])
     assert [item.receipt_digest for item in shards] == [item["receipt_digest"] for item in receipt.result["shards"]]
     assert all(verify_receipt(item) for item in shards)
     assert all(not any(item.authority.values()) for item in shards)
+    repeated = lake_inventory.sharded_lake_inventory_receipt(
+        data_root=tmp_path, source_commit="a" * 40, run_id="different-run",
+        emit_shard=lambda shard: None, shard_size=5)
+    assert repeated.dataset_digest == receipt.dataset_digest
+    assert repeated.receipt_digest != receipt.receipt_digest
 
 
 def test_shard_failure_never_emits_complete_receipt(monkeypatch, tmp_path):

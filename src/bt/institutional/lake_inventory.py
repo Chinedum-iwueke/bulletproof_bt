@@ -236,7 +236,7 @@ def sharded_lake_inventory_receipt(*, data_root: Path, source_commit: str,
     return build_receipt(
         milestone="DATA-002", producer="bt.institutional.lake_inventory.full_lake_inventory_receipt",
         producer_version="2.0.0", source_commit=source_commit,
-        inputs=shards, dataset_digest=digest(shards),
+        inputs=shards, dataset_digest=digest([item["dataset_digest"] for item in shards]),
         configuration={"run_id": run_id, "shard_size": shard_size, "execution_admission": False},
         artifacts={"inventory_digest": digest(result)}, result=result,
     )
