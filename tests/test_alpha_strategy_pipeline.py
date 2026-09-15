@@ -7,6 +7,7 @@ from bt.governance.alpha_strategy_pipeline import (
     confirm_card,
     canonical_hash,
     draft_research_card,
+    governed_review_verified,
     draft_weekend_momentum_card,
     qualify_card,
 )
@@ -44,6 +45,9 @@ def test_weekend_question_compiles_to_approved_portable_graph() -> None:
         == "alpha_weekend_momentum"
     )
     assert result["variant_count"] == 8
+    assert result["qualification_scope"] == "deterministic_compilation_only"
+    assert result["review"]["independent_of_drafter"] is False
+    assert result["review"]["gates"]["independent_review_complete"] is False
 
 
 def test_unknown_question_is_not_mapped_to_weekend_strategy() -> None:
@@ -117,3 +121,116 @@ def test_non_btc_question_never_uses_btc_fallback(tmp_path):
     value["question_digest"] = canonical_hash({"question": value["question"]})
     with pytest.raises(ValueError, match="bounded_strategy_engineering"):
         draft_research_card(value, repository_root=str(tmp_path))
+
+
+def review_packet_fixture():
+    value = {"campaign_digest": "a" * 64, "question_digest": "b" * 64, "base_ref": "c" * 40}
+    qualification = {"card": {"claim": "example"}, "artifact_bundle": {"compiled": "example"}}
+    subject = {
+        "campaign_digest": value["campaign_digest"], "question_digest": value["question_digest"],
+        "source_commit": value["base_ref"], "card_digest": canonical_hash(qualification["card"]),
+        "artifact_bundle_digest": canonical_hash(qualification["artifact_bundle"]),
+        "qualification_task_id": "reviewed-task",
+        "producer_agent_ids": ["10000000-0000-4000-8000-000000000001"],
+        "producer_identities": [{
+            "agent_id": "10000000-0000-4000-8000-000000000001", "package_digest": "e" * 64,
+            "context_group": "producer", "profile_digest": "f" * 64,
+            "machine": "vm1", "provider": "deterministic", "model_family": "none", "runtime": "python",
+        }],
+    }
+    subject["qualifier_identity"] = dict(subject["producer_identities"][0])
+    assertion = {
+        "schema_version": "evaluation-independence-assertion-v1.0.0", "route_digest": "d" * 64,
+        "subject_digest": canonical_hash(subject), "assignments": [],
+        "producer": dict(subject["producer_identities"][0]),
+        "policy": {"required_review_kinds": ["strategy_spec", "causality_leakage"], "max_pairwise_shared_dimensions": 4},
+    }
+    for index, kind in enumerate(assertion["policy"]["required_review_kinds"]):
+        review = {"subject_digest": canonical_hash(subject), "verdict": "approve", "blockers": [], "checks": ["causality"], "rationale": "Independent specification checks completed."}
+        assertion["assignments"].append({
+            "assignment_digest": str(index + 2) * 64, "review_kind": kind,
+            "review_digest": canonical_hash(review), "alpha_strategy_review": review,
+            "correlation_report": {},
+            "evaluator_identity": {
+                "agent_id": f"{index + 2}0000000-0000-4000-8000-000000000001", "package_digest": str(index + 3) * 64,
+                "context_group": f"review-{index}", "profile_digest": str(index + 5) * 64,
+                "machine": "vm1", "provider": "openai", "model_family": "codex", "runtime": "codex-cli",
+            },
+        })
+    qualification["governed_review"] = {
+        "subject": subject, "assertion": assertion, "receipt_digest": canonical_hash(assertion),
+        "route_id": "40000000-0000-4000-8000-000000000001", "verdict": "independence_demonstrated",
+    }
+    return value, qualification
+
+
+def test_governed_packet_binds_reviewed_card_artifacts_and_execution_scope():
+    value, qualification = review_packet_fixture()
+    assert governed_review_verified(value, qualification)
+
+
+def test_same_agent_package_rollover_preserves_explicit_qualifier_identity():
+    value, qualification = review_packet_fixture()
+    packet = qualification["governed_review"]
+    subject = packet["subject"]
+    older = dict(subject["qualifier_identity"], package_digest="9" * 64, context_group="older-draft")
+    subject["producer_identities"].insert(0, older)
+    packet["assertion"]["subject_digest"] = canonical_hash(subject)
+    for entry in packet["assertion"]["assignments"]:
+        entry["alpha_strategy_review"]["subject_digest"] = canonical_hash(subject)
+        entry["review_digest"] = canonical_hash(entry["alpha_strategy_review"])
+    packet["receipt_digest"] = canonical_hash(packet["assertion"])
+    assert governed_review_verified(value, qualification)
+
+
+@pytest.mark.parametrize("mutation", ["card", "bundle", "source", "question", "receipt", "kinds"])
+def test_governed_packet_changes_fail_closed(mutation):
+    value, qualification = review_packet_fixture()
+    if mutation == "card":
+        qualification["card"]["claim"] = "changed"
+    elif mutation == "bundle":
+        qualification["artifact_bundle"]["compiled"] = "changed"
+    elif mutation == "source":
+        value["base_ref"] = "d" * 40
+    elif mutation == "question":
+        value["question_digest"] = "d" * 64
+    elif mutation == "receipt":
+        qualification["governed_review"]["receipt_digest"] = "d" * 64
+    else:
+        qualification["governed_review"]["assertion"]["assignments"] = []
+    assert not governed_review_verified(value, qualification)
+
+
+def test_self_declared_or_missing_review_never_proves_independence():
+    assert not governed_review_verified({}, None)
+    assert not governed_review_verified({}, {"review": {"gates": {"independent_review_complete": True}}})
+
+
+def test_minimal_self_hashed_assertion_is_not_a_governed_review():
+    value, qualification = review_packet_fixture()
+    subject = qualification["governed_review"]["subject"]
+    assertion = {"subject_digest": canonical_hash(subject), "assignments": [
+        {"review_kind": "strategy_spec"}, {"review_kind": "causality_leakage"},
+    ]}
+    qualification["governed_review"] = {"subject": subject, "assertion": assertion, "receipt_digest": canonical_hash(assertion)}
+    assert not governed_review_verified(value, qualification)
+
+
+@pytest.mark.parametrize("mutation", ["drafter", "peer_package", "rejected", "changed_review", "no_route"])
+def test_rehashed_packets_cannot_bypass_review_content_or_separation(mutation):
+    value, qualification = review_packet_fixture()
+    packet = qualification["governed_review"]
+    first, second = packet["assertion"]["assignments"]
+    if mutation == "drafter":
+        first["evaluator_identity"]["agent_id"] = packet["subject"]["producer_agent_ids"][0]
+    elif mutation == "peer_package":
+        second["evaluator_identity"]["package_digest"] = first["evaluator_identity"]["package_digest"]
+    elif mutation == "rejected":
+        first["alpha_strategy_review"]["verdict"] = "reject"
+        first["review_digest"] = canonical_hash(first["alpha_strategy_review"])
+    elif mutation == "changed_review":
+        first["alpha_strategy_review"]["rationale"] = "Changed without changing its review digest."
+    else:
+        packet.pop("route_id")
+    packet["receipt_digest"] = canonical_hash(packet["assertion"])
+    assert not governed_review_verified(value, qualification)

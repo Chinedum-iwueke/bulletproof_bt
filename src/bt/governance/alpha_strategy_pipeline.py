@@ -98,6 +98,114 @@ def parameter_variant_count(card: dict[str, Any]) -> int:
     return prod(len(values) for values in grid.values())
 
 
+def governed_review_verified(assignment: dict[str, Any], qualification: dict[str, Any] | None) -> bool:
+    """Replay review evidence from an authenticated immutable control-plane assignment."""
+    if not isinstance(qualification, dict):
+        return False
+    packet = qualification.get("governed_review")
+    if not isinstance(packet, dict):
+        return False
+    subject, assertion = packet.get("subject"), packet.get("assertion")
+    if not isinstance(subject, dict) or not isinstance(assertion, dict):
+        return False
+    if not isinstance(assertion.get("assignments"), list):
+        return False
+    producer, policy = assertion.get("producer"), assertion.get("policy")
+    excluded = subject.get("producer_agent_ids")
+    producer_identities = subject.get("producer_identities")
+    if (
+        packet.get("verdict") != "independence_demonstrated"
+        or not re.fullmatch(r"[0-9a-f-]{36}", str(packet.get("route_id", "")))
+        or assertion.get("schema_version") != "evaluation-independence-assertion-v1.0.0"
+        or not re.fullmatch(r"[0-9a-f]{64}", str(assertion.get("route_digest", "")))
+        or not isinstance(producer, dict) or not isinstance(policy, dict)
+        or not isinstance(excluded, list) or not excluded
+        or not all(isinstance(actor, str) and actor for actor in excluded)
+        or not isinstance(producer_identities, list) or not producer_identities
+        or not all(isinstance(identity, dict) for identity in producer_identities)
+        or producer.get("agent_id") not in excluded
+    ):
+        return False
+    for identity in producer_identities:
+        if (
+            not all(isinstance(identity.get(key), str) and identity[key] for key in (
+                "agent_id", "package_digest", "context_group", "profile_digest",
+                "machine", "provider", "model_family", "runtime",
+            ))
+            or not re.fullmatch(r"[0-9a-f]{64}", identity["package_digest"])
+            or not re.fullmatch(r"[0-9a-f]{64}", identity["profile_digest"])
+        ):
+            return False
+    if {identity.get("agent_id") for identity in producer_identities} != set(excluded):
+        return False
+    primary = subject.get("qualifier_identity")
+    if not isinstance(primary, dict) or primary not in producer_identities or any(primary.get(key) != producer.get(key) for key in (
+        "agent_id", "package_digest", "context_group", "machine", "provider", "model_family", "runtime",
+    )):
+        return False
+    required = policy.get("required_review_kinds")
+    ceiling = policy.get("max_pairwise_shared_dimensions")
+    if (
+        not isinstance(required, list)
+        or not all(isinstance(kind, str) and kind for kind in required)
+        or not {"strategy_spec", "causality_leakage"}.issubset(set(required))
+        or not isinstance(ceiling, int) or not 0 <= ceiling <= 4
+    ):
+        return False
+    reviewers = []
+    kinds = []
+    for item in assertion["assignments"]:
+        if not isinstance(item, dict):
+            return False
+        identity, review = item.get("evaluator_identity"), item.get("alpha_strategy_review")
+        if not isinstance(identity, dict) or not isinstance(review, dict):
+            return False
+        if (
+            not isinstance(item.get("review_kind"), str)
+            or not item["review_kind"]
+            or identity.get("agent_id") in excluded
+            or not all(isinstance(identity.get(key), str) and identity[key] for key in (
+                "agent_id", "package_digest", "context_group", "profile_digest",
+                "machine", "provider", "model_family", "runtime",
+            ))
+            or not re.fullmatch(r"[0-9a-f]{64}", identity["package_digest"])
+            or not re.fullmatch(r"[0-9a-f]{64}", identity["profile_digest"])
+            or not re.fullmatch(r"[0-9a-f]{64}", str(item.get("assignment_digest", "")))
+            or item.get("review_digest") != canonical_hash(review)
+            or review.get("subject_digest") != canonical_hash(subject)
+            or review.get("verdict") != "approve" or review.get("blockers") != []
+            or not isinstance(review.get("checks"), list) or not review["checks"]
+            or not isinstance(review.get("rationale"), str) or len(review["rationale"]) < 20
+            or not isinstance(item.get("correlation_report"), dict)
+        ):
+            return False
+        for other in (producer, *producer_identities, *reviewers):
+            if any(identity.get(key) == other.get(key) for key in (
+                "agent_id", "package_digest", "context_group",
+            )):
+                return False
+            if sum(identity.get(key) == other.get(key) for key in (
+                "machine", "provider", "model_family", "runtime",
+            )) > ceiling:
+                return False
+        reviewers.append(identity)
+        kinds.append(item.get("review_kind"))
+    if len(kinds) != len(set(kinds)) or set(kinds) != set(required):
+        return False
+    expected = {
+        "campaign_digest": assignment["campaign_digest"],
+        "question_digest": assignment["question_digest"],
+        "source_commit": assignment["base_ref"],
+        "card_digest": canonical_hash(qualification.get("card")),
+        "artifact_bundle_digest": canonical_hash(qualification.get("artifact_bundle")),
+    }
+    return (
+        all(subject.get(key) == value for key, value in expected.items())
+        and assertion.get("subject_digest") == canonical_hash(subject)
+        and packet.get("receipt_digest") == canonical_hash(assertion)
+    )
+
+
 def draft_weekend_momentum_card(assignment: dict[str, Any]) -> dict[str, Any]:
     question = " ".join(assignment["question"].split())
     lowered = question.casefold()
@@ -307,16 +415,16 @@ def qualify_card(card: dict[str, Any], *, repository_root: str) -> dict[str, Any
         and card["execution_semantics"]["missing_bars"] == "no_decision",
         "strategy_compilable": readiness["status"]
         in {"registry_ready", "graph_compilable"},
-        "independent_review_complete": True,
+        "independent_review_complete": False,
     }
     review = {
-        "schema_version": "alpha-independent-spec-review-v1.0.0",
-        "reviewer": "bt.independent_spec_evaluator",
+        "schema_version": "alpha-deterministic-spec-check-v1.0.0",
+        "reviewer": "bt.spec_compiler",
         "reviewed_at": datetime.now(UTC).isoformat(),
         "card_digest": canonical_hash(card),
         "gates": gates,
         "blockers": readiness["blockers"],
-        "independent_of_drafter": True,
+        "independent_of_drafter": False,
         "execution_authority": False,
     }
     review["review_digest"] = canonical_hash(review)
@@ -326,7 +434,8 @@ def qualify_card(card: dict[str, Any], *, repository_root: str) -> dict[str, Any
         "card_digest": canonical_hash(card),
         "artifact_bundle": bundle,
         "review": review,
-        "qualified": all(gates.values()),
+        "qualified": all(value for key, value in gates.items() if key != "independent_review_complete"),
+        "qualification_scope": "deterministic_compilation_only",
         "tier": "Tier2B",
         "dataset": card["dataset_binding"],
         "window": card["execution_window"],
