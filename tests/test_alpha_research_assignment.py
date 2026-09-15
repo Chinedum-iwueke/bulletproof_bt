@@ -1,8 +1,13 @@
 from pathlib import Path
+import pytest
+
+from bt.governance.research_bridge import BridgeError
 
 from scripts.run_alpha_research_assignment import (
     AUTHORITY,
     engineering_required,
+    execute_registered,
+    independent_review_required,
     held_out_evaluation,
     hypothesis_identity,
     record_alpha_memory,
@@ -44,6 +49,24 @@ def test_explicit_registered_identity_is_only_taken_from_typed_marker() -> None:
     assert hypothesis_identity("hypothesis_id: L1-H9B") == "L1-H9B"
     prose = "Run something similar to L1-H9B but with a weekend interaction"
     assert hypothesis_identity(prose) == prose
+
+
+def test_unreviewed_qualification_stops_before_compute_or_output_creation(tmp_path):
+    value = assignment()
+    value["qualification"] = {"qualified": True}
+    output = tmp_path / "must-not-be-created"
+    with pytest.raises(BridgeError, match="no compute started"):
+        execute_registered(value, tmp_path, output)
+    assert not output.exists()
+
+
+def test_independence_failure_retains_zero_trial_operational_evidence(tmp_path):
+    result = independent_review_required(assignment(), tmp_path, "unbound review")
+    attempt = result["alpha_campaign_attempt"]
+    assert attempt["outcome"] == "failed"
+    assert attempt["failure_stage"] == "independent_evaluation"
+    assert attempt["trial_count"] == 0
+    assert (tmp_path / "independent-review-failure.json").is_file()
 
 
 def test_unsupported_question_retains_citations_and_zero_trials(tmp_path: Path) -> None:
