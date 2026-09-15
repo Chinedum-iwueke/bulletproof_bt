@@ -11,6 +11,7 @@ Timestamp convention:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 import pandas as pd
 
 from bt.core.types import Bar
@@ -27,6 +28,7 @@ _TIMEFRAME_TO_MINUTES: dict[str, int] = {
     "1d": 1440,
 }
 
+# Retained as common examples for existing consumers, not an exhaustive allowlist.
 SUPPORTED_TIMEFRAMES: tuple[str, ...] = tuple(_TIMEFRAME_TO_MINUTES.keys())
 
 
@@ -34,17 +36,27 @@ def normalize_timeframe(value: object, *, key_path: str = "timeframe") -> str:
     """Normalize and validate a timeframe string against supported values."""
     if not isinstance(value, str):
         raise ValueError(
-            f"Invalid {key_path}: expected one of {list(SUPPORTED_TIMEFRAMES)} "
+            f"Invalid {key_path}: expected an integer duration with m, h or d units "
             f"(got: {value!r})"
         )
 
     timeframe = value.strip().lower()
-    if timeframe not in _TIMEFRAME_TO_MINUTES:
+    match = re.fullmatch(r"([1-9][0-9]*)([mhd])", timeframe)
+    if match is None:
         raise ValueError(
             f"Invalid {key_path}: {value!r}. Supported examples: "
-            f"{', '.join(SUPPORTED_TIMEFRAMES)}"
+            "positive integer durations with m, h or d units; seconds are unsupported"
+            "; examples: 1m, 7m, 12m, 2h, 1d"
         )
+    minutes = int(match[1]) * {"m": 1, "h": 60, "d": 1440}[match[2]]
+    if minutes > pd.Timedelta.max.value // pd.Timedelta(minutes=1).value:
+        raise ValueError(f"Invalid {key_path}: duration exceeds timestamp range")
     return timeframe
+
+
+def timeframe_minutes(timeframe: str) -> int:
+    normalized = normalize_timeframe(timeframe)
+    return int(normalized[:-1]) * {"m": 1, "h": 60, "d": 1440}[normalized[-1]]
 
 
 @dataclass(frozen=True)
@@ -106,11 +118,13 @@ class TimeframeResampler:
 
         self._states: dict[tuple[str, str], _BucketState] = {}
         self._latest_closed: dict[tuple[str, str], HTFBar] = {}
+        self._last_input: dict[str, pd.Timestamp] = {}
 
     def reset(self) -> None:
         """Reset all in-flight and latest-closed state."""
         self._states.clear()
         self._latest_closed.clear()
+        self._last_input.clear()
 
     def latest_closed(self, symbol: str, timeframe: str) -> HTFBar | None:
         """Return the latest closed HTF bar for a symbol/timeframe."""
@@ -119,6 +133,12 @@ class TimeframeResampler:
     def update(self, bar: Bar) -> list[HTFBar]:
         """Update state with one 1m bar and return newly closed HTF bars."""
         self._assert_utc(bar.ts)
+        if bar.ts != bar.ts.floor("1min"):
+            raise ValueError("Base bars must be aligned to whole UTC minutes")
+        previous = self._last_input.get(bar.symbol)
+        if previous is not None and bar.ts <= previous:
+            raise ValueError("Base bars must be strictly increasing per symbol")
+        self._last_input[bar.symbol] = bar.ts
         emitted: list[HTFBar] = []
 
         for timeframe in self._timeframes:
@@ -160,16 +180,12 @@ class TimeframeResampler:
 
     @staticmethod
     def _bucket_start(ts: pd.Timestamp, timeframe: str) -> pd.Timestamp:
-        minutes = _TIMEFRAME_TO_MINUTES[timeframe]
-        if timeframe == "1d":
-            return ts.floor("1d")
-        if timeframe == "1h":
-            return ts.floor("1h")
+        minutes = timeframe_minutes(timeframe)
         return ts.floor(f"{minutes}min")
 
     @staticmethod
     def _init_state(bucket_start: pd.Timestamp, timeframe: str, bar: Bar) -> _BucketState:
-        expected = _TIMEFRAME_TO_MINUTES[timeframe]
+        expected = timeframe_minutes(timeframe)
         return _BucketState(
             bucket_start=bucket_start,
             open=bar.open,
@@ -200,5 +216,11 @@ class TimeframeResampler:
             n_bars=state.n_bars,
             expected_bars=state.expected_bars,
             is_complete=is_complete,
-            metadata={},
+            metadata={
+                "bucket_origin": "1970-01-01T00:00:00Z",
+                "timestamp_convention": "bucket_start",
+                "availability_policy": "next_bucket_input",
+                "base_timeframe": "1m",
+                "strict": self._strict,
+            },
         )

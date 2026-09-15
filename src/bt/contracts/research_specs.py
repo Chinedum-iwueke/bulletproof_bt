@@ -4,15 +4,21 @@ import argparse
 import datetime as dt
 import json
 import re
-import sys
 from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 import yaml
+from bt.data.resample import normalize_timeframe
 
 
-ALLOWED_TIMEFRAMES = {"1m", "5m", "15m", "1h", "4h", "1d"}
+def _valid_timeframe(value: object) -> bool:
+    try:
+        normalize_timeframe(value)
+        return True
+    except ValueError:
+        return False
+
 ALLOWED_DATASETS = {
     "ohlcv",
     "trades",
@@ -143,7 +149,7 @@ def validate_hypothesis_spec(spec: dict[str, Any]) -> list[str]:
     else:
         errors.append("required_datasets_must_be_list")
     timeframe = (spec.get("execution_semantics") or {}).get("signal_timeframe")
-    if timeframe and timeframe not in ALLOWED_TIMEFRAMES:
+    if timeframe and not _valid_timeframe(timeframe):
         errors.append("execution_semantics_signal_timeframe_unsupported")
     ranges = spec.get("safe_parameter_ranges")
     if isinstance(ranges, dict):
@@ -195,7 +201,7 @@ def validate_strategy_spec(spec: dict[str, Any]) -> list[str]:
         errors.append("schema_version_must_be_strategy_spec_v1")
     if spec.get("strategy_family") not in ALLOWED_FAMILIES:
         errors.append("strategy_family_unsupported")
-    if spec.get("timeframe") not in ALLOWED_TIMEFRAMES:
+    if not _valid_timeframe(spec.get("timeframe")):
         errors.append("timeframe_unsupported")
     if not isinstance(spec.get("universe"), list) or len(spec.get("universe") or []) == 0:
         errors.append("universe_must_be_non_empty_list")

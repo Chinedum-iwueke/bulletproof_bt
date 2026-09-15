@@ -72,6 +72,15 @@ def _base_config() -> dict[str, Any]:
     }
 
 
+@pytest.mark.parametrize("timeframe", ["7m", "12m", "2h"])
+def test_classic_engine_accepts_arbitrary_signal_duration(monkeypatch, tmp_path, timeframe):
+    cfg = _base_config()
+    cfg["htf_resampler"] = {"timeframes": [timeframe], "strict": True}
+    emitted = _run_with_config(monkeypatch, tmp_path / timeframe, cfg, _bars_df(list(range(0, 241))))
+    assert emitted
+    assert all(item[1] == timeframe for item in emitted)
+
+
 def test_default_preserves_behavior_when_timeframe_unset(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     bars_df = _bars_df(list(range(0, 16)))
 

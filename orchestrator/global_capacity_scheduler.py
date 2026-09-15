@@ -10,10 +10,12 @@ only changes wall-clock timing.
 from __future__ import annotations
 
 import argparse
+import fcntl
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import signal
@@ -34,8 +36,8 @@ SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from bt.experiments.resource_controls import MemorySnapshot, memory_snapshot
-from orchestrator.db import ResearchDB
+from bt.experiments.resource_controls import MemorySnapshot, memory_snapshot  # noqa: E402
+from orchestrator.db import ResearchDB  # noqa: E402
 
 
 def utc_now_iso() -> str:
@@ -47,7 +49,7 @@ class CapacitySchedulerConfig:
     queue_name: str = "approved_backtests"
     poll_seconds: float = 30.0
     target_workers: int = 28
-    max_workers_per_job: int = 12
+    max_workers_per_job: int = 8
     max_concurrent_jobs: int = 4
     min_free_ram_gb: float = 8.0
     pause_free_ram_gb: float = 6.0
@@ -56,6 +58,7 @@ class CapacitySchedulerConfig:
     log_path: str = "logs/research_capacity_scheduler.log"
     state_path: str = "logs/research_capacity_scheduler_state.json"
     child_log_dir: str = "logs/research_capacity_scheduler_jobs"
+    estimated_worker_ram_gb: float = 2.0
 
 
 @dataclass
@@ -113,7 +116,7 @@ def load_capacity_config(daemon_config: dict[str, Any], args: argparse.Namespace
         poll_seconds=float(args.poll_seconds if args.poll_seconds is not None else block.get("poll_seconds", 30)),
         target_workers=int(args.target_workers if args.target_workers is not None else block.get("target_workers", 28)),
         max_workers_per_job=int(
-            args.max_workers_per_job if args.max_workers_per_job is not None else block.get("max_workers_per_job", 12)
+            args.max_workers_per_job if args.max_workers_per_job is not None else block.get("max_workers_per_job", 8)
         ),
         max_concurrent_jobs=int(
             args.max_concurrent_jobs if args.max_concurrent_jobs is not None else block.get("max_concurrent_jobs", 4)
@@ -131,6 +134,7 @@ def load_capacity_config(daemon_config: dict[str, Any], args: argparse.Namespace
         log_path=str(block.get("log_path", "logs/research_capacity_scheduler.log")),
         state_path=str(block.get("state_path", "logs/research_capacity_scheduler_state.json")),
         child_log_dir=str(block.get("child_log_dir", "logs/research_capacity_scheduler_jobs")),
+        estimated_worker_ram_gb=float(block.get("estimated_worker_ram_gb", 2.0)),
     )
     if cfg.target_workers <= 0:
         raise ValueError("target_workers must be positive")
@@ -138,6 +142,8 @@ def load_capacity_config(daemon_config: dict[str, Any], args: argparse.Namespace
         raise ValueError("max_workers_per_job must be positive")
     if cfg.max_concurrent_jobs <= 0:
         raise ValueError("max_concurrent_jobs must be positive")
+    if not math.isfinite(cfg.estimated_worker_ram_gb) or cfg.estimated_worker_ram_gb <= 0:
+        raise ValueError("estimated_worker_ram_gb must be finite and positive")
     if cfg.pause_free_ram_gb >= cfg.resume_free_ram_gb:
         raise ValueError("pause_free_ram_gb must be lower than resume_free_ram_gb")
     return cfg
@@ -184,23 +190,24 @@ def estimate_worker_slots(payload: dict[str, Any], cfg: CapacitySchedulerConfig,
     """
     default_workers = int(daemon_config.get("default_max_workers", 6))
     max_workers = int(payload.get("max_workers") or default_workers)
-    return max(1, min(cfg.max_workers_per_job, max_workers))
+    return max(1, max_workers)
 
 
-def external_locked_worker_slots(db: ResearchDB, queue_name: str, cfg: CapacitySchedulerConfig, daemon_config: dict[str, Any]) -> int:
+def external_locked_worker_slots(db: ResearchDB, queue_name: str, cfg: CapacitySchedulerConfig, daemon_config: dict[str, Any], managed_owners: set[str] | None = None) -> int:
     """Estimate slots already consumed by locked jobs this scheduler did not launch."""
     rows = db.connect().execute(
         """
-        SELECT payload_json
+        SELECT payload_json, locked_by
         FROM queues
         WHERE queue_name = ?
           AND status = 'LOCKED'
-          AND (locked_by IS NULL OR locked_by NOT LIKE 'capacity:%')
         """,
         (queue_name,),
     ).fetchall()
     total = 0
     for row in rows:
+        if row["locked_by"] in (managed_owners or set()):
+            continue
         try:
             payload = json.loads(row["payload_json"] or "{}")
         except Exception:
@@ -323,11 +330,22 @@ class CapacityScheduler:
         self.dry_run = dry_run
         self.db = ResearchDB(db_path, repo_root=PROJECT_ROOT)
         self.db.init_schema()
+        self._leader_lock = db_path.with_suffix(".capacity.lock").open("a")
+        try:
+            fcntl.flock(self._leader_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            self._leader_lock.close()
+            self.db.close()
+            raise RuntimeError("A capacity scheduler already owns this database") from None
         self.logger = configure_logging(PROJECT_ROOT / cfg.log_path)
         self.jobs: list[ManagedJob] = []
         self.shutdown_requested = False
         signal.signal(signal.SIGINT, self._request_shutdown)
         signal.signal(signal.SIGTERM, self._request_shutdown)
+
+    def _external_slots(self) -> int:
+        return external_locked_worker_slots(self.db, self.cfg.queue_name, self.cfg,
+                                            self.daemon_config, {job.locked_by for job in self.jobs})
 
     def _request_shutdown(self, signum: int, _frame: Any) -> None:
         self.logger.info("Received signal %s; scheduler shutdown requested.", signum)
@@ -344,7 +362,7 @@ class CapacityScheduler:
             "worker_slots": {
                 "running": active_worker_slots(self.jobs),
                 "paused": paused_worker_slots(self.jobs),
-                "external_locked": external_locked_worker_slots(self.db, self.cfg.queue_name, self.cfg, self.daemon_config),
+                "external_locked": self._external_slots(),
                 "target": self.cfg.target_workers,
             },
             "jobs": [asdict(job) | {"rss_gb": process_tree_rss_gb(job.pid)} for job in self.jobs],
@@ -360,6 +378,17 @@ class CapacityScheduler:
     def _reap_jobs(self) -> None:
         kept: list[ManagedJob] = []
         for job in self.jobs:
+            if job.queue_id:
+                row = self.db.connect().execute("SELECT status, payload_json FROM queues WHERE id = ?", (job.queue_id,)).fetchone()
+                payload = json.loads(row["payload_json"]) if row else {}
+                from orchestrator.alpha_capacity_owner import owner_alive
+                if row and payload.get("kind") == "governed_alpha_assignment" and (row["status"] == "FAILED" or not owner_alive(payload)):
+                    if row["status"] != "FAILED":
+                        self.db.mark_queue_failed(job.queue_id, "Hermes execution lease owner disappeared")
+                    try:
+                        os.killpg(job.pgid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
             try:
                 pid, status = os.waitpid(job.pid, os.WNOHANG)
             except ChildProcessError:
@@ -375,6 +404,10 @@ class CapacityScheduler:
                 job.returncode = None
             job.status = "completed"
             job.completed_at = utc_now_iso()
+            if job.queue_id:
+                row = self.db.connect().execute("SELECT status, payload_json FROM queues WHERE id = ?", (job.queue_id,)).fetchone()
+                if row and row["status"] == "LOCKED" and json.loads(row["payload_json"]).get("kind") == "governed_alpha_assignment":
+                    self.db.mark_queue_failed(job.queue_id, "Capacity child exited without a terminal receipt")
             self.logger.info(
                 "job exited: locked_by=%s queue_id=%s name=%s returncode=%s",
                 job.locked_by,
@@ -411,8 +444,8 @@ class CapacityScheduler:
         if not should_resume_for_memory(snap, self.cfg):
             return
         for job in sorted([j for j in self.jobs if j.status == "paused"], key=lambda j: j.priority, reverse=True):
-            external_slots = external_locked_worker_slots(self.db, self.cfg.queue_name, self.cfg, self.daemon_config)
-            if external_slots + active_worker_slots(self.jobs) + job.estimated_workers > self.cfg.target_workers:
+            external_slots = self._external_slots()
+            if external_slots + active_worker_slots(self.jobs) + job.estimated_workers > min(self.cfg.target_workers, max(1, (os.cpu_count() or 1) - 2)):
                 continue
             self._send_group(job, signal.SIGCONT)
             job.status = "running"
@@ -434,21 +467,26 @@ class CapacityScheduler:
     def _select_launch_candidate(self) -> tuple[sqlite3.Row | None, dict[str, Any], int]:
         remaining_slots = self.cfg.target_workers - (
             active_worker_slots(self.jobs)
-            + external_locked_worker_slots(self.db, self.cfg.queue_name, self.cfg, self.daemon_config)
+            + self._external_slots()
         )
         if remaining_slots <= 0:
             return None, {}, 0
         for row in pending_queue_candidates(self.db, self.cfg.queue_name):
+            if row["id"] in {job.queue_id for job in self.jobs}:
+                continue
             payload = json.loads(row["payload_json"] or "{}")
             estimated_workers = estimate_worker_slots(payload, self.cfg, self.daemon_config)
-            if estimated_workers <= remaining_slots:
+            if estimated_workers <= min(remaining_slots, self.cfg.max_workers_per_job):
                 return row, payload, estimated_workers
         return None, {}, 0
 
     def _launch_next_if_capacity(self, snap: MemorySnapshot | None) -> bool:
         if len(self.jobs) >= self.cfg.max_concurrent_jobs:
             return False
-        if snap is not None and snap.available_gb < self.cfg.min_free_ram_gb:
+        if snap is None:
+            self.logger.warning("launch backpressure: memory telemetry unavailable")
+            return False
+        if snap.available_gb < self.cfg.min_free_ram_gb:
             self.logger.info(
                 "launch backpressure: available_gb=%.2f below min_free_ram_gb=%.2f",
                 snap.available_gb,
@@ -459,9 +497,21 @@ class CapacityScheduler:
         row, payload, estimated_workers = self._select_launch_candidate()
         if row is None:
             return False
+        if estimated_workers > max(1, (os.cpu_count() or 1) - 2):
+            return False
+        if os.getloadavg()[0] + estimated_workers > max(1, (os.cpu_count() or 1) - 2):
+            self.logger.info("launch backpressure: host CPU load leaves insufficient headroom")
+            return False
+        reserved_unrealized = sum(
+            max(0.0, job.estimated_workers * self.cfg.estimated_worker_ram_gb
+                - (process_tree_rss_gb(job.pid) or 0.0)) for job in self.jobs
+        )
+        if snap.available_gb < self.cfg.min_free_ram_gb + reserved_unrealized + estimated_workers * self.cfg.estimated_worker_ram_gb:
+            self.logger.info("launch backpressure: insufficient conservative RAM reservation")
+            return False
 
-        external_slots = external_locked_worker_slots(self.db, self.cfg.queue_name, self.cfg, self.daemon_config)
-        if external_slots + active_worker_slots(self.jobs) + estimated_workers > self.cfg.target_workers:
+        external_slots = self._external_slots()
+        if external_slots + active_worker_slots(self.jobs) + estimated_workers > min(self.cfg.target_workers, max(1, (os.cpu_count() or 1) - 2)):
             return False
 
         priority = int(row["priority"] or 0)
@@ -479,6 +529,10 @@ class CapacityScheduler:
             "--queue-id",
             str(row["id"]),
         ]
+        if payload.get("kind") == "governed_alpha_assignment":
+            cmd = [sys.executable, str(PROJECT_ROOT / "scripts/run_alpha_capacity_job.py"),
+                   "--db", str(self.db_path), "--queue-id", str(row["id"]),
+                   "--locked-by", locked_by, "--queue-name", self.cfg.queue_name]
         child_dir = PROJECT_ROOT / self.cfg.child_log_dir
         child_dir.mkdir(parents=True, exist_ok=True)
         stdout_path = child_dir / f"{locked_by.replace(':', '_')}.stdout.log"
@@ -507,12 +561,13 @@ class CapacityScheduler:
         )
         stdout.close()
         stderr.close()
-        queue_id: str | None = None
+        queue_id: str | None = str(row["id"])
         locked_name: str | None = name
         deadline = time.monotonic() + 10.0
         while time.monotonic() < deadline:
-            queue_id, locked_name = find_locked_queue_item(self.db, locked_by)
-            if queue_id:
+            claimed_id, claimed_name = find_locked_queue_item(self.db, locked_by)
+            if claimed_id:
+                queue_id, locked_name = claimed_id, claimed_name
                 break
             if proc.poll() is not None:
                 break
@@ -521,7 +576,7 @@ class CapacityScheduler:
             ManagedJob(
                 locked_by=locked_by,
                 pid=proc.pid,
-                pgid=os.getpgid(proc.pid),
+                pgid=proc.pid,
                 queue_id=queue_id,
                 name=locked_name or name,
                 estimated_workers=estimated_workers,

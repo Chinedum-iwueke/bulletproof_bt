@@ -21,12 +21,12 @@ def test_estimate_worker_slots_counts_parallel_dataset_worker_budget_once() -> N
     assert estimate_worker_slots(payload, cfg, daemon_cfg) == 8
 
 
-def test_estimate_worker_slots_is_capped_per_job() -> None:
+def test_estimate_worker_slots_never_understates_requested_workers() -> None:
     cfg = CapacitySchedulerConfig(max_workers_per_job=10)
     daemon_cfg = {"default_max_workers": 12, "volatile_max_workers": 12}
     payload = {"max_workers": 12, "volatile_max_workers": 12, "parallel_datasets": True}
 
-    assert estimate_worker_slots(payload, cfg, daemon_cfg) == 10
+    assert estimate_worker_slots(payload, cfg, daemon_cfg) == 12
 
 
 def test_memory_pause_resume_thresholds_have_hysteresis() -> None:

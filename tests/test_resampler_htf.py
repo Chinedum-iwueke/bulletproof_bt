@@ -1,9 +1,60 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from bt.core.types import Bar
-from bt.data.resample import TimeframeResampler
+from bt.data.resample import TimeframeResampler, normalize_timeframe, timeframe_minutes
+from bt.data.timeframe_utils import is_timeframe_boundary
+
+
+@pytest.mark.parametrize("timeframe", ["2m", "7m", "10m", "12m", "2h", "25h", "2d"])
+def test_arbitrary_duration_complete_bucket_and_boundary(timeframe):
+    minutes = timeframe_minutes(timeframe)
+    start = pd.Timestamp("2025-01-01T23:59:00Z").floor(f"{minutes}min")
+    resampler = TimeframeResampler([timeframe])
+    for offset in range(minutes):
+        assert resampler.update(_bar(start + pd.Timedelta(minutes=offset), 100 + offset)) == []
+    emitted = resampler.update(_bar(start + pd.Timedelta(minutes=minutes), 999))
+    assert len(emitted) == 1
+    assert emitted[0].n_bars == minutes
+    assert emitted[0].close == 100 + minutes - 1
+    assert emitted[0].ts == start
+    assert emitted[0].is_complete
+    assert is_timeframe_boundary(start, timeframe)
+    assert not is_timeframe_boundary(start + pd.Timedelta(minutes=1), timeframe)
+    assert emitted[0].metadata["availability_policy"] == "next_bucket_input"
+
+
+@pytest.mark.parametrize("value", ["30s", "60s", "0m", "-2m", "1.5m", "1w", "7", "01m", "999999999999999h"])
+def test_invalid_or_subminute_duration_rejected(value):
+    with pytest.raises(ValueError):
+        normalize_timeframe(value)
+
+
+def test_duplicate_and_out_of_order_input_cannot_create_complete_bucket():
+    resampler = TimeframeResampler(["7m"])
+    start = pd.Timestamp("2025-01-01T00:00:00Z").floor("7min")
+    resampler.update(_bar(start, 100))
+    for ts in [start, start - pd.Timedelta(minutes=1)]:
+        with pytest.raises(ValueError, match="strictly increasing"):
+            resampler.update(_bar(ts, 100))
+    for offset in [1, 2, 4, 5, 6, 7]:
+        assert resampler.update(_bar(start + pd.Timedelta(minutes=offset), 100)) == []
+    resampler.reset()
+    assert resampler.update(_bar(start, 100)) == []
+
+
+def test_seconds_aligned_input_is_not_a_minute_bar():
+    with pytest.raises(ValueError, match="whole UTC minutes"):
+        TimeframeResampler(["7m"]).update(_bar("2025-01-01T00:00:30Z", 100))
+
+
+@pytest.mark.parametrize("duration", ["7m", "12m", "2h", "60s"])
+def test_research_contract_uses_native_duration_validation(duration):
+    from bt.contracts.research_specs import _valid_timeframe
+
+    assert _valid_timeframe(duration) is (duration != "60s")
 
 
 def _utc_ts(ts: str | pd.Timestamp) -> pd.Timestamp:
