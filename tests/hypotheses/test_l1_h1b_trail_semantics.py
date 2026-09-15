@@ -49,7 +49,7 @@ def test_trail_activates_on_bar_survival_and_ratchets_for_long() -> None:
         assert not out
 
     # force stop at a high tightened level, should attribute to chandelier
-    exit_bar = _bar(minute + 16, 120.0, high=121.0, low=90.0)
+    exit_bar = _bar(minute + 21, 120.0, high=121.0, low=90.0)
     exits = strategy.on_bars(exit_bar.ts, {"BTCUSDT": exit_bar}, {"BTCUSDT"}, _ctx(Side.BUY))
     assert exits
     assert exits[0].metadata["exit_reason"] in {"stop_chandelier", "stop_initial"}
