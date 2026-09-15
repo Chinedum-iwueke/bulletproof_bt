@@ -58,6 +58,30 @@ def connector_certification() -> dict:
     ).as_dict()
 
 
+def candidate_admission(candidate_digest: str) -> dict:
+    result = {
+        "candidate_digest": candidate_digest,
+        "requested_action": "admit",
+        "recommended_action": "admit",
+        "eligible_for_authority_review": True,
+        "automatic_transition": False,
+        "expires_at": "2026-08-25T13:00:00Z",
+    }
+    return build_receipt(
+        milestone="RISK-004",
+        producer=(
+            "bt.institutional.candidate_admission.candidate_admission_receipt"
+        ),
+        producer_version="1.0.0",
+        source_commit="a" * 40,
+        inputs={},
+        dataset_digest=digest({"fixture": "live-authorization"}),
+        configuration={},
+        artifacts={},
+        result=result,
+    ).as_dict()
+
+
 def config() -> dict:
     return {
         "broker": {
@@ -83,9 +107,11 @@ def config() -> dict:
 
 def bundle() -> dict:
     certification = connector_certification()
+    candidate_digest = "0" * 64
+    admission = candidate_admission(candidate_digest)
     return finalize_live_authorization_bundle(
         {
-            "schema_version": "live-canary-authorization-bundle-v1.0.0",
+            "schema_version": "live-canary-authorization-bundle-v1.1.0",
             "plan": {
                 "environment": "live",
                 "venue": "bybit",
@@ -109,8 +135,14 @@ def bundle() -> dict:
                 "evidence": {
                     "portfolio_candidate": {
                         "digest": "1" * 64,
+                        "candidate_digest": candidate_digest,
                         "status": "candidate",
                         "allocated": False,
+                    },
+                    "candidate_admission": {
+                        "digest": admission["receipt_digest"],
+                        "status": "admitted",
+                        "receipt": admission,
                     },
                     "demo_qualification": {
                         "digest": "2" * 64,
@@ -195,6 +227,50 @@ def test_status_and_digest_cannot_substitute_for_exact_current_certification() -
     }
     changed = finalize_live_authorization_bundle(changed)
     with pytest.raises(LiveAuthorizationError, match="exact receipt"):
+        validate_live_authorization_bundle(changed, config(), now=NOW)
+
+
+def test_candidate_status_cannot_substitute_for_exact_admission() -> None:
+    changed = bundle()
+    changed["plan"]["evidence"]["candidate_admission"] = {
+        "digest": "6" * 64,
+        "status": "admitted",
+    }
+    changed = finalize_live_authorization_bundle(changed)
+    with pytest.raises(LiveAuthorizationError, match="exact RISK-004 receipt"):
+        validate_live_authorization_bundle(changed, config(), now=NOW)
+
+
+def test_candidate_admission_must_bind_same_candidate() -> None:
+    changed = bundle()
+    admission = candidate_admission("9" * 64)
+    changed["plan"]["evidence"]["candidate_admission"] = {
+        "digest": admission["receipt_digest"],
+        "status": "admitted",
+        "receipt": admission,
+    }
+    changed = finalize_live_authorization_bundle(changed)
+    with pytest.raises(LiveAuthorizationError, match="eligible admit recommendation"):
+        validate_live_authorization_bundle(changed, config(), now=NOW)
+
+
+def test_candidate_admission_must_be_current() -> None:
+    changed = bundle()
+    candidate_digest = changed["plan"]["evidence"]["portfolio_candidate"][
+        "candidate_digest"
+    ]
+    admission = candidate_admission(candidate_digest)
+    admission["result"]["expires_at"] = "2026-08-25T11:59:00Z"
+    admission["result_digest"] = digest(admission["result"])
+    core = {key: value for key, value in admission.items() if key != "receipt_digest"}
+    admission["receipt_digest"] = digest(core)
+    changed["plan"]["evidence"]["candidate_admission"] = {
+        "digest": admission["receipt_digest"],
+        "status": "admitted",
+        "receipt": admission,
+    }
+    changed = finalize_live_authorization_bundle(changed)
+    with pytest.raises(LiveAuthorizationError, match="has expired"):
         validate_live_authorization_bundle(changed, config(), now=NOW)
 
 

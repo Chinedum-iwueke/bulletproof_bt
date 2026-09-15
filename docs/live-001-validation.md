@@ -12,7 +12,8 @@ separate, expiring founder approval binds that evidence to one exact canary.
 - `live_broker` refuses to construct an exchange adapter or resolve venue
   credentials until it validates a root-owned, mode `0600` authorization bundle.
 - The bundle digest binds one venue, symbol set, time window, loss envelope,
-  order envelope, rollback action, non-allocating PORT-001 candidate, demo
+  order envelope, rollback action, non-allocating PORT-001 candidate, an exact
+  current RISK-004 admission receipt for that same candidate, demo
   qualification, live-connector certification, operational readiness, and a
   kill/rollback rehearsal.
 - Runtime limits may be tighter than the signed plan but never wider.
@@ -26,7 +27,8 @@ separate, expiring founder approval binds that evidence to one exact canary.
 
 ## Adversarial validation
 
-The focused suite covers pending and expired approvals, wrong rollback,
+The focused suite covers missing, mismatched and expired candidate admissions,
+pending and expired approvals, wrong rollback,
 unauthorized scale authority, widened runtime limits, disabled canary controls,
 wrong file mode, stale/future market data, loss and gross-notional breaches, and
 expired sessions. Existing startup reconciliation, kill, and C5/C7 safety tests
