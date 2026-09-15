@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import UTC, datetime
+import json
+from math import prod
+import os
+from pathlib import Path
+import re
+import stat
 from typing import Any
 
 from bt.contracts.research_specs_v2 import (
@@ -14,10 +20,92 @@ from bt.contracts.research_specs_v2 import (
 )
 
 
+def draft_research_card(
+    assignment: dict[str, Any], *, repository_root: str
+) -> dict[str, Any]:
+    """Discover reviewed-source cards by exact question, never by topic similarity."""
+    question = " ".join(assignment["question"].split())
+    question_digest = canonical_hash({"question": question})
+    if assignment["question_digest"] != question_digest:
+        raise ValueError("question_digest_mismatch")
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    descriptor = os.open(Path(repository_root), flags | os.O_DIRECTORY)
+    try:
+        for part in ("research", "hypotheses", "cards"):
+            try:
+                child = os.open(part, flags | os.O_DIRECTORY, dir_fd=descriptor)
+            except FileNotFoundError:
+                return draft_weekend_momentum_card(assignment)
+            os.close(descriptor)
+            descriptor = child
+        try:
+            card_fd = os.open(f"{question_digest}.json", flags, dir_fd=descriptor)
+        except FileNotFoundError:
+            return draft_weekend_momentum_card(assignment)
+        with os.fdopen(card_fd, "rb") as stream:
+            before = os.fstat(stream.fileno())
+            if not stat.S_ISREG(before.st_mode) or before.st_size > 1_000_000:
+                raise ValueError("invalid_engineered_card_file")
+            payload = stream.read(1_000_001)
+            after = os.fstat(stream.fileno())
+            changed = any(
+                getattr(before, field) != getattr(after, field)
+                for field in (
+                    "st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns"
+                )
+            )
+            if changed or len(payload) > 1_000_000:
+                raise ValueError("engineered_card_changed_during_read")
+        card = json.loads(payload)
+    finally:
+        os.close(descriptor)
+    if not isinstance(card, dict):
+        raise ValueError("engineered_card_must_be_object")
+    if card.get("research_question") != question:
+        raise ValueError("engineered_card_question_mismatch")
+    if card.get("status") != "draft" or any(
+        key in card for key in ("confirmed_by", "confirmed_at")
+    ):
+        raise ValueError("engineered_card_cannot_self_approve")
+    expected_dataset = {
+        "dataset_build_id": assignment["dataset_build_id"],
+        "dataset_digest": assignment["dataset_digest"],
+        "venue": assignment.get("venue", "bybit"),
+        "instrument": assignment["instrument"],
+        "timeframe": assignment["timeframe"],
+    }
+    if card.get("dataset_binding") != expected_dataset:
+        raise ValueError("engineered_card_dataset_mismatch")
+    if card.get("execution_window") != {
+        "start": assignment["window_start"], "end": assignment["window_end"]
+    }:
+        raise ValueError("engineered_card_window_mismatch")
+    errors = validate_hypothesis_card(card, require_confirmed=False)
+    if errors:
+        raise ValueError("invalid_engineered_card:" + ",".join(errors))
+    count = parameter_variant_count(card)
+    if not 1 <= count <= min(8, assignment.get("max_variants", 8)):
+        raise ValueError("engineered_card_parameter_budget_exceeded")
+    return card
+
+
+def parameter_variant_count(card: dict[str, Any]) -> int:
+    grid = card["parameters"]
+    if not isinstance(grid, dict) or not grid or any(
+        not isinstance(values, list) or not values for values in grid.values()
+    ):
+        raise ValueError("invalid_parameter_grid")
+    return prod(len(values) for values in grid.values())
+
+
 def draft_weekend_momentum_card(assignment: dict[str, Any]) -> dict[str, Any]:
     question = " ".join(assignment["question"].split())
     lowered = question.casefold()
-    if not all(term in lowered for term in ("weekend", "momentum")):
+    if (
+        not all(term in lowered for term in ("weekend", "momentum"))
+        or assignment["instrument"] != "BTCUSDT"
+        or not re.search(r"\bbtc\b", lowered)
+    ):
         raise ValueError("question_requires_bounded_strategy_engineering")
     citations = [
         {
@@ -243,7 +331,7 @@ def qualify_card(card: dict[str, Any], *, repository_root: str) -> dict[str, Any
         "dataset": card["dataset_binding"],
         "window": card["execution_window"],
         "parameter_grid": card["parameters"],
-        "variant_count": 8,
+        "variant_count": parameter_variant_count(card),
         "authority": {
             "capital": False,
             "orders": False,

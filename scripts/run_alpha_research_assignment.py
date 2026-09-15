@@ -42,7 +42,7 @@ from bt.governance.research_bridge import (
 from bt.governance.alpha_strategy_pipeline import (
     canonical_hash,
     confirm_card,
-    draft_weekend_momentum_card,
+    draft_research_card,
     qualify_card,
 )
 from bt.hypotheses.contract import HypothesisContract
@@ -898,7 +898,7 @@ def main() -> int:
     stage = assignment.get("stage", "execute")
     if stage == "draft":
         try:
-            card = draft_weekend_momentum_card(assignment)
+            card = draft_research_card(assignment, repository_root=str(repository))
             result = {"disposition": "hypothesis_draft_ready", "hypothesis_card": card}
         except ValueError as exc:
             result = {
