@@ -11,6 +11,8 @@ import re
 import shutil
 import sqlite3
 import subprocess
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import get_context
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -427,8 +429,21 @@ def weekend_regime_comparison(
     }
 
 
+def execute_variant_grid(jobs: list[dict[str, Any]], max_workers: int) -> list[dict[str, Any]]:
+    if not 1 <= len(jobs) <= 8 or not 1 <= max_workers <= 8:
+        raise BridgeError("Alpha execution requires 1-8 variants and 1-8 worker slots")
+    if max_workers == 1:
+        return [_execute_variant_job(job) for job in jobs]
+    with ProcessPoolExecutor(max_workers=min(max_workers, len(jobs)), mp_context=get_context("spawn")) as pool:
+        return list(pool.map(_execute_variant_job, jobs))
+
+
+def _execute_variant_job(job: dict[str, Any]) -> dict[str, Any]:
+    return execute_hypothesis_variant(**job)
+
+
 def execute_registered(
-    assignment: dict[str, Any], repository: Path, output: Path
+    assignment: dict[str, Any], repository: Path, output: Path, *, max_workers: int = 1
 ) -> dict[str, Any]:
     identity = hypothesis_identity(assignment["question"])
     source = next(
@@ -560,8 +575,8 @@ def execute_registered(
         representation_contract_digest=rep.digest,
         tiers=("Tier2",),
         seeds=(7,),
-        resources={"max_workers": 1},
-        budget=SearchBudget(len(variants), len(variants), 86400, 1),
+        resources={"max_workers": min(max_workers, len(variants))},
+        budget=SearchBudget(len(variants), len(variants), 86400, min(max_workers, len(variants))),
         stopping_rule=StoppingRule(kind="exhaustive"),
     )
     experiment = output / "experiment"
@@ -570,17 +585,14 @@ def execute_registered(
     phase = assignment["tier"].lower()
     results = []
     run_dirs = []
-    for index, spec in enumerate(variants, start=1):
-        result = execute_hypothesis_variant(
-            contract=contract,
-            spec=spec,
-            tier="Tier3" if assignment["tier"] == "Tier3" else "Tier2",
-            config_path=str(repository / "configs/engine.yaml"),
-            data_path=str(execution_data_path),
-            out_root=str(runs),
-            run_slug=f"row_{index:04d}",
-            phase=phase,
-        )
+    jobs = [dict(
+        contract=contract, spec=spec,
+        tier="Tier3" if assignment["tier"] == "Tier3" else "Tier2",
+        config_path=str(repository / "configs/engine.yaml"),
+        data_path=str(execution_data_path), out_root=str(runs),
+        run_slug=f"row_{index:04d}", phase=phase,
+    ) for index, spec in enumerate(variants, start=1)]
+    for result in execute_variant_grid(jobs, max_workers):
         run_dir = Path(result["run_dir"])
         for name, document in (
             ("market_model_bundle.json", model.document()),
@@ -863,6 +875,7 @@ def main() -> int:
     parser.add_argument("--repository-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, required=True)
+    parser.add_argument("--max-workers", type=int, default=1, choices=range(1, 9))
     args = parser.parse_args()
     assignment = json.loads(args.assignment.read_text(encoding="utf-8"))
     repository = args.repository_root.resolve(strict=True)
@@ -922,7 +935,7 @@ def main() -> int:
         }
     else:
         try:
-            result = execute_registered(assignment, repository, args.output)
+            result = execute_registered(assignment, repository, args.output, max_workers=args.max_workers)
         except BridgeError as exc:
             if "not registered" not in str(exc):
                 raise
