@@ -7,12 +7,21 @@ import stat
 from pathlib import Path
 
 
+INVENTORY_SEMANTICS_VERSION = "lake-inventory-semantics-v1"
+
+
 def fingerprint(info):
     return [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns]
 
 
 class InventoryCheckpoint:
-    def __init__(self, path: Path, *, root: Path, source_commit: str):
+    def __init__(
+        self,
+        path: Path,
+        *,
+        root: Path,
+        semantics_version: str = INVENTORY_SEMANTICS_VERSION,
+    ):
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         descriptor = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
         try:
@@ -28,7 +37,11 @@ class InventoryCheckpoint:
             "CREATE TABLE IF NOT EXISTS objects (binding TEXT, path TEXT, fingerprint TEXT, "
             "item TEXT, PRIMARY KEY(binding, path))"
         )
-        self.binding = json.dumps([str(root.resolve(strict=True)), source_commit, "inventory-checkpoint-v1"])
+        if not semantics_version:
+            raise ValueError("inventory semantics version is required")
+        self.binding = json.dumps(
+            [str(root.resolve(strict=True)), semantics_version, "inventory-checkpoint-v2"]
+        )
         self.reused = 0
         self.written = 0
 

@@ -55,8 +55,7 @@ def main() -> int:
             write_receipt(receipt, output)
             print(json.dumps({"event": "lake_inventory_shard_ready", "path": str(output),
                               "receipt_digest": receipt.receipt_digest}), flush=True)
-        checkpoint = (InventoryCheckpoint(args.checkpoint, root=args.data_root,
-                                         source_commit=args.source_commit)
+        checkpoint = (InventoryCheckpoint(args.checkpoint, root=args.data_root)
                       if args.checkpoint else None)
         try:
             receipt = sharded_lake_inventory_receipt(
