@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from bt.institutional.lake_inventory import full_lake_inventory_receipt, sharded_lake_inventory_receipt
+from bt.institutional.lake_inventory_checkpoint import InventoryCheckpoint
 
 
 def write_receipt(receipt, output):
@@ -36,6 +37,8 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--run-id", help="Enable bounded shards with this immutable operation binding")
     parser.add_argument("--shard-size", type=int, default=10000)
+    parser.add_argument("--checkpoint", type=Path,
+                        help="Private local metadata cache; not execution-integrity authority")
     args = parser.parse_args()
     last_report = 0.0
 
@@ -52,11 +55,21 @@ def main() -> int:
             write_receipt(receipt, output)
             print(json.dumps({"event": "lake_inventory_shard_ready", "path": str(output),
                               "receipt_digest": receipt.receipt_digest}), flush=True)
-        receipt = sharded_lake_inventory_receipt(
-            data_root=args.data_root, source_commit=args.source_commit, run_id=args.run_id,
-            emit_shard=emit_shard, shard_size=args.shard_size, progress=progress,
-        )
+        checkpoint = (InventoryCheckpoint(args.checkpoint, root=args.data_root,
+                                         source_commit=args.source_commit)
+                      if args.checkpoint else None)
+        try:
+            receipt = sharded_lake_inventory_receipt(
+                data_root=args.data_root, source_commit=args.source_commit, run_id=args.run_id,
+                emit_shard=emit_shard, shard_size=args.shard_size, progress=progress,
+                checkpoint=checkpoint,
+            )
+        finally:
+            if checkpoint:
+                checkpoint.close()
     else:
+        if args.checkpoint:
+            parser.error("checkpoint recovery requires bounded --run-id shards")
         receipt = full_lake_inventory_receipt(
             data_root=args.data_root, source_commit=args.source_commit, progress=progress,
         )
