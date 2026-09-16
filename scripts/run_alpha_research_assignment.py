@@ -42,7 +42,8 @@ from bt.governance.research_bridge import (
 from bt.governance.alpha_strategy_pipeline import (
     canonical_hash,
     confirm_card,
-    draft_weekend_momentum_card,
+    draft_research_card,
+    governed_review_verified,
     qualify_card,
 )
 from bt.hypotheses.contract import HypothesisContract
@@ -442,6 +443,35 @@ def _execute_variant_job(job: dict[str, Any]) -> dict[str, Any]:
     return execute_hypothesis_variant(**job)
 
 
+def independent_review_required(assignment: dict[str, Any], output: Path, reason: str) -> dict[str, Any]:
+    output.mkdir(parents=True, exist_ok=True)
+    evidence = {
+        "schema_version": "alpha-independent-review-failure-v1.0.0",
+        "campaign_digest": assignment["campaign_digest"],
+        "question_digest": assignment["question_digest"],
+        "source_commit": assignment["base_ref"],
+        "reason": reason, "trial_count": 0, "authority": AUTHORITY,
+    }
+    path = output / "independent-review-failure.json"
+    path.write_bytes(canonical(evidence) + b"\n")
+    attempt = base_attempt(
+        assignment, hypothesis_id=f"REVIEW-{assignment['question_digest'][:16]}",
+        hypothesis_digest=digest(assignment.get("qualification", {})),
+    ) | {
+        "trial_count": 0, "outcome": "failed", "failure_stage": "independent_evaluation",
+        "gate_report": {
+            **{key: False for key in (
+                "truth_certified", "point_in_time_valid", "reproducible", "out_of_sample_evaluated",
+                "cost_stress_evaluated", "selection_bias_audited", "independent_review_complete",
+                "shadow_eligible", "production_eligible", "capital_authority",
+            )},
+            "failed_gates": ["independent_specification_review"],
+        },
+        "evidence_digests": [file_digest(path)],
+    }
+    return {"disposition": "independent_review_required", "alpha_campaign_attempt": attempt}
+
+
 def execute_registered(
     assignment: dict[str, Any], repository: Path, output: Path, *, max_workers: int = 1
 ) -> dict[str, Any]:
@@ -466,6 +496,8 @@ def execute_registered(
         raise BridgeError(
             "hypothesis is not registered; bounded engineering generation is required"
         )
+    if not governed_review_verified(assignment, qualification):
+        raise BridgeError("independent specification review is missing or unbound; no compute started")
     output.mkdir(parents=True, exist_ok=False)
     if isinstance(qualification, dict):
         if qualification.get("qualified") is not True:
@@ -710,12 +742,7 @@ def execute_registered(
     )
     started_at = datetime.fromtimestamp(run_dir.stat().st_mtime, tz=UTC)
     ended_at = datetime.now(UTC)
-    independent_review_complete = bool(
-        qualification is None
-        or qualification.get("review", {})
-        .get("gates", {})
-        .get("independent_review_complete")
-    )
+    independent_review_complete = governed_review_verified(assignment, qualification)
     passed_edge = bool(
         holdout["adequate_support"]
         and holdout["positive_net_edge"]
@@ -752,8 +779,11 @@ def execute_registered(
         hypothesis_digest=contract_receipt["content_digest"],
     ) | {
         "trial_count": len(variants),
-        "outcome": "candidate" if passed_edge else "negative",
-        "failure_stage": None,
+        "outcome": (
+            "failed" if not independent_review_complete
+            else "candidate" if passed_edge else "negative"
+        ),
+        "failure_stage": None if independent_review_complete else "independent_evaluation",
         "gate_report": gate_report,
         "evidence_digests": [
             *[item["bundle_digest"] for item in bundles],
@@ -898,7 +928,7 @@ def main() -> int:
     stage = assignment.get("stage", "execute")
     if stage == "draft":
         try:
-            card = draft_weekend_momentum_card(assignment)
+            card = draft_research_card(assignment, repository_root=str(repository))
             result = {"disposition": "hypothesis_draft_ready", "hypothesis_card": card}
         except ValueError as exc:
             result = {
@@ -927,7 +957,7 @@ def main() -> int:
         qualification = qualify_card(card, repository_root=str(repository))
         result = {
             "disposition": (
-                "strategy_qualified"
+                "strategy_compiled"
                 if qualification["qualified"]
                 else "strategy_engineering_required"
             ),
@@ -937,9 +967,12 @@ def main() -> int:
         try:
             result = execute_registered(assignment, repository, args.output, max_workers=args.max_workers)
         except BridgeError as exc:
-            if "not registered" not in str(exc):
+            if "independent specification review" in str(exc):
+                result = independent_review_required(assignment, args.output, str(exc))
+            elif "not registered" in str(exc):
+                result = engineering_required(assignment, args.output, str(exc))
+            else:
                 raise
-            result = engineering_required(assignment, args.output, str(exc))
     receipt = {
         "schema_version": "alpha003-governed-receipt-v1.0.0",
         "stage": stage,
