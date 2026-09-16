@@ -111,7 +111,7 @@ def _ordered_paths(directory: Path):
             yield path
 
 
-def iter_lake_inventory(*, data_root: Path):
+def iter_lake_inventory(*, data_root: Path, checkpoint=None):
     """Yield accounted objects with bounded memory and deterministic traversal."""
     root = data_root.resolve(strict=True)
     for layer in ("canonical", "manifests", "raw"):
@@ -130,6 +130,14 @@ def iter_lake_inventory(*, data_root: Path):
             try:
                 with _open_beneath(root, relative) as handle:
                     before = os.fstat(handle.fileno())
+                    cached = checkpoint.get(relative, before) if checkpoint else None
+                    if cached is not None:
+                        after = os.fstat(handle.fileno())
+                        current = path.lstat()
+                        if (before == after and current.st_ino == before.st_ino
+                                and current.st_dev == before.st_dev):
+                            yield cached
+                            continue
                     item.update(byte_size=before.st_size, content_digest=_sha256(handle))
                     try:
                         item.update(_identity(relative))
@@ -148,6 +156,8 @@ def iter_lake_inventory(*, data_root: Path):
                 if path.lstat().st_ino != before.st_ino:
                     item["reason_codes"].append("path_replaced_during_inventory")
                 item["disposition"] = "quarantined" if item["reason_codes"] else "cataloged_pending_quality"
+                if checkpoint and not item["reason_codes"]:
+                    checkpoint.put(relative, after, item)
             except (OSError, ValueError, TypeError) as exc:
                 item.update(disposition="quarantined")
                 item["reason_codes"].append("unreadable_object:" + type(exc).__name__)
@@ -181,7 +191,7 @@ def full_lake_inventory_receipt(*, data_root: Path, source_commit: str, progress
 
 def sharded_lake_inventory_receipt(*, data_root: Path, source_commit: str,
                                   run_id: str, emit_shard, shard_size=10000,
-                                  progress=None) -> ProducerReceipt:
+                                  progress=None, checkpoint=None) -> ProducerReceipt:
     """Retain complete accounting without a million-object in-memory envelope."""
     if not 1 <= shard_size <= 10000 or not run_id:
         raise ValueError("inventory requires a bounded shard size and run binding")
@@ -203,6 +213,8 @@ def sharded_lake_inventory_receipt(*, data_root: Path, source_commit: str,
                               for item in objects if "instrument" in item}),
             "claim_boundary": "Partial content accounting only; not a complete inventory or execution admission.",
         }
+        if checkpoint:
+            result["claim_boundary"] = "Partial catalog accounting may reuse prior byte digests under unchanged local filesystem fingerprints. No fresh cryptographic byte verification or execution admission is inferred."
         receipt = build_receipt(
             milestone="DATA-002", producer="bt.institutional.lake_inventory.lake_inventory_shard_receipt",
             producer_version="1.0.0", source_commit=source_commit,
@@ -215,7 +227,7 @@ def sharded_lake_inventory_receipt(*, data_root: Path, source_commit: str,
                        "receipt_digest": receipt.receipt_digest, "dataset_digest": receipt.dataset_digest})
         pending.clear()
 
-    for item in iter_lake_inventory(data_root=data_root):
+    for item in iter_lake_inventory(data_root=data_root, checkpoint=checkpoint):
         pending.append(item)
         count += 1
         dispositions[item["disposition"]] += 1
@@ -233,6 +245,12 @@ def sharded_lake_inventory_receipt(*, data_root: Path, source_commit: str,
         "assets": sorted(assets), "group_labels_are_optional_metadata": True,
         "claim_boundary": "Complete content accounting through all bound shards. No contiguous coverage, point-in-time identity, quality, basket eligibility or execution authority is inferred.",
     }
+    if checkpoint:
+        result["checkpoint"] = {
+            "reused_objects": checkpoint.reused, "validated_objects": checkpoint.written,
+            "claim_boundary": "Prior byte digests reused only under unchanged local filesystem fingerprints. This is not fresh cryptographic byte verification or execution admission; selected execution inputs require independent content validation.",
+        }
+        result["claim_boundary"] = result["checkpoint"]["claim_boundary"]
     return build_receipt(
         milestone="DATA-002", producer="bt.institutional.lake_inventory.full_lake_inventory_receipt",
         producer_version="2.0.0", source_commit=source_commit,
