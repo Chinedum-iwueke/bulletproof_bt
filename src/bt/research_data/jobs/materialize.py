@@ -240,7 +240,12 @@ def _prepare_panel(
 def _filter_active_rows(panel: pd.DataFrame, intervals: pd.DataFrame) -> pd.DataFrame:
     if panel.empty or intervals.empty:
         return panel.iloc[0:0].copy()
-    ts_ns = panel["ts"].astype("int64").to_numpy()
+    ts_ns = (
+        panel["ts"]
+        .astype("datetime64[ns, UTC]")
+        .astype("int64")
+        .to_numpy()
+    )
     mask = np.zeros(len(panel), dtype=bool)
     for row in intervals.itertuples(index=False):
         start_ns = pd.Timestamp(row.start_ts).value

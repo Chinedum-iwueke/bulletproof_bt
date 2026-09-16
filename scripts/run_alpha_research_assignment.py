@@ -100,6 +100,14 @@ def question_card(assignment: dict[str, Any], *, disposition: str) -> dict[str, 
             "digest": assignment["dataset_digest"],
             "instrument": assignment["instrument"],
             "timeframe": assignment["timeframe"],
+            "research_timeframe": assignment.get("research_timeframe", "1m"),
+            "resampling_policy": assignment.get(
+                "resampling_policy", "right_closed_left_labeled_complete_bars"
+            ),
+            "instruments": assignment.get(
+                "instruments", [assignment["instrument"]]
+            ),
+            "bindings": assignment.get("dataset_bindings", []),
         },
         "research_context": context,
         "disposition": disposition,
@@ -920,6 +928,10 @@ def main() -> int:
     panel = Path(assignment["dataset_path"])
     if file_digest(panel) != assignment["dataset_digest"]:
         raise SystemExit("dataset bytes differ from immutable assignment")
+    for binding in assignment.get("dataset_bindings", []):
+        bound_panel = Path(binding["dataset_path"])
+        if file_digest(bound_panel) != binding["dataset_digest"]:
+            raise SystemExit("basket dataset bytes differ from immutable assignment")
     if (
         digest({"question": " ".join(assignment["question"].split())})
         != assignment["question_digest"]
