@@ -54,13 +54,25 @@ def validate_hypothesis_card(card: dict[str, Any], *, require_confirmed: bool = 
     errors: list[str] = []
     required = (
         "card_id", "program_id", "version", "title", "claim", "intuition", "market_mechanism",
-        "features", "gates", "entry", "exit", "sizing", "risk_controls", "parameters",
+        "entry", "exit", "sizing", "risk_controls", "parameters",
         "data_requirements", "logging_requirements", "evaluation", "falsification_criteria",
         "expected_failure_modes", "execution_semantics", "field_provenance",
     )
     if card.get("schema_version") != CARD_VERSION:
         errors.append("card_schema_version_invalid")
     errors.extend(f"card_missing_{field}" for field in required if card.get(field) in (None, "", [], {}))
+    registered_contract = card.get("representation_mode") == "registered_engine_contract"
+    if not registered_contract:
+        errors.extend(
+            f"card_missing_{field}"
+            for field in ("features", "gates")
+            if card.get(field) in (None, "", [], {})
+        )
+    elif (
+        not card.get("engine_hypothesis_template")
+        or not card.get("engine_hypothesis_template_digest")
+    ):
+        errors.append("registered_contract_binding_required")
     if require_confirmed and card.get("status") != "confirmed":
         errors.append("card_must_be_confirmed")
     if require_confirmed and (not card.get("confirmed_by") or not card.get("confirmed_at")):
@@ -100,6 +112,7 @@ def normalize_card(card: dict[str, Any]) -> dict[str, Any]:
         "program_id": card["program_id"], "title": card["title"], "claim": card["claim"],
         "mechanism": card["market_mechanism"], "engine_strategy_name": card.get("engine_strategy_name"),
         "engine_hypothesis_template": card.get("engine_hypothesis_template"),
+        "engine_hypothesis_template_digest": card.get("engine_hypothesis_template_digest"),
         "feature_graph": sorted(deepcopy(card["features"]), key=lambda item: str(item["id"])),
         "gate_graph": deepcopy(card["gates"]), "entry": deepcopy(card["entry"]), "exit": deepcopy(card["exit"]),
         "sizing": deepcopy(card["sizing"]), "risk_controls": deepcopy(card["risk_controls"]),
@@ -139,6 +152,11 @@ def build_engine_hypothesis_yaml(ir: dict[str, Any], *, repo_root: str | Path = 
         payload = yaml.safe_load(path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise ResearchSpecV2Error(["engine_hypothesis_template_invalid"])
+        expected_template_digest = ir.get("engine_hypothesis_template_digest")
+        if expected_template_digest is not None and sha256(
+            path.read_bytes()
+        ).hexdigest() != expected_template_digest:
+            raise ResearchSpecV2Error(["engine_hypothesis_template_digest_mismatch"])
         template_strategy = payload.get("entry", {}).get("strategy") if isinstance(payload.get("entry"), dict) else None
         if template_strategy != ir.get("engine_strategy_name"):
             raise ResearchSpecV2Error(["engine_hypothesis_template_strategy_mismatch"])

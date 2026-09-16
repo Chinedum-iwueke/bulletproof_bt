@@ -61,7 +61,10 @@ class ColumnarCandidateEventPlan:
             else:
                 mask |= values.notna().to_numpy(dtype=bool) & values.astype(bool).to_numpy(dtype=bool)
         return cls(
-            ts_ns=work["ts"].astype("int64").to_numpy(copy=True),
+            ts_ns=work["ts"]
+            .astype("datetime64[ns, UTC]")
+            .astype("int64")
+            .to_numpy(copy=True),
             symbol_ids=work["symbol"].astype(str).map(symbol_to_id).to_numpy(dtype=np.int32, copy=True),
             candidate_mask=mask,
             symbols=symbols,

@@ -321,7 +321,10 @@ class DataSession:
             arrays_by_symbol[symbol] = SymbolArrays(
                 symbol=symbol,
                 symbol_id=symbol_to_id[symbol],
-                ts=part["ts"].astype("int64").to_numpy(dtype=np.int64, copy=True),
+                ts=part["ts"]
+                .astype("datetime64[ns, UTC]")
+                .astype("int64")
+                .to_numpy(dtype=np.int64, copy=True),
                 open=part["open"].to_numpy(dtype=np.float64, copy=True),
                 high=part["high"].to_numpy(dtype=np.float64, copy=True),
                 low=part["low"].to_numpy(dtype=np.float64, copy=True),
@@ -331,7 +334,15 @@ class DataSession:
                 candidate_ready=np.ascontiguousarray(candidate_ready, dtype=bool),
                 extras=extras,
             )
-        ts_ns = np.asarray(sorted(work["ts"].astype("int64").drop_duplicates()), dtype=np.int64)
+        ts_ns = np.asarray(
+            sorted(
+                work["ts"]
+                .astype("datetime64[ns, UTC]")
+                .astype("int64")
+                .drop_duplicates()
+            ),
+            dtype=np.int64,
+        )
         return MarketDataSnapshot(
             root=root,
             exchange=exchange,
@@ -433,7 +444,12 @@ def _column_to_numpy(series: pd.Series) -> np.ndarray:
     if pd.api.types.is_numeric_dtype(series):
         return np.ascontiguousarray(series.to_numpy(dtype=np.float64, copy=True))
     if pd.api.types.is_datetime64_any_dtype(series):
-        return np.ascontiguousarray(pd.to_datetime(series, utc=True).astype("int64").to_numpy(dtype=np.int64, copy=True))
+        return np.ascontiguousarray(
+            pd.to_datetime(series, utc=True)
+            .astype("datetime64[ns, UTC]")
+            .astype("int64")
+            .to_numpy(dtype=np.int64, copy=True)
+        )
     return np.ascontiguousarray(series.astype(object).to_numpy(copy=True))
 
 

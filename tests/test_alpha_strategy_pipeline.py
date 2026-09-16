@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 import json
+from pathlib import Path
 
 import pytest
 
@@ -11,6 +12,7 @@ from bt.governance.alpha_strategy_pipeline import (
     draft_weekend_momentum_card,
     qualify_card,
 )
+from bt.institutional.strategy_catalog import build_strategy_capability_catalog
 
 
 def assignment() -> dict:
@@ -119,8 +121,61 @@ def test_non_btc_question_never_uses_btc_fallback(tmp_path):
     value["question"] = "Does ETH weekend momentum predict returns?"
     value["instrument"] = "ETHUSDT"
     value["question_digest"] = canonical_hash({"question": value["question"]})
-    with pytest.raises(ValueError, match="bounded_strategy_engineering"):
+    with pytest.raises(ValueError, match="exact_engineered_strategy_card_missing"):
         draft_research_card(value, repository_root=str(tmp_path))
+
+
+def test_weekend_question_also_requires_exact_reviewed_card(tmp_path):
+    value = assignment()
+    value["question_digest"] = canonical_hash({"question": value["question"]})
+    with pytest.raises(ValueError, match="exact_engineered_strategy_card_missing"):
+        draft_research_card(value, repository_root=str(tmp_path))
+
+
+def test_frozen_native_capability_drafts_exact_registered_contract_card():
+    root = Path(__file__).parents[1]
+    value = assignment()
+    value["question_digest"] = canonical_hash({"question": value["question"]})
+    value["research_timeframe"] = "1m"
+    value["max_variants"] = 8
+    catalog = build_strategy_capability_catalog(root, source_commit="a" * 40)
+    value["reusable_strategy"] = next(
+        item
+        for item in catalog["capabilities"]
+        if item["hypothesis_id"] == "ALPHA-WEEKEND-MOMENTUM"
+    )
+    draft = draft_research_card(value, repository_root=str(root))
+    assert draft["representation_mode"] == "registered_engine_contract"
+    assert draft["engine_hypothesis_template_digest"] == value[
+        "reusable_strategy"
+    ]["contract_digest"]
+    assert draft["features"] == []
+    confirmed = confirm_card(
+        draft,
+        actor="founder-operator",
+        confirmed_at=datetime.now(UTC).isoformat(),
+    )
+    result = qualify_card(confirmed, repository_root=str(root))
+    assert result["qualified"] is True
+    assert result["variant_count"] == 8
+    assert result["artifact_bundle"]["compile_readiness"]["status"] == "registry_ready"
+
+
+def test_single_instrument_registered_strategy_rejects_basket_assignment():
+    root = Path(__file__).parents[1]
+    value = assignment()
+    value["question_digest"] = canonical_hash({"question": value["question"]})
+    value["research_timeframe"] = "1m"
+    value["max_variants"] = 8
+    value["instruments"] = ["BTCUSDT", "ETHUSDT"]
+    catalog = build_strategy_capability_catalog(root, source_commit="a" * 40)
+    value["reusable_strategy"] = next(
+        item
+        for item in catalog["capabilities"]
+        if item["hypothesis_id"] == "ALPHA-WEEKEND-MOMENTUM"
+    )
+    with pytest.raises(ValueError, match="input_cardinality_mismatch"):
+        draft_research_card(value, repository_root=str(root))
 
 
 def review_packet_fixture():

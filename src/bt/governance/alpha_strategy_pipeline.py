@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import UTC, datetime
+import hashlib
 import json
 from math import prod
 import os
@@ -11,6 +12,8 @@ from pathlib import Path
 import re
 import stat
 from typing import Any
+
+import yaml
 
 from bt.contracts.research_specs_v2 import (
     EXACT_TRUTH,
@@ -28,6 +31,10 @@ def draft_research_card(
     question_digest = canonical_hash({"question": question})
     if assignment["question_digest"] != question_digest:
         raise ValueError("question_digest_mismatch")
+    if assignment.get("reusable_strategy") is not None:
+        return draft_registered_strategy_card(
+            assignment, repository_root=repository_root
+        )
     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
     descriptor = os.open(Path(repository_root), flags | os.O_DIRECTORY)
     try:
@@ -35,13 +42,13 @@ def draft_research_card(
             try:
                 child = os.open(part, flags | os.O_DIRECTORY, dir_fd=descriptor)
             except FileNotFoundError:
-                return draft_weekend_momentum_card(assignment)
+                raise ValueError("exact_engineered_strategy_card_missing") from None
             os.close(descriptor)
             descriptor = child
         try:
             card_fd = os.open(f"{question_digest}.json", flags, dir_fd=descriptor)
         except FileNotFoundError:
-            return draft_weekend_momentum_card(assignment)
+            raise ValueError("exact_engineered_strategy_card_missing") from None
         with os.fdopen(card_fd, "rb") as stream:
             before = os.fstat(stream.fileno())
             if not stat.S_ISREG(before.st_mode) or before.st_size > 1_000_000:
@@ -96,6 +103,150 @@ def parameter_variant_count(card: dict[str, Any]) -> int:
     ):
         raise ValueError("invalid_parameter_grid")
     return prod(len(values) for values in grid.values())
+
+
+def draft_registered_strategy_card(
+    assignment: dict[str, Any], *, repository_root: str
+) -> dict[str, Any]:
+    """Bind a new question to an exact, already-reviewed native engine contract."""
+    capability = assignment["reusable_strategy"]
+    if capability.get("bounded_weekly_reuse_eligible") is not True:
+        raise ValueError("registered_strategy_not_weekly_eligible")
+    if (
+        capability.get("input_mode") != "single_instrument"
+        or capability.get("maximum_instruments") != 1
+        or len(assignment.get("instruments", [assignment["instrument"]])) != 1
+    ):
+        raise ValueError("registered_strategy_input_cardinality_mismatch")
+    root = Path(repository_root).resolve(strict=True)
+    allowed = (root / "research" / "hypotheses").resolve(strict=True)
+    path = (root / str(capability["contract_path"])).resolve(strict=True)
+    if allowed not in path.parents or path.suffix != ".yaml":
+        raise ValueError("registered_strategy_path_invalid")
+    payload_bytes = path.read_bytes()
+    if hashlib.sha256(payload_bytes).hexdigest() != capability["contract_digest"]:
+        raise ValueError("registered_strategy_digest_mismatch")
+    payload = yaml.safe_load(payload_bytes)
+    if not isinstance(payload, dict):
+        raise ValueError("registered_strategy_contract_invalid")
+    entry = payload.get("entry")
+    parameters = payload.get("parameter_grid")
+    semantics = {
+        **payload.get("execution_semantics", {}),
+        **{
+            key: payload.get("truth_contract", {}).get(key)
+            for key in EXACT_TRUTH
+        },
+    }
+    contract_logging = payload.get("logging", {}).get("required_fields", [])
+    logging = capability.get("logging_requirements", [])
+    if (
+        payload.get("hypothesis_id") != capability["hypothesis_id"]
+        or not isinstance(entry, dict)
+        or entry.get("strategy") != capability["strategy"]
+        or not isinstance(parameters, dict)
+        or prod(len(values) for values in parameters.values())
+        != capability["variant_count"]
+        or not isinstance(semantics, dict)
+        or any(semantics.get(key) != expected for key, expected in EXACT_TRUTH.items())
+        or not set(contract_logging).issubset(set(logging))
+    ):
+        raise ValueError("registered_strategy_capability_mismatch")
+    if capability["variant_count"] > min(8, assignment.get("max_variants", 8)):
+        raise ValueError("registered_strategy_parameter_budget_exceeded")
+    signal_timeframe = str(
+        entry.get("signal_timeframe", semantics.get("signal_timeframe", "1m"))
+    )
+    if assignment.get("research_timeframe", "1m") != signal_timeframe:
+        raise ValueError("registered_strategy_timeframe_mismatch")
+    question = " ".join(assignment["question"].split())
+    citations = [
+        {
+            "object_id": item["object_id"],
+            "content_digest": item["content_digest"],
+            "coordinates": item["coordinates"],
+        }
+        for item in assignment.get("research_context", {}).get("citations", [])
+    ]
+    card = {
+        "schema_version": "hypothesis_card_v1",
+        "card_id": (
+            f"reuse-{capability['hypothesis_id'].lower()}-"
+            f"{assignment['question_digest'][:12]}"
+        ),
+        "program_id": f"alpha-campaign-{assignment['campaign_id'][:8]}",
+        "version": 1,
+        "status": "draft",
+        "title": capability["title"],
+        "claim": question,
+        "intuition": capability["description"],
+        "market_mechanism": capability["description"],
+        "representation_mode": "registered_engine_contract",
+        "engine_strategy_name": capability["strategy"],
+        "engine_hypothesis_template": capability["contract_path"],
+        "engine_hypothesis_template_digest": capability["contract_digest"],
+        "features": [],
+        "gates": [],
+        "entry": {
+            "type": "registered_engine_contract",
+            "contract_path": capability["contract_path"],
+        },
+        "exit": {
+            "type": "registered_engine_contract",
+            "contract_path": capability["contract_path"],
+        },
+        "sizing": {
+            "mode": "engine_contract",
+            "stop_required": True,
+        },
+        "risk_controls": {
+            "authority": "engine",
+            "no_capital_research": True,
+        },
+        "parameters": parameters,
+        "data_requirements": ["research_panel"],
+        "logging_requirements": logging,
+        "evaluation": payload.get(
+            "evaluation", {"required_tiers": ["Tier2", "Tier3"]}
+        ),
+        "falsification_criteria": [
+            "Reject when preregistered held-out or cost-stress gates fail.",
+            "Reject when the exact native contract cannot replay deterministically.",
+        ],
+        "expected_failure_modes": [
+            "The proposed mechanism does not survive held-out costs.",
+            "The frozen native implementation is not an exact test of the question.",
+        ],
+        "execution_semantics": semantics,
+        "source_citations": citations,
+        "field_provenance": {
+            field: {
+                "state": "recommended",
+                "confidence": 1.0,
+                "basis": (
+                    "Exact registered Bulletproof contract "
+                    f"{capability['contract_digest']}"
+                ),
+            }
+            for field in ("claim", "entry", "exit")
+        },
+        "dataset_binding": {
+            "dataset_build_id": assignment["dataset_build_id"],
+            "dataset_digest": assignment["dataset_digest"],
+            "venue": assignment.get("venue", "bybit"),
+            "instrument": assignment["instrument"],
+            "timeframe": assignment["timeframe"],
+        },
+        "execution_window": {
+            "start": assignment["window_start"],
+            "end": assignment["window_end"],
+        },
+        "research_question": question,
+    }
+    errors = validate_hypothesis_card(card, require_confirmed=False)
+    if errors:
+        raise ValueError("invalid_registered_draft:" + ",".join(errors))
+    return card
 
 
 def governed_review_verified(assignment: dict[str, Any], qualification: dict[str, Any] | None) -> bool:
