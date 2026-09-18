@@ -199,7 +199,7 @@ def funding_basis_matched_evaluation(
             if complete_history
             else None
         )
-        valid = bool(row.complete and row.target_complete and row.quote_volume_5m is not None and row.quote_volume_5m >= 1_000_000 and funding_rate is not None and funding_source_ts is not None and funding_source_ts <= row.decision_ts and basis is not None and _number(row.mark_close) is not None and _number(row.index_close) is not None and row.trailing_return_60m == row.trailing_return_60m and row.realized_volatility_6h == row.realized_volatility_6h and row.target_return_60m == row.target_return_60m)
+        valid = bool(row.complete and row.target_complete and row.quote_volume_5m is not None and row.quote_volume_5m >= 1_000_000 and funding_rate is not None and percentile_value is not None and funding_source_ts is not None and funding_source_ts <= row.decision_ts and basis is not None and _number(row.mark_close) is not None and _number(row.index_close) is not None and row.trailing_return_60m == row.trailing_return_60m and row.realized_volatility_6h == row.realized_volatility_6h and row.target_return_60m == row.target_return_60m)
         stressed = bool(valid and percentile_value is not None and funding_rate > 0 and funding_rate >= percentile_value and basis > basis_threshold)
         records.append({
             "decision_ts": row.decision_ts.isoformat(), "status": "treated" if stressed else "control" if valid else "invalid",
@@ -304,7 +304,6 @@ class BtcFundingBasisCrowding60mStrategy(Strategy):
             lambda: deque(maxlen=73)
         )
         self.exit_sent: set[str] = set()
-        self.stop_exit_pending: set[str] = set()
         self.last_history_decision: dict[str, pd.Timestamp] = {}
 
     def _funding_at(self, symbol: str, decision_ts: pd.Timestamp) -> tuple[pd.Timestamp, float] | None:
@@ -324,6 +323,124 @@ class BtcFundingBasisCrowding60mStrategy(Strategy):
         self.last_history_decision[symbol] = decision_ts
         return history, latest
 
+    def _evaluate_bucket(
+        self,
+        symbol: str,
+        closed: _Bucket,
+        *,
+        signal_ts: pd.Timestamp,
+        decision_ts: pd.Timestamp,
+        contiguous: bool,
+        tradeable: set[str],
+        position: Any,
+    ) -> list[Signal]:
+        rows = closed.rows
+        complete = len(rows) == 5 and [r.ts for r in rows] == list(
+            pd.date_range(closed.start, periods=5, freq="1min", tz="UTC")
+        )
+        values = [r.extra for r in rows]
+        qv = [_number(v.get("quote_volume")) for v in values]
+        last = rows[-1] if rows else None
+        close = float(last.close) if last else None
+        completed = self.completed_buckets[symbol]
+        completed.append((closed.start, close, complete))
+        hist, latest = self._advance_history_to(symbol, decision_ts)
+        complete_funding_history = len(hist) == hist.maxlen and all(
+            value is not None for value in hist
+        )
+        funding_threshold = (
+            _quantile([float(value) for value in hist], self.threshold)
+            if complete_funding_history
+            else None
+        )
+        hist.append(latest[1] if latest is not None else None)
+        basis = _number(values[-1].get("basis_close_vs_index")) if values else None
+        mark_close = _number(values[-1].get("mark_close")) if values else None
+        index_close = _number(values[-1].get("index_close")) if values else None
+        complete_history = (
+            len(completed) == completed.maxlen
+            and all(item[1] is not None and item[2] for item in completed)
+            and all(
+                completed[index][0]
+                == completed[index - 1][0] + pd.Timedelta(minutes=5)
+                for index in range(1, len(completed))
+            )
+        )
+        ready = (
+            contiguous
+            and complete
+            and complete_history
+            and all(v is not None for v in qv)
+            and sum(qv) >= 1_000_000
+            and funding_threshold is not None
+            and latest is not None
+            and latest[1] > 0
+            and latest[1] >= funding_threshold
+            and basis is not None
+            and mark_close is not None
+            and index_close is not None
+            and basis > self.basis_bps / 10_000
+            and symbol in tradeable
+            and position is None
+        )
+        if not ready:
+            return []
+        stop = close * 1.03
+        trace = make_decision_trace(
+            reason_code="positive_funding_and_basis_crowding",
+            setup_class="funding_basis_crowding",
+            hypothesis_branch="lower_next_60m",
+            conditions_bool_map={
+                "complete": complete,
+                "funding_stress": True,
+                "positive_basis": True,
+            },
+            blockers_bool_map={"existing_position": False},
+            permission_layer_state={"tradeable": True},
+            parameter_combination={
+                "funding_percentile_threshold": self.threshold,
+                "basis_threshold_bps": self.basis_bps,
+            },
+            gate_values={"funding_rate": latest[1], "basis_close_vs_index": basis},
+            gate_thresholds={
+                "funding_rate": funding_threshold,
+                "basis": self.basis_bps / 10000,
+            },
+            gate_margins={"funding": latest[1] - funding_threshold},
+            most_binding_gate="funding",
+        )
+        return [Signal(
+            ts=signal_ts,
+            symbol=symbol,
+            side=Side.SELL,
+            signal_type="btc_funding_basis_crowding_entry",
+            confidence=1.0,
+            metadata={
+                "strategy": "btc_funding_basis_crowding_60m",
+                "strategy_id": "ALPHA-003-BTC-FUNDING-BASIS-CROWDING-60M",
+                "decision_trace": trace,
+                "stop_price": stop,
+                "entry_stop_price": stop,
+                "entry_reference_price": close,
+                "r_per_trade": self.r,
+                "sizing_mode": "risk_at_stop",
+                "funding_rate": latest[1],
+                "funding_source_ts": latest[0].isoformat(),
+                "basis_close_vs_index": basis,
+                "mark_close": mark_close,
+                "index_close": index_close,
+                "funding_percentile_threshold_value": funding_threshold,
+                "target_horizon_minutes": 60,
+                "target_exit_ts": (decision_ts + pd.Timedelta(minutes=60)).isoformat(),
+                "signal_ts": signal_ts.isoformat(),
+                "decision_ts": decision_ts.isoformat(),
+                "requested_risk_amount": None,
+                "risk_utilization_pct": None,
+                "under_risked_trade": None,
+                "risk_metadata_authority": "bt.risk.risk_engine.RiskEngine",
+            },
+        )]
+
     def on_bars(self, ts: pd.Timestamp, bars_by_symbol: dict[str, Bar], tradeable: set[str], ctx: Mapping[str, Any]) -> list[Signal]:
         output: list[Signal] = []
         positions = ctx.get("positions", {}) if isinstance(ctx, Mapping) else {}
@@ -332,90 +449,50 @@ class BtcFundingBasisCrowding60mStrategy(Strategy):
             metadata = position.get("metadata", {}) if isinstance(position, Mapping) else {}
             if position is None:
                 self.exit_sent.discard(symbol)
-                self.stop_exit_pending.discard(symbol)
-            if position is not None and symbol in self.stop_exit_pending and symbol not in self.exit_sent:
-                output.append(Signal(ts, symbol, Side.BUY, "funding_basis_fixed_stop_exit", 1.0, {"close_only": True, "is_exit": True, "exit_reason": "fixed_3pct_stop_breached", "stop_detection_policy": "completed_1m_then_next_bar"}))
-                self.stop_exit_pending.discard(symbol)
-                self.exit_sent.add(symbol)
             target = pd.Timestamp(metadata["target_exit_ts"]) if metadata.get("target_exit_ts") else None
-            if target is not None and ts >= target and symbol not in self.exit_sent:
-                output.append(
-                    Signal(
-                        ts,
-                        symbol,
-                        Side.BUY,
-                        "funding_basis_60m_exit",
-                        1.0,
-                        {
-                            "close_only": True,
-                            "is_exit": True,
-                            "target_exit_ts": target.isoformat(),
-                        },
-                    )
-                )
+            submit_exit_at = target - pd.Timedelta(minutes=1) if target is not None else None
+            if submit_exit_at is not None and ts >= submit_exit_at and symbol not in self.exit_sent:
+                output.append(Signal(ts, symbol, Side.BUY, "funding_basis_60m_exit", 1.0, {
+                    "close_only": True, "is_exit": True,
+                    "target_exit_ts": target.isoformat(),
+                    "exit_submission_ts": pd.Timestamp(ts).isoformat(),
+                    "execution_delay_minutes": 1,
+                }))
                 self.exit_sent.add(symbol)
             try:
                 stop_price = float(metadata.get("entry_stop_price"))
             except (TypeError, ValueError):
                 stop_price = None
             if position is not None and stop_price is not None and float(bar.high) >= stop_price and symbol not in self.exit_sent:
-                self.stop_exit_pending.add(symbol)
-            bucket_start = bar.ts.floor("5min")
-            current = self.buckets.get(symbol)
-            closed = current if current is not None and current.start != bucket_start else None
-            # Evaluate before ingesting the rollover row: its interval is open.
-            if closed is not None:
-                self.buckets[symbol] = _Bucket(bucket_start, [])
-                rows = closed.rows
-                complete = len(rows) == 5 and [r.ts for r in rows] == list(pd.date_range(closed.start, periods=5, freq="1min", tz="UTC"))
-                values = [r.extra for r in rows]
-                qv = [_number(v.get("quote_volume")) for v in values]
-                last = rows[-1] if rows else None
-                close = float(last.close) if last else None
-                completed = self.completed_buckets[symbol]
-                completed.append((closed.start, close, complete))
-                hist, latest = self._advance_history_to(symbol, ts)
-                complete_funding_history = (
-                    len(hist) == hist.maxlen
-                    and all(value is not None for value in hist)
-                )
-                funding_threshold = (
-                    _quantile(
-                        [float(value) for value in hist if value is not None],
-                        self.threshold,
-                    )
-                    if complete_funding_history
-                    else None
-                )
-                hist.append(latest[1] if latest is not None else None)
-                basis = (
-                    _number(values[-1].get("basis_close_vs_index"))
-                    if values
-                    else None
-                )
-                mark_close = _number(values[-1].get("mark_close")) if values else None
-                index_close = _number(values[-1].get("index_close")) if values else None
-                contiguous_rollover = bucket_start == closed.start + pd.Timedelta(minutes=5)
-                complete_history = (
-                    len(completed) == completed.maxlen
-                    and all(item[1] is not None and item[2] for item in completed)
-                    and all(
-                        completed[index][0]
-                        == completed[index - 1][0] + pd.Timedelta(minutes=5)
-                        for index in range(1, len(completed))
-                    )
-                )
-                ready = contiguous_rollover and complete_history and all(v is not None for v in qv) and sum(qv) >= 1_000_000 and funding_threshold is not None and latest is not None and latest[1] > 0 and latest[1] >= funding_threshold and basis is not None and mark_close is not None and index_close is not None and basis > self.basis_bps / 10_000 and symbol in tradeable and position is None
-                if ready:
-                    stop = close * 1.03
-                    trace = make_decision_trace(reason_code="positive_funding_and_basis_crowding", setup_class="funding_basis_crowding", hypothesis_branch="lower_next_60m", conditions_bool_map={"complete": complete, "funding_stress": True, "positive_basis": True}, blockers_bool_map={"existing_position": False}, permission_layer_state={"tradeable": True}, parameter_combination={"funding_percentile_threshold": self.threshold, "basis_threshold_bps": self.basis_bps}, gate_values={"funding_rate": latest[1], "basis_close_vs_index": basis}, gate_thresholds={"funding_rate": funding_threshold, "basis": self.basis_bps / 10000}, gate_margins={"funding": latest[1]-funding_threshold}, most_binding_gate="funding")
-                    output.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="btc_funding_basis_crowding_entry", confidence=1.0, metadata={"strategy": "btc_funding_basis_crowding_60m", "strategy_id": "ALPHA-003-BTC-FUNDING-BASIS-CROWDING-60M", "decision_trace": trace, "stop_price": stop, "entry_stop_price": stop, "entry_reference_price": close, "r_per_trade": self.r, "sizing_mode": "risk_at_stop", "funding_rate": latest[1], "funding_source_ts": latest[0].isoformat(), "basis_close_vs_index": basis, "mark_close": mark_close, "index_close": index_close, "funding_percentile_threshold_value": funding_threshold, "target_horizon_minutes": 60, "target_exit_ts": (ts + pd.Timedelta(minutes=60)).isoformat(), "requested_risk_amount": None, "risk_utilization_pct": None, "under_risked_trade": None, "risk_metadata_authority": "bt.risk.risk_engine.RiskEngine"}))
-            elif current is None:
-                self.buckets[symbol] = _Bucket(bucket_start, [])
+                output.append(Signal(ts, symbol, Side.BUY, "funding_basis_fixed_stop_exit", 1.0, {
+                    "close_only": True, "is_exit": True,
+                    "exit_reason": "fixed_3pct_stop_breached",
+                    "stop_detection_policy": "completed_1m_then_next_bar",
+                }))
+                self.exit_sent.add(symbol)
+
             extra = bar.extra if isinstance(bar.extra, Mapping) else {}
             source = pd.Timestamp(extra["funding_source_ts"]) if extra.get("funding_source_ts") is not None else None
             rate = _number(extra.get("funding_rate"))
             if source is not None and rate is not None and source <= bar.ts:
                 self.funding[symbol].append((source, rate))
-            self.buckets[symbol].rows.append(bar)
+
+            bucket_start = bar.ts.floor("5min")
+            current = self.buckets.get(symbol)
+            if current is not None and current.start != bucket_start and current.rows:
+                output.extend(self._evaluate_bucket(
+                    symbol, current, signal_ts=ts, decision_ts=bucket_start,
+                    contiguous=False, tradeable=tradeable, position=position,
+                ))
+            if current is None or current.start != bucket_start:
+                current = _Bucket(bucket_start, [])
+                self.buckets[symbol] = current
+            current.rows.append(bar)
+            if bar.ts == bucket_start + pd.Timedelta(minutes=4):
+                decision_ts = bucket_start + pd.Timedelta(minutes=5)
+                output.extend(self._evaluate_bucket(
+                    symbol, current, signal_ts=bar.ts, decision_ts=decision_ts,
+                    contiguous=True, tradeable=tradeable, position=position,
+                ))
+                self.buckets[symbol] = _Bucket(decision_ts, [])
         return output

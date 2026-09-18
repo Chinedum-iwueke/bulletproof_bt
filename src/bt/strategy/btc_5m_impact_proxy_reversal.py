@@ -23,6 +23,10 @@ class _QuoteBucket:
     valid: bool
     count: int
     last_ts: pd.Timestamp
+    open: float
+    high: float
+    low: float
+    close: float
 
     @property
     def complete(self) -> bool:
@@ -42,7 +46,7 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
     ATR_WINDOW = 20
     STOP_ATR_MULTIPLE = 3.0
     TARGET_HORIZON = pd.Timedelta(minutes=30)
-    EXECUTION_DELAY = pd.Timedelta(0)
+    EXECUTION_DELAY = pd.Timedelta(minutes=1)
 
     def __init__(
         self,
@@ -75,7 +79,6 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
         self._previous_close: dict[str, float] = {}
         self._quote_bucket: dict[str, _QuoteBucket] = {}
         self._exit_submitted: set[str] = set()
-        self._stop_exit_pending: set[str] = set()
         self._last_signal_bar_ts: dict[str, pd.Timestamp] = {}
 
     @staticmethod
@@ -126,34 +129,38 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
 
     def _roll_quote_bucket(
         self, bar: Bar
-    ) -> tuple[pd.Timestamp | None, float | None, bool]:
-        """Return the prior bucket total at rollover, then consume current bar."""
+    ) -> _QuoteBucket | None:
+        """Consume a completed 1m row and return a just-completed 5m bucket."""
         bucket = bar.ts.floor("5min")
         value = self._quote_volume(bar)
         prior = self._quote_bucket.get(bar.symbol)
-        completed_ts: pd.Timestamp | None = None
-        completed: float | None = None
-        complete = False
-        if prior is not None and prior.start != bucket:
-            completed_ts, completed, complete = prior.start, prior.total, prior.complete
         if prior is None or prior.start != bucket:
-            self._quote_bucket[bar.symbol] = _QuoteBucket(
+            current = _QuoteBucket(
                 start=bucket,
                 total=value or 0.0,
                 valid=value is not None and bar.ts == bucket,
                 count=1,
                 last_ts=bar.ts,
+                open=float(bar.open),
+                high=float(bar.high),
+                low=float(bar.low),
+                close=float(bar.close),
             )
         else:
             sequential = bar.ts == prior.last_ts + pd.Timedelta(minutes=1)
-            self._quote_bucket[bar.symbol] = _QuoteBucket(
+            current = _QuoteBucket(
                 start=bucket,
                 total=prior.total + (value or 0.0),
                 valid=prior.valid and value is not None and sequential,
                 count=prior.count + 1,
                 last_ts=bar.ts,
+                open=prior.open,
+                high=max(prior.high, float(bar.high)),
+                low=min(prior.low, float(bar.low)),
+                close=float(bar.close),
             )
-        return completed_ts, completed, complete
+        self._quote_bucket[bar.symbol] = current
+        return current if current.complete else None
 
     def on_bars(
         self,
@@ -163,31 +170,11 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
         ctx: Mapping[str, Any],
     ) -> list[Signal]:
         signals: list[Signal] = []
-        htf = ctx.get("htf") if isinstance(ctx, Mapping) else None
-        by_symbol = htf.get(self.SIGNAL_TIMEFRAME, {}) if isinstance(htf, Mapping) else {}
         for symbol, bar in sorted(bars_by_symbol.items()):
-            quote_bucket_ts, completed_quote, quote_complete = (
-                self._roll_quote_bucket(bar)
-            )
+            completed = self._roll_quote_bucket(bar)
             position = self._position(ctx, symbol)
             if position is None:
                 self._exit_submitted.discard(symbol)
-                self._stop_exit_pending.discard(symbol)
-            if position is not None and symbol in self._stop_exit_pending and symbol not in self._exit_submitted:
-                signals.append(Signal(
-                    ts=ts, symbol=symbol,
-                    side=Side.SELL if position == Side.BUY else Side.BUY,
-                    signal_type="btc_5m_impact_proxy_reversal_stop_exit",
-                    confidence=1.0,
-                    metadata={
-                        "strategy": "btc_5m_impact_proxy_reversal",
-                        "close_only": True, "is_exit": True,
-                        "exit_reason": "fixed_completed_5m_atr_stop_breached",
-                        "stop_detection_policy": "completed_1m_then_next_bar",
-                    },
-                ))
-                self._stop_exit_pending.discard(symbol)
-                self._exit_submitted.add(symbol)
             target_exit = self._target_exit_ts(ctx, symbol)
             submit_exit_at = (
                 target_exit - self.EXECUTION_DELAY
@@ -214,7 +201,7 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
                         "exit_reason": "fixed_30m_target_horizon",
                         "target_exit_ts": target_exit.isoformat(),
                         "exit_submission_ts": pd.Timestamp(ts).isoformat(),
-                        "execution_delay_minutes": 0,
+                        "execution_delay_minutes": 1,
                     },
                 ))
                 self._exit_submitted.add(symbol)
@@ -227,44 +214,50 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
                     position == Side.SELL and float(bar.high) >= stop_price
                 )
                 if breached and symbol not in self._exit_submitted:
-                    self._stop_exit_pending.add(symbol)
+                    signals.append(Signal(
+                        ts=ts, symbol=symbol,
+                        side=Side.SELL if position == Side.BUY else Side.BUY,
+                        signal_type="btc_5m_impact_proxy_reversal_stop_exit",
+                        confidence=1.0,
+                        metadata={
+                            "strategy": "btc_5m_impact_proxy_reversal",
+                            "close_only": True, "is_exit": True,
+                            "exit_reason": "fixed_completed_5m_atr_stop_breached",
+                            "stop_detection_policy": "completed_1m_then_next_bar",
+                        },
+                    ))
+                    self._exit_submitted.add(symbol)
 
-            closed = by_symbol.get(symbol) if isinstance(by_symbol, Mapping) else None
-            if closed is None or not bool(closed.is_complete):
+            if completed is None:
                 continue
-            closed_ts = pd.Timestamp(closed.ts)
-            quote_aligned = quote_bucket_ts is not None and quote_bucket_ts == closed_ts
+            closed_ts = completed.start
+            decision_ts = completed.start + pd.Timedelta(minutes=5)
             previous_signal_ts = self._last_signal_bar_ts.get(symbol)
             if previous_signal_ts is not None and closed_ts <= previous_signal_ts:
                 continue
             self._last_signal_bar_ts[symbol] = closed_ts
             previous_close = self._previous_close.get(symbol)
-            self._previous_close[symbol] = float(closed.close)
+            self._previous_close[symbol] = completed.close
             if previous_close is None or previous_close <= 0:
                 continue
-            signal_return = float(closed.close) / previous_close - 1.0
+            signal_return = completed.close / previous_close - 1.0
             true_range = max(
-                float(closed.high) - float(closed.low),
-                abs(float(closed.high) - previous_close),
-                abs(float(closed.low) - previous_close),
+                completed.high - completed.low,
+                abs(completed.high - previous_close),
+                abs(completed.low - previous_close),
             )
             ranges = self._ranges[symbol]
             ranges.append(true_range)
-            if (
-                not quote_aligned
-                or completed_quote is None
-                or not quote_complete
-                or completed_quote <= 0
-            ):
+            if completed.total <= 0:
                 continue
-            ratio = abs(signal_return) / completed_quote
+            ratio = abs(signal_return) / completed.total
             ratios = self._ratios[symbol]
             enough_history = len(ratios) == self._window
             threshold_value = (
                 empirical_lower_quantile(ratios, self._threshold)
                 if enough_history else None
             )
-            liquid = completed_quote >= self.LIQUIDITY_FLOOR_USD
+            liquid = completed.total >= self.LIQUIDITY_FLOOR_USD
             extreme = threshold_value is not None and ratio >= threshold_value
             flat = position is None
             proposed_side = Side.SELL if signal_return > 0 else Side.BUY
@@ -275,7 +268,7 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
             )
             atr_ready = len(ranges) == self.ATR_WINDOW and sum(ranges) > 0
             eligible = (
-                symbol in tradeable and bool(closed.is_complete) and flat
+                symbol in tradeable and flat
                 and signal_return != 0 and liquid
                 and extreme and direction_allowed and atr_ready
             )
@@ -283,9 +276,9 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
                 atr = sum(ranges) / len(ranges)
                 stop_distance = atr * self.STOP_ATR_MULTIPLE
                 stop_price = (
-                    float(closed.close) - stop_distance
+                    completed.close - stop_distance
                     if proposed_side == Side.BUY
-                    else float(closed.close) + stop_distance
+                    else completed.close + stop_distance
                 )
                 percentile = sum(item <= ratio for item in ratios) / len(ratios)
                 trace = make_decision_trace(
@@ -293,8 +286,8 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
                     setup_class="impact_proxy_reversal",
                     hypothesis_branch="opposite_direction_30m",
                     conditions_bool_map={
-                        "completed_5m_bar": bool(closed.is_complete),
-                        "quote_volume_complete": quote_complete,
+                        "completed_5m_bar": True,
+                        "quote_volume_complete": completed.complete,
                         "liquidity_floor": liquid,
                         "impact_proxy_extreme": extreme,
                         "direction_allowed": direction_allowed,
@@ -309,8 +302,8 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
                     },
                     gate_values={
                         "signal_return_5m": signal_return,
-                        "quote_volume_5m": completed_quote,
-                        "quote_volume_bucket_ts": quote_bucket_ts.isoformat(),
+                        "quote_volume_5m": completed.total,
+                        "quote_volume_bucket_ts": completed.start.isoformat(),
                         "impact_proxy": ratio,
                         "impact_proxy_percentile": percentile,
                     },
@@ -321,7 +314,7 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
                     gate_margins={"impact_proxy": ratio - float(threshold_value)},
                     most_binding_gate="impact_proxy_quantile",
                 )
-                target_exit_ts = pd.Timestamp(ts) + self.TARGET_HORIZON
+                target_exit_ts = decision_ts + self.TARGET_HORIZON
                 signals.append(Signal(
                     ts=ts,
                     symbol=symbol,
@@ -334,9 +327,9 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
                         "family_variant": "completed-5m-impact-proxy",
                         "family_pattern": "liquidity_stress_proxy_reversal",
                         "entry_reason": "extreme_5m_return_per_quote_volume_reversal",
-                        "entry_price": float(closed.close),
-                        "entry_reference_price": float(closed.close),
-                        "intended_entry_price": float(closed.close),
+                        "entry_price": completed.close,
+                        "entry_reference_price": completed.close,
+                        "intended_entry_price": completed.close,
                         "signal_timeframe": "5m",
                         "execution_timeframe": "1m",
                         "risk_accounting": "engine_canonical_R",
@@ -348,8 +341,8 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
                         "entry_stop_price": stop_price,
                         "stop_distance": stop_distance,
                         "signal_return_5m": signal_return,
-                        "quote_volume_5m": completed_quote,
-                        "quote_volume_bucket_ts": quote_bucket_ts.isoformat(),
+                        "quote_volume_5m": completed.total,
+                        "quote_volume_bucket_ts": completed.start.isoformat(),
                         "impact_proxy": ratio,
                         "impact_proxy_threshold_value": threshold_value,
                         "impact_proxy_percentile": percentile,
@@ -358,6 +351,7 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
                         "target_horizon_minutes": 30,
                         "target_exit_ts": target_exit_ts.isoformat(),
                         "signal_ts": pd.Timestamp(ts).isoformat(),
+                        "decision_ts": decision_ts.isoformat(),
                         "decision_trace": trace,
                         "requested_risk_amount": None,
                         "risk_utilization_pct": None,

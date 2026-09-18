@@ -4,7 +4,7 @@ metadata:
   description: &question "Does point-in-time positive BTCUSDT funding stress combined with a positive completed-bar mark-to-index basis predict a lower BTCUSDT close-to-close return over the next 60m than matched controls?"
   research_layer: ALPHA
   hypothesis_family: funding_basis_matched_control
-  version: "1.1.0"
+  version: "1.2.0"
   author: bulletproof_bt
   created_at: "2026-09-18T00:00:00Z"
 hypothesis_id: "ALPHA-003-BTC-FUNDING-BASIS-CROWDING-60M"
@@ -12,7 +12,7 @@ title: "BTC funding-basis crowding and subsequent 60m return"
 description: *question
 research_layer: ALPHA
 hypothesis_family: funding_basis_matched_control
-version: "1.1.0"
+version: "1.2.0"
 status: draft
 immutable_contract:
   question: *question
@@ -51,7 +51,7 @@ exit:
   stop_update_policy: frozen_at_entry
 sizing: {mode: risk_at_stop, r_per_trade: 0.005, cap_policy: allow_clip_with_truth, min_risk_utilization_pct: 0.10, report_under_risked_trades: true}
 risk: {authority: engine, max_positions: 1, max_notional_pct_equity: 0.25, max_gross_notional_pct_equity: 0.25, max_leverage: 1.0, unresolved_stop_policy: reject_entry, pyramiding: false, flips: false}
-costs: {authority: engine, taker_fee_bps: 6.0, slippage_bps: 2.0, spread_bps: 1.0, delay_bars: 0, robustness_multiplier: 2.0}
+costs: {authority: engine, taker_fee_bps: 6.0, slippage_bps: 2.0, spread_bps: 1.0, delay_bars: 1, robustness_multiplier: 2.0}
 data_availability:
   dataset_kind: research_panel
   auxiliary_fields_role: required_signal_input
