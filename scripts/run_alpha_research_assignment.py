@@ -58,6 +58,9 @@ from bt.governance.alpha_strategy_pipeline import (
 from bt.hypotheses.contract import HypothesisContract
 from bt.logging.run_bundle import finalize_run_bundle
 from bt.validation.experiment_truth import validate_experiment_root, write_truth_report
+from bt.strategy.btc_funding_basis_crowding_60m import (
+    funding_basis_matched_evaluation,
+)
 
 AUTHORITY = {
     "capital": False,
@@ -89,6 +92,79 @@ def file_digest(path: Path) -> str:
         for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
             result.update(chunk)
     return result.hexdigest()
+
+
+def _execution_identity(assignment: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "campaign_digest": assignment["campaign_digest"],
+        "question_digest": assignment["question_digest"],
+        "dataset_digest": assignment["dataset_digest"],
+        "source_commit": assignment["base_ref"],
+        "execution_class": assignment.get("execution_class", "qualification"),
+        "window_start": assignment.get("window_start"),
+        "window_end": assignment.get("window_end"),
+        "qualification_digest": digest(assignment.get("qualification")),
+    }
+
+
+def prepare_execution_output(
+    output: Path, assignment: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Recover an interrupted immutable attempt or return its completed result."""
+    identity = _execution_identity(assignment)
+    identity_digest = digest(identity)
+    marker_name = "execution-identity.json"
+    completion_name = "execution-result.json"
+    if output.exists():
+        marker_path = output / marker_name
+        if not marker_path.is_file():
+            raise BridgeError(
+                "execution output exists without an immutable identity marker"
+            )
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        if marker.get("identity_digest") != identity_digest:
+            raise BridgeError("execution output is bound to a different assignment")
+        completion_path = output / completion_name
+        if completion_path.is_file():
+            envelope = json.loads(completion_path.read_text(encoding="utf-8"))
+            expected = digest(
+                {
+                    "identity_digest": identity_digest,
+                    "result": envelope.get("result"),
+                }
+            )
+            if envelope.get("record_digest") != expected:
+                raise BridgeError("completed execution result digest is invalid")
+            return envelope["result"]
+        counter = 1
+        while True:
+            partial = output.with_name(
+                f".{output.name}.partial-{identity_digest[:12]}-{counter:04d}"
+            )
+            if not partial.exists():
+                output.rename(partial)
+                break
+            counter += 1
+    output.mkdir(parents=True, exist_ok=False)
+    marker = {
+        "schema_version": "alpha-execution-identity-v1.0.0",
+        "identity": identity,
+        "identity_digest": identity_digest,
+    }
+    marker["record_digest"] = digest(marker)
+    (output / marker_name).write_bytes(canonical(marker) + b"\n")
+    return None
+
+
+def finalize_execution_output(
+    output: Path, assignment: dict[str, Any], result: dict[str, Any]
+) -> None:
+    identity_digest = digest(_execution_identity(assignment))
+    document = {"identity_digest": identity_digest, "result": result}
+    envelope = {**document, "record_digest": digest(document)}
+    temporary = output / ".execution-result.json.new"
+    temporary.write_bytes(canonical(envelope) + b"\n")
+    temporary.replace(output / "execution-result.json")
 
 
 def downstream_reuse_manifest(
@@ -467,6 +543,24 @@ def period_evaluation(run_dir: Path, start: str, end: str) -> dict[str, Any]:
     }
 
 
+def select_funding_basis_variant(evaluations: list[dict[str, Any]]) -> int | None:
+    """Select only among validation variants with adequate scientific support."""
+    supported = [
+        index
+        for index, evaluation in enumerate(evaluations)
+        if evaluation.get("outcome") in {"positive", "negative"}
+    ]
+    if not supported:
+        return None
+    return min(
+        supported,
+        key=lambda item: (
+            evaluations[item]["treated_minus_control_mean"],
+            -evaluations[item]["matched_support"], item,
+        ),
+    )
+
+
 def weekend_regime_comparison(
     frame: pd.DataFrame, *, lookback: int = 60
 ) -> dict[str, Any]:
@@ -627,7 +721,9 @@ def execute_registered(
     if not governed_review_verified(assignment, qualification):
         raise BridgeError("independent specification review is missing or unbound; no compute started")
     scope = execution_scope(assignment, qualification)
-    output.mkdir(parents=True, exist_ok=False)
+    completed = prepare_execution_output(output, assignment)
+    if completed is not None:
+        return completed
     if isinstance(qualification, dict):
         if qualification.get("qualified") is not True:
             raise BridgeError("unqualified strategy cannot execute")
@@ -711,10 +807,11 @@ def execute_registered(
         window_digest = file_digest(execution_data_path)
 
     lightweight_columns = ["ts", "symbol", "close"]
-    if "quote_volume" in contract.schema.execution_semantics.get(
+    for column in contract.schema.execution_semantics.get(
         "required_extra_columns", []
     ):
-        lightweight_columns.append("quote_volume")
+        if column not in lightweight_columns:
+            lightweight_columns.append(column)
     lightweight = pd.read_parquet(
         execution_data_path, columns=lightweight_columns
     )
@@ -783,11 +880,25 @@ def execute_registered(
             encoding="utf-8",
         )
         execution_overrides.append(str(data_override_path))
+    is_funding_basis = (
+        contract.schema.metadata.hypothesis_family == "funding_basis_matched_control"
+    )
+    grid_data_path = execution_data_path
+    if is_funding_basis:
+        validation_end = pd.Timestamp(rep.split.validation_end)
+        validation_frame = pd.read_parquet(execution_data_path)
+        validation_frame = validation_frame[
+            pd.to_datetime(validation_frame["ts"], utc=True) <= validation_end
+        ]
+        if validation_frame.empty:
+            raise BridgeError("funding-basis validation partition contains no rows")
+        grid_data_path = output / "validation-window.parquet"
+        validation_frame.to_parquet(grid_data_path, index=False)
     jobs = [dict(
         contract=contract, spec=spec,
         tier="Tier3" if assignment["tier"] == "Tier3" else "Tier2",
         config_path=str(repository / "configs/engine.yaml"),
-        data_path=str(execution_data_path), out_root=str(runs),
+        data_path=str(grid_data_path), out_root=str(runs),
         override_paths=execution_overrides,
         run_slug=f"row_{index:04d}", phase=phase,
     ) for index, spec in enumerate(variants, start=1)]
@@ -803,24 +914,72 @@ def execute_registered(
         results.append(result)
         run_dirs.append(run_dir)
     trials = search.trials()
-    validation = [
-        period_evaluation(path, rep.split.validation_start, rep.split.validation_end)
-        for path in run_dirs
-    ]
-    selected_index = max(
-        range(len(validation)),
-        key=lambda item: (
-            validation[item]["mean_net_r"],
-            validation[item]["trade_count"],
-            -item,
-        ),
+    if is_funding_basis:
+        validation = [
+            funding_basis_matched_evaluation(
+                lightweight, params=variant["params"],
+                start=rep.split.validation_start,
+                end=rep.split.validation_end,
+            )
+            for variant in variants
+        ]
+        for item in validation:
+            item["evaluation_partition"] = "validation"
+            item["record_digest"] = digest(item)
+        selected_index = select_funding_basis_variant(validation)
+        selection_metric = "validation_treated_minus_control_mean"
+    else:
+        validation = [
+            period_evaluation(path, rep.split.validation_start, rep.split.validation_end)
+            for path in run_dirs
+        ]
+        selected_index = max(
+            range(len(validation)),
+            key=lambda item: (
+                validation[item]["mean_net_r"],
+                validation[item]["trade_count"],
+                -item,
+            ),
+        )
+        selection_metric = "mean_net_r"
+    execution_index = (
+        selected_index
+        if selected_index is not None
+        else max(
+            range(len(validation)),
+            key=lambda item: (validation[item].get("matched_support", 0), -item),
+        )
     )
+    if is_funding_basis and selected_index is not None:
+        heldout_root = runs
+        heldout_job = dict(
+            contract=contract,
+            spec=variants[selected_index],
+            tier="Tier3" if assignment["tier"] == "Tier3" else "Tier2",
+            config_path=str(repository / "configs/engine.yaml"),
+            data_path=str(execution_data_path),
+            out_root=str(heldout_root),
+            override_paths=execution_overrides,
+            run_slug=f"selected_{selected_index:04d}",
+            phase=phase,
+        )
+        heldout_result = execute_variant_grid([heldout_job], 1)[0]
+        heldout_run_dir = Path(heldout_result["run_dir"])
+        for name, document in (
+            ("market_model_bundle.json", model.document()),
+            ("representation_contract.json", rep.document()),
+            ("representation_leakage_report.json", leakage),
+            ("search_plan.json", search.document()),
+        ):
+            (heldout_run_dir / name).write_bytes(canonical(document) + b"\n")
+        results[selected_index] = heldout_result
+        run_dirs[selected_index] = heldout_run_dir
     selection_audit = {
         "schema_version": "alpha-selection-bias-audit-v1.0.0",
         "declared_variant_count": len(variants),
         "evaluated_variant_count": len(validation),
         "selection_partition": "validation",
-        "selection_metric": "mean_net_r",
+        "selection_metric": selection_metric,
         "held_out_test_consulted": False,
         "stopping_rule": "exhaustive",
         "selected_variant_index": selected_index,
@@ -831,13 +990,63 @@ def execute_registered(
     is_impact_proxy = (
         contract.schema.metadata.hypothesis_family == "impact_proxy_reversal"
     )
+    per_variant_evaluations = validation if is_funding_basis else []
+    heldout_evaluation = (
+        funding_basis_matched_evaluation(
+            lightweight,
+            start=rep.split.test_start,
+            params=variants[selected_index]["params"],
+        )
+        if is_funding_basis and selected_index is not None
+        else None
+    )
+    if heldout_evaluation is not None:
+        heldout_evaluation["evaluation_partition"] = "test"
+        heldout_evaluation["record_digest"] = digest(heldout_evaluation)
+    unsupported_validation = None
+    if is_funding_basis and selected_index is None:
+        unsupported_outcome = (
+            "invalid"
+            if all(item["outcome"] == "invalid" for item in validation)
+            else "failed"
+        )
+        unsupported_validation = {
+            "schema_version": "funding-basis-heldout-not-evaluated-v1.0.0",
+            "question": contract_document["immutable_contract"]["question"],
+            "parameters": variants[execution_index]["params"],
+            "outcome": unsupported_outcome,
+            "reason": (
+                "no_valid_validation_variant"
+                if unsupported_outcome == "invalid"
+                else "no_supported_validation_variant"
+            ),
+            "evaluation_partition": "test",
+            "held_out_evaluated": False,
+            "decision_records": [],
+            "pairs": [],
+            "matched_support": 0,
+            "treated_support": 0,
+            "control_support": 0,
+            "treated_minus_control_mean": 0.0,
+            "confidence_interval_95": {"lower": 0.0, "upper": 0.0},
+            "confidence_interval_method": "not_evaluated",
+            "doubled_cost_treated_minus_control": 0.0,
+            "directional_support": {
+                "positive_trailing_return": 0,
+                "nonpositive_trailing_return": 0,
+            },
+            "passed": False,
+        }
+        unsupported_validation["record_digest"] = digest(unsupported_validation)
     evaluation_artifact = (
         impact_proxy_evaluation(
             lightweight,
             test_start=rep.split.test_start,
-            params=variants[selected_index]["params"],
+            params=variants[execution_index]["params"],
         )
         if is_impact_proxy
+        else heldout_evaluation or unsupported_validation
+        if is_funding_basis
         else weekend_regime_comparison(lightweight)
     )
     if "record_digest" not in evaluation_artifact:
@@ -845,6 +1054,10 @@ def execute_registered(
     evaluation_artifact_name = (
         "impact_proxy_evaluation.json"
         if is_impact_proxy
+        else "funding_basis_heldout_not_evaluated.json"
+        if is_funding_basis and selected_index is None
+        else "funding_basis_matched_evaluation.json"
+        if is_funding_basis
         else "weekend_regime_comparison.json"
     )
     logging_reports = [
@@ -859,13 +1072,24 @@ def execute_registered(
             "required trade logging is incomplete for variants: "
             f"{failed_logging}"
         )
-    for candidate_run in run_dirs:
+    for index, candidate_run in enumerate(run_dirs):
         (candidate_run / "selection_bias_audit.json").write_bytes(
             canonical(selection_audit) + b"\n"
         )
-        (candidate_run / evaluation_artifact_name).write_bytes(
-            canonical(evaluation_artifact) + b"\n"
-        )
+        if is_funding_basis:
+            (candidate_run / "funding_basis_validation_evaluation.json").write_bytes(
+                canonical(per_variant_evaluations[index]) + b"\n"
+            )
+            if index == selected_index or (
+                selected_index is None and index == execution_index
+            ):
+                (candidate_run / evaluation_artifact_name).write_bytes(
+                    canonical(evaluation_artifact) + b"\n"
+                )
+        else:
+            (candidate_run / evaluation_artifact_name).write_bytes(
+                canonical(evaluation_artifact) + b"\n"
+            )
     for candidate_run, logging_report in zip(run_dirs, logging_reports, strict=True):
         (candidate_run / "required_trade_logging_evaluation.json").write_bytes(
             canonical(logging_report) + b"\n"
@@ -876,9 +1100,13 @@ def execute_registered(
             assignment=assignment,
             representation_digest=rep.digest,
             search_plan_digest=search.digest,
-            evaluation_artifact=evaluation_artifact_name,
+            evaluation_artifact=(
+                evaluation_artifact_name
+                if not is_funding_basis or index == selected_index
+                else "funding_basis_validation_evaluation.json"
+            ),
             variant_index=index,
-            selected_for_holdout=index == selected_index,
+            selected_for_holdout=selected_index is not None and index == selected_index,
         )
         (candidate_run / "downstream_reuse_manifest.json").write_bytes(
             canonical(reuse) + b"\n"
@@ -887,9 +1115,9 @@ def execute_registered(
     write_truth_report(truth, experiment / "summaries")
     if truth.status != "PASS":
         raise BridgeError(f"native truth validation failed: {truth.hard_failures}")
-    trial = trials[selected_index]
-    result = results[selected_index]
-    run_dir = run_dirs[selected_index]
+    trial = trials[execution_index]
+    result = results[execution_index]
+    run_dir = run_dirs[execution_index]
     lineage = {
         "repository_commit": assignment["base_ref"],
         "code_digest": code_digest,
@@ -925,10 +1153,14 @@ def execute_registered(
                 item,
             )
         )
-    bundle = bundles[selected_index]
-    retained_bundle = retained[selected_index]
-    holdout = held_out_trade_evaluation(run_dir, rep.split.test_start)
-    logging_report = logging_reports[selected_index]
+    bundle = bundles[execution_index]
+    retained_bundle = retained[execution_index]
+    holdout = (
+        None
+        if is_funding_basis and selected_index is None
+        else held_out_trade_evaluation(run_dir, rep.split.test_start)
+    )
+    logging_report = logging_reports[execution_index]
     manifest = json.loads(
         (retained_bundle / "run_bundle_manifest.json").read_text(encoding="utf-8")
     )
@@ -938,28 +1170,39 @@ def execute_registered(
         )
         for item in bundles
     ]
-    memory = memory_receipts[selected_index]
+    memory = memory_receipts[execution_index]
     metrics = {
         key: value
         for key, value in result.items()
         if isinstance(value, (int, float, bool))
     }
-    metrics.update(
-        {
+    metrics.update({
+        "declared_variant_count": len(variants),
+        "selected_variant_index": selected_index,
+        "execution_artifact_index": execution_index,
+        "selection_basis": selection_metric,
+    })
+    if holdout is not None:
+        metrics.update({
             "oos_trade_count": holdout["trade_count"],
             "oos_mean_net_r": holdout["mean_net_r"],
             "double_cost_oos_mean_net_r": holdout["double_cost_mean_net_r"],
-            "declared_variant_count": len(variants),
-            "selected_variant_index": selected_index,
-            "selection_basis": "validation_mean_net_r",
-        }
-    )
+        })
     metrics["maximum_drawdown"] = float(result.get("max_drawdown_r", 0.0))
     if is_impact_proxy:
         metrics["direction_balance"] = evaluation_artifact["direction_balance"]
         metrics["matched_return_shock_control"] = evaluation_artifact[
             "matched_return_shock_control"
         ]
+    elif is_funding_basis:
+        metrics.update({
+            key: evaluation_artifact[key]
+            for key in (
+                "matched_support", "treated_support", "control_support",
+                "treated_minus_control_mean", "confidence_interval_95",
+                "doubled_cost_treated_minus_control",
+            )
+        })
     else:
         metrics["selection_bias_audit"] = selection_audit
     required_metrics = tuple(
@@ -974,9 +1217,13 @@ def execute_registered(
     ended_at = datetime.now(UTC)
     independent_review_complete = governed_review_verified(assignment, qualification)
     passed_edge = bool(
-        holdout["adequate_support"]
-        and holdout["positive_net_edge"]
-        and holdout["cost_stress_passed"]
+        (is_funding_basis or (
+            holdout is not None
+            and
+            holdout["adequate_support"]
+            and holdout["positive_net_edge"]
+            and holdout["cost_stress_passed"]
+        ))
         and independent_review_complete
         and logging_report["passed"]
         and scope["qualification_authority"]
@@ -991,14 +1238,16 @@ def execute_registered(
                 ]
             )
         )
+        and (not is_funding_basis or evaluation_artifact["passed"])
+    )
+    classic_pnl_gates = () if is_funding_basis else (
+        ("oos_trade_support", holdout["adequate_support"]),
+        ("positive_oos_net_edge", holdout["positive_net_edge"]),
+        ("double_cost_oos_edge", holdout["cost_stress_passed"]),
     )
     failed_gates = [
         name
-        for name, passed in (
-            ("oos_trade_support", holdout["adequate_support"]),
-            ("positive_oos_net_edge", holdout["positive_net_edge"]),
-            ("double_cost_oos_edge", holdout["cost_stress_passed"]),
-        )
+        for name, passed in classic_pnl_gates
         if not passed
     ]
     if not independent_review_complete:
@@ -1016,12 +1265,33 @@ def execute_registered(
             "balanced_positive_reversal"
         ]:
             failed_gates.append("positive_reversal_in_both_directions")
+    scientific_outcome = evaluation_artifact["outcome"] if is_funding_basis else None
+    if is_funding_basis:
+        if scientific_outcome == "invalid":
+            failed_gates.append("point_in_time_scientific_sample_invalid")
+        elif scientific_outcome == "failed":
+            failed_gates.append("matched_control_support_inadequate")
+        elif not evaluation_artifact["passed"]:
+            if evaluation_artifact["confidence_interval_95"]["upper"] >= 0:
+                failed_gates.append("matched_funding_basis_95pct_upper_bound")
+            if evaluation_artifact["doubled_cost_treated_minus_control"] >= 0:
+                failed_gates.append("matched_funding_basis_double_cost_stress")
+    scientific_valid = not is_funding_basis or scientific_outcome != "invalid"
+    scientific_supported = not is_funding_basis or scientific_outcome in {"positive", "negative"}
+    evaluation_evidence_digests = (
+        [
+            *[item["record_digest"] for item in per_variant_evaluations],
+            evaluation_artifact["record_digest"],
+        ]
+        if is_funding_basis
+        else [evaluation_artifact["record_digest"]]
+    )
     gate_report = {
-        "truth_certified": True,
-        "point_in_time_valid": True,
+        "truth_certified": scientific_valid,
+        "point_in_time_valid": scientific_valid,
         "reproducible": True,
-        "out_of_sample_evaluated": True,
-        "cost_stress_evaluated": True,
+        "out_of_sample_evaluated": scientific_supported,
+        "cost_stress_evaluated": scientific_supported,
         "selection_bias_audited": True,
         "required_trade_logging_complete": logging_report["passed"],
         "independent_review_complete": independent_review_complete,
@@ -1040,19 +1310,23 @@ def execute_registered(
         "trial_count": len(variants),
         "outcome": (
             "failed" if not independent_review_complete
+            else scientific_outcome if is_funding_basis
             else "candidate" if passed_edge else "negative"
         ),
-        "failure_stage": None if independent_review_complete else "independent_evaluation",
+        "failure_stage": (
+            "independent_evaluation" if not independent_review_complete
+            else "truth_gate"
+            if is_funding_basis and scientific_outcome == "failed"
+            else None
+        ),
         "gate_report": gate_report,
         "evidence_digests": [
             *[item["bundle_digest"] for item in bundles],
             selection_audit["record_digest"],
-            evaluation_artifact["record_digest"],
+            *evaluation_evidence_digests,
             logging_report["record_digest"],
-            truth.to_dict()["report_digest"],
-        ]
-        if "report_digest" in truth.to_dict()
-        else [bundle["bundle_digest"], digest(truth.to_dict())],
+            truth.to_dict().get("report_digest", digest(truth.to_dict())),
+        ],
     }
     proposal_source = {
         "question": assignment["question"],
@@ -1089,7 +1363,7 @@ def execute_registered(
             "variant_count": len(variants),
             "max_variants": assignment["max_variants"],
             "search_plan_digest": search.digest,
-            "selection_basis": "validation_mean_net_r",
+            "selection_basis": selection_metric,
             "selected_variant_index": selected_index,
         },
         "required_gates": [
@@ -1184,6 +1458,7 @@ def execute_registered(
         result_document["commissioning_receipt"]["record_digest"] = digest(
             result_document["commissioning_receipt"]
         )
+    finalize_execution_output(output, assignment, result_document)
     return result_document
 
 

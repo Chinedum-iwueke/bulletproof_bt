@@ -1,0 +1,111 @@
+metadata:
+  hypothesis_id: "ALPHA-003-BTC-FUNDING-BASIS-CROWDING-60M"
+  title: "BTC funding-basis crowding and subsequent 60m return"
+  description: &question "Does point-in-time positive BTCUSDT funding stress combined with a positive completed-bar mark-to-index basis predict a lower BTCUSDT close-to-close return over the next 60m than matched controls?"
+  research_layer: ALPHA
+  hypothesis_family: funding_basis_matched_control
+  version: "1.0.0"
+  author: bulletproof_bt
+  created_at: "2026-09-18T00:00:00Z"
+hypothesis_id: "ALPHA-003-BTC-FUNDING-BASIS-CROWDING-60M"
+title: "BTC funding-basis crowding and subsequent 60m return"
+description: *question
+research_layer: ALPHA
+hypothesis_family: funding_basis_matched_control
+version: "1.0.0"
+status: draft
+immutable_contract:
+  question: *question
+  question_digest: "7267bed217cb13005e9463b53592235976af731a434e62ec98dfc61823f8fec2"
+  dataset_key: bybit-btcusdt-perpetual-1m-research-panel
+  dataset_build_id: fbb81c42-953b-42fb-8fe1-89c75b45e1aa
+  dataset_digest: 9a211d8818c5ab8ec82ad5a7d38957e63eb387ea83d4b00541922a0eeca4aacb
+  catalog_id: d0eb1ad0-98ed-4bce-ad80-649fa3b0b85a
+  catalog_digest: edf31ca2812a662f5eaf5a46eeb3a34a504140df9113708d725bcfd855473492
+  builder_commit: 9870e1993c898f5aae891be5833c8aac90926fd8
+  window: {start: "2023-01-01T00:00:00Z", end: "2024-01-01T00:00:00Z"}
+  tier: Tier2B
+  venue: bybit
+  instrument: BTCUSDT
+  source_timeframe: 1m
+  research_timeframe: 5m
+  resampling_policy: left_closed_left_labeled_complete_bars
+  required_fields: [ts, open, high, low, close, volume, quote_volume, mark_close, index_close, funding_rate, funding_source_ts, basis_close_vs_index]
+parameter_grid:
+  funding_percentile_threshold: [0.95, 0.99]
+  basis_threshold_bps: [0.0, 1.0]
+grid_contract: {maximum_parameters: 2, maximum_variants: 4, frozen_before_outcomes: true, stopping_rule: exhaustive}
+entry:
+  strategy: btc_funding_basis_crowding_60m
+  signal_timeframe: 5m
+  timeframe: 5m
+  base_execution_timeframe: 1m
+  order_timing: completed_5m_close_submit_next_bar_execution
+  direction: short
+  no_pyramiding: true
+  disallow_flip: true
+exit:
+  target: BTCUSDT close-to-close return from the decision boundary to exactly 60 minutes later
+  time_exit_minutes: 60
+  stop_kind: fixed_3pct_from_completed_close
+  stop_update_policy: frozen_at_entry
+sizing: {mode: risk_at_stop, r_per_trade: 0.005, cap_policy: allow_clip_with_truth, min_risk_utilization_pct: 0.10, report_under_risked_trades: true}
+risk: {authority: engine, max_positions: 1, max_notional_pct_equity: 0.25, max_gross_notional_pct_equity: 0.25, max_leverage: 1.0, unresolved_stop_policy: reject_entry, pyramiding: false, flips: false}
+costs: {authority: engine, taker_fee_bps: 6.0, slippage_bps: 2.0, spread_bps: 1.0, delay_bars: 1, robustness_multiplier: 2.0}
+data_availability:
+  dataset_kind: research_panel
+  auxiliary_fields_role: required_signal_input
+  ohlcv_only_fallback: no_decision
+  missing_auxiliary: no_decision
+  liquidity_floor_usd: 1000000.0
+execution_semantics:
+  resampling_interval: left_closed_right_open
+  resampling_label: bucket_start
+  signal_timeframe: 5m
+  base_execution_timeframe: 1m
+  base_data_frequency_expected: 1m
+  exit_monitoring_timeframe: 1m
+  signal_bar_policy: strict_completed_bar_only
+  stop_model: fixed_3pct_from_completed_close
+  stop_update_policy: frozen_at_entry
+  tp_update_policy: none
+  hold_time_unit: wall_clock_minutes_after_signal_close
+  atr_source_timeframe: 5m
+  required_extra_columns: [quote_volume, mark_close, index_close, funding_rate, funding_source_ts, basis_close_vs_index]
+  risk_accounting: engine_canonical_R
+evaluation:
+  required_tiers: [Tier2B]
+  metrics: [matched_support, treated_support, control_support, treated_minus_control_mean, confidence_interval_95, doubled_cost_treated_minus_control, maximum_drawdown]
+  split: {method: chronological_decision_row_fraction, train_fraction: 0.60, validation_fraction: 0.20, test_fraction: 0.20, boundary_policy: next_row_after_prior_partition, purge_seconds: 3600, embargo_seconds: 3600}
+  selection_metric: validation_treated_minus_control_mean
+  confidence_interval_method: overlap_component_cluster_robust_60m
+  outcome_retention: [positive, negative, invalid, failed]
+  native_implementation:
+    matched_control: {path: src/bt/strategy/btc_funding_basis_crowding_60m.py, function: funding_basis_matched_evaluation}
+falsification_criteria:
+  - Reject unless the held-out stressed-minus-control mean next-60m return has its preregistered 95% confidence interval entirely below zero.
+  - Reject if treated or matched-control support is below 30, or either trailing-return direction has fewer than 10 treated observations.
+  - Reject every decision with an incomplete 5m bucket, missing quote_volume, quote_volume below USD 1,000,000, a non-contiguous 60m target, or future funding_source_ts.
+  - Reject if the effect disappears after matching on past 60m return, past 6h realized volatility and UTC funding-cycle position.
+  - Reject if the held-out doubled-cost treated-minus-control difference is not negative.
+expected_failure_modes: [trend continuation, funding-cycle confounding, volatility-regime confounding, microstructure bounce, transaction-cost sensitivity]
+logging:
+  schema_version: "1.0"
+  required_fields: [decision_trace, stop_price, funding_rate, funding_source_ts, basis_close_vs_index, funding_percentile_threshold_value, target_exit_ts, target_horizon_minutes, requested_risk_amount, risk_utilization_pct, under_risked_trade]
+truth_contract:
+  version: "1.0"
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  parity_required_for_fast_path: true
+  fast_path_generation: forbidden
+  research_memory_requires_certification: true
+authority: {capital: false, orders: false, production_promotion: false, self_approval: false}
