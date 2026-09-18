@@ -451,6 +451,58 @@ def _execute_variant_job(job: dict[str, Any]) -> dict[str, Any]:
     return execute_hypothesis_variant(**job)
 
 
+def execution_scope(
+    assignment: dict[str, Any], qualification: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Validate whether this run can contribute qualification evidence."""
+    execution_class = assignment.get("execution_class", "qualification")
+    if execution_class not in {"qualification", "commissioning"}:
+        raise BridgeError("unknown alpha execution class")
+    if not isinstance(qualification, dict):
+        if execution_class == "commissioning":
+            raise BridgeError("commissioning requires a reviewed qualification")
+        return {
+            "execution_class": execution_class,
+            "qualification_authority": True,
+        }
+    reviewed = qualification.get("window")
+    if not isinstance(reviewed, dict):
+        raise BridgeError("qualified strategy lacks its reviewed execution window")
+    try:
+        start = pd.Timestamp(assignment["window_start"])
+        end = pd.Timestamp(assignment["window_end"])
+        reviewed_start = pd.Timestamp(reviewed["start"])
+        reviewed_end = pd.Timestamp(reviewed["end"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise BridgeError("execution window is incomplete or invalid") from exc
+    if any(item.tzinfo is None for item in (start, end, reviewed_start, reviewed_end)):
+        raise BridgeError("execution windows must include an explicit timezone")
+    if end <= start:
+        raise BridgeError("execution window must be positive")
+    if execution_class == "qualification":
+        if start != reviewed_start or end != reviewed_end:
+            raise BridgeError("qualification execution window differs from review")
+        return {
+            "execution_class": execution_class,
+            "qualification_authority": True,
+        }
+    if start < reviewed_start or end > reviewed_end:
+        raise BridgeError("commissioning window is outside the reviewed window")
+    if end - start > pd.Timedelta(days=31):
+        raise BridgeError("commissioning window exceeds 31 days")
+    if int(assignment.get("max_variants", 0)) > 8:
+        raise BridgeError("commissioning variant budget exceeds eight")
+    return {
+        "execution_class": execution_class,
+        "qualification_authority": False,
+        "reviewed_window": reviewed,
+        "commissioning_window": {
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+        },
+    }
+
+
 def independent_review_required(assignment: dict[str, Any], output: Path, reason: str) -> dict[str, Any]:
     output.mkdir(parents=True, exist_ok=True)
     evidence = {
@@ -506,6 +558,7 @@ def execute_registered(
         )
     if not governed_review_verified(assignment, qualification):
         raise BridgeError("independent specification review is missing or unbound; no compute started")
+    scope = execution_scope(assignment, qualification)
     output.mkdir(parents=True, exist_ok=False)
     if isinstance(qualification, dict):
         if qualification.get("qualified") is not True:
@@ -756,6 +809,7 @@ def execute_registered(
         and holdout["positive_net_edge"]
         and holdout["cost_stress_passed"]
         and independent_review_complete
+        and scope["qualification_authority"]
     )
     failed_gates = [
         name
@@ -768,6 +822,8 @@ def execute_registered(
     ]
     if not independent_review_complete:
         failed_gates.append("independent_specification_review")
+    if not scope["qualification_authority"]:
+        failed_gates.append("commissioning_run_has_no_qualification_authority")
     gate_report = {
         "truth_certified": True,
         "point_in_time_valid": True,
@@ -779,6 +835,8 @@ def execute_registered(
         "shadow_eligible": False,
         "production_eligible": False,
         "capital_authority": False,
+        "qualification_authority": scope["qualification_authority"],
+        "execution_class": scope["execution_class"],
         "failed_gates": failed_gates,
     }
     attempt = base_attempt(
@@ -894,17 +952,44 @@ def execute_registered(
         "memory_receipt": memory,
         "durable_bundle_path": str(retained_bundle),
         "producer_gate_report": gate_report,
+        "execution_class": scope["execution_class"],
+        "qualification_authority": scope["qualification_authority"],
     }
-    return {
+    result_document = {
         "disposition": "native_execution_complete",
         "hypothesis_card": card,
         "proposal": proposal,
         "truth": truth.to_dict(),
         "bundle": bundle,
         "metrics": metrics,
-        "alpha_campaign_attempt": attempt,
         "publication_envelope": publication_envelope,
     }
+    if scope["qualification_authority"]:
+        result_document["alpha_campaign_attempt"] = attempt
+    else:
+        result_document["disposition"] = "commissioning_complete"
+        result_document["commissioning_receipt"] = {
+            "schema_version": "alpha-commissioning-receipt-v1.0.0",
+            "execution_class": "commissioning",
+            "qualification_authority": False,
+            "campaign_digest": assignment["campaign_digest"],
+            "question_digest": assignment["question_digest"],
+            "source_commit": assignment["base_ref"],
+            "dataset_digest": assignment["dataset_digest"],
+            "execution_window_digest": window_digest,
+            "window": scope["commissioning_window"],
+            "reviewed_window": scope["reviewed_window"],
+            "variant_count": len(variants),
+            "selected_variant_index": selected_index,
+            "bundle_digests": [item["bundle_digest"] for item in bundles],
+            "truth_report": truth.to_dict(),
+            "gate_report": gate_report,
+            "memory_receipts": memory_receipts,
+        }
+        result_document["commissioning_receipt"]["record_digest"] = digest(
+            result_document["commissioning_receipt"]
+        )
+    return result_document
 
 
 def main() -> int:
@@ -988,6 +1073,9 @@ def main() -> int:
     receipt = {
         "schema_version": "alpha003-governed-receipt-v1.0.0",
         "stage": stage,
+        "execution_class": assignment.get("execution_class", "qualification"),
+        "qualification_authority": assignment.get("execution_class", "qualification")
+        == "qualification",
         "campaign_digest": assignment["campaign_digest"],
         "question_digest": assignment["question_digest"],
         "dataset_digest": assignment["dataset_digest"],

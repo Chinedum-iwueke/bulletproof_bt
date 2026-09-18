@@ -7,6 +7,7 @@ from scripts.run_alpha_research_assignment import (
     AUTHORITY,
     engineering_required,
     execute_registered,
+    execution_scope,
     independent_review_required,
     held_out_evaluation,
     hypothesis_identity,
@@ -58,6 +59,64 @@ def test_unreviewed_qualification_stops_before_compute_or_output_creation(tmp_pa
     with pytest.raises(BridgeError, match="no compute started"):
         execute_registered(value, tmp_path, output)
     assert not output.exists()
+
+
+def test_commissioning_scope_is_review_contained_and_non_qualifying() -> None:
+    value = assignment() | {
+        "execution_class": "commissioning",
+        "window_start": "2023-01-01T00:00:00Z",
+        "window_end": "2023-02-01T00:00:00Z",
+        "max_variants": 8,
+    }
+    qualification = {
+        "window": {
+            "start": "2023-01-01T00:00:00Z",
+            "end": "2024-01-01T00:00:00Z",
+        }
+    }
+    scope = execution_scope(value, qualification)
+    assert scope["qualification_authority"] is False
+    assert scope["execution_class"] == "commissioning"
+
+
+def test_qualification_window_must_equal_independently_reviewed_window() -> None:
+    value = assignment() | {
+        "window_start": "2023-01-01T00:00:00Z",
+        "window_end": "2023-02-01T00:00:00Z",
+        "max_variants": 8,
+    }
+    qualification = {
+        "window": {
+            "start": "2023-01-01T00:00:00Z",
+            "end": "2024-01-01T00:00:00Z",
+        }
+    }
+    with pytest.raises(BridgeError, match="differs from review"):
+        execution_scope(value, qualification)
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "message"),
+    [
+        ("2022-12-31T00:00:00Z", "2023-01-15T00:00:00Z", "outside"),
+        ("2023-01-01T00:00:00Z", "2023-03-01T00:00:00Z", "31 days"),
+    ],
+)
+def test_commissioning_rejects_scope_expansion(start, end, message) -> None:
+    value = assignment() | {
+        "execution_class": "commissioning",
+        "window_start": start,
+        "window_end": end,
+        "max_variants": 8,
+    }
+    qualification = {
+        "window": {
+            "start": "2023-01-01T00:00:00Z",
+            "end": "2024-01-01T00:00:00Z",
+        }
+    }
+    with pytest.raises(BridgeError, match=message):
+        execution_scope(value, qualification)
 
 
 def test_independence_failure_retains_zero_trial_operational_evidence(tmp_path):
