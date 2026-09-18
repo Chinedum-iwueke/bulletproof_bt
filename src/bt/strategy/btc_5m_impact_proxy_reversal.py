@@ -171,6 +171,18 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
     ) -> list[Signal]:
         signals: list[Signal] = []
         for symbol, bar in sorted(bars_by_symbol.items()):
+            prior = self._quote_bucket.get(symbol)
+            bucket_start = bar.ts.floor("5min")
+            if (
+                prior is not None
+                and prior.start != bucket_start
+                and (
+                    not prior.complete
+                    or bucket_start != prior.start + pd.Timedelta(minutes=5)
+                )
+            ):
+                # Never turn a gap into a multi-bucket return.
+                self._previous_close.pop(symbol, None)
             completed = self._roll_quote_bucket(bar)
             position = self._position(ctx, symbol)
             if position is None:
@@ -350,7 +362,8 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
                         "counterfactual_return_shock_band": self._control_band,
                         "target_horizon_minutes": 30,
                         "target_exit_ts": target_exit_ts.isoformat(),
-                        "signal_ts": pd.Timestamp(ts).isoformat(),
+                        "signal_ts": decision_ts.isoformat(),
+                        "signal_emitted_at": pd.Timestamp(ts).isoformat(),
                         "decision_ts": decision_ts.isoformat(),
                         "decision_trace": trace,
                         "requested_risk_amount": None,

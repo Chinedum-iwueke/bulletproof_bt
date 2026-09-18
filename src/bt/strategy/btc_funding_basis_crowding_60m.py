@@ -95,18 +95,6 @@ def _funding_cycle_distance(left: int, right: int) -> float:
     return min(difference, 480 - difference) / 480.0
 
 
-def _maximum_drawdown(returns: list[float]) -> float:
-    """Return positive peak-to-trough drawdown magnitude for ordered returns."""
-    equity = 1.0
-    peak = 1.0
-    maximum = 0.0
-    for value in returns:
-        equity *= 1.0 + value
-        peak = max(peak, equity)
-        maximum = max(maximum, (peak - equity) / peak)
-    return float(maximum)
-
-
 def _complete_decisions(frame: pd.DataFrame) -> pd.DataFrame:
     """Build causal completed-5m rows; a rollover row is never an input."""
     data = frame.copy()
@@ -201,14 +189,34 @@ def funding_basis_matched_evaluation(
         )
         valid = bool(row.complete and row.target_complete and row.quote_volume_5m is not None and row.quote_volume_5m >= 1_000_000 and funding_rate is not None and percentile_value is not None and funding_source_ts is not None and funding_source_ts <= row.decision_ts and basis is not None and _number(row.mark_close) is not None and _number(row.index_close) is not None and row.trailing_return_60m == row.trailing_return_60m and row.realized_volatility_6h == row.realized_volatility_6h and row.target_return_60m == row.target_return_60m)
         stressed = bool(valid and percentile_value is not None and funding_rate > 0 and funding_rate >= percentile_value and basis > basis_threshold)
+        target_exit_ts = pd.Timestamp(row.decision_ts) + pd.Timedelta(minutes=60)
         records.append({
             "decision_ts": row.decision_ts.isoformat(), "status": "treated" if stressed else "control" if valid else "invalid",
             "valid": valid, "treated": stressed, "funding_rate": funding_rate,
             "funding_source_ts": funding_source_ts.isoformat() if funding_source_ts is not None else None,
             "funding_threshold": percentile_value, "basis": basis,
+            "basis_close_vs_index": basis,
+            "funding_percentile_threshold_value": percentile_value,
             "trailing_return_60m": row.trailing_return_60m, "realized_volatility_6h": row.realized_volatility_6h,
             "funding_cycle_position": int(row.decision_ts.hour * 60 + row.decision_ts.minute) % 480,
             "target_return_60m": row.target_return_60m,
+            "decision_trace": {
+                "reason_code": "positive_funding_and_basis_crowding",
+                "conditions": {
+                    "complete": bool(row.complete),
+                    "target_complete": bool(row.target_complete),
+                    "feature_history_available": percentile_value is not None,
+                    "funding_stress": stressed,
+                    "positive_basis": basis is not None and basis > basis_threshold,
+                },
+            },
+            "stop_price": _number(row.close) * 1.03 if _number(row.close) is not None else None,
+            "target_exit_ts": target_exit_ts.isoformat(),
+            "target_horizon_minutes": 60,
+            "requested_risk_amount": None,
+            "risk_utilization_pct": None,
+            "under_risked_trade": None,
+            "risk_metadata_authority": "bt.risk.risk_engine.RiskEngine",
         })
         # The feature contract is a decision-row window, not an observation
         # window. Missing point-in-time funding must occupy its row and make
@@ -252,11 +260,6 @@ def funding_basis_matched_evaluation(
         "positive_trailing_return": sum(r["trailing_return_60m"] > 0 for r in treated),
         "nonpositive_trailing_return": sum(r["trailing_return_60m"] <= 0 for r in treated),
     }
-    treated_net_returns = [
-        -float(item["target_return_60m"]) - 2.0 * cost_bps / 10_000.0
-        for item in sorted(treated, key=lambda value: value["decision_ts"])
-    ]
-    maximum_drawdown = _maximum_drawdown(treated_net_returns)
     supported = (
         len(pairs) >= minimum_support
         and min(directional_support.values(), default=0) >= 10
@@ -278,7 +281,6 @@ def funding_basis_matched_evaluation(
         "confidence_interval_95": {"lower": mean - 1.96 * standard_error, "upper": upper},
         "confidence_interval_method": "overlap_component_cluster_robust_60m",
         "doubled_cost_treated_minus_control": doubled_cost_difference,
-        "maximum_drawdown": maximum_drawdown,
         "directional_support": directional_support,
         "passed": outcome == "positive",
     }
@@ -432,7 +434,8 @@ class BtcFundingBasisCrowding60mStrategy(Strategy):
                 "funding_percentile_threshold_value": funding_threshold,
                 "target_horizon_minutes": 60,
                 "target_exit_ts": (decision_ts + pd.Timedelta(minutes=60)).isoformat(),
-                "signal_ts": signal_ts.isoformat(),
+                "signal_ts": decision_ts.isoformat(),
+                "signal_emitted_at": signal_ts.isoformat(),
                 "decision_ts": decision_ts.isoformat(),
                 "requested_risk_amount": None,
                 "risk_utilization_pct": None,

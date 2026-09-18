@@ -455,13 +455,28 @@ def representation(
     # Split boundaries use decision opportunities, never entry fills.
     if decision_timeframe == "1m":
         decisions = ordered["ts"] + pd.Timedelta(minutes=1)
+        audit_rows = ordered
+        audit_decisions = decisions
     else:
-        ordered = complete_timeframe_bars(ordered, decision_timeframe)
-        if ordered.empty:
+        complete_rows = complete_timeframe_bars(ordered, decision_timeframe)
+        if complete_rows.empty:
             raise BridgeError("representation has no complete decision rows")
-        decisions = ordered["ts"] + pd.Timedelta(
-            minutes=timeframe_minutes(decision_timeframe)
+        interval = pd.Timedelta(minutes=timeframe_minutes(decision_timeframe))
+        first_decision = ordered["ts"].min().floor(interval) + interval
+        last_decision = ordered["ts"].max().floor(interval) + interval
+        # Split membership is defined on the expected decision grid. Missing or
+        # incomplete buckets remain invalid opportunities and cannot shift a
+        # validation/test boundary.
+        decisions = pd.Series(
+            pd.date_range(
+                first_decision,
+                last_decision,
+                freq=interval,
+                tz="UTC",
+            )
         )
+        audit_rows = complete_rows
+        audit_decisions = complete_rows["ts"] + interval
     first, last = decisions.iloc[0], decisions.iloc[-1]
     split_one = decisions.iloc[len(decisions) * 6 // 10]
     split_two = decisions.iloc[len(decisions) * 8 // 10]
@@ -473,13 +488,13 @@ def representation(
     )
     if validation_index >= len(decisions) or test_index >= len(decisions):
         raise BridgeError("evaluation window is too short for its purge/embargo contract")
-    audit = ordered.assign(
-        decision_at=decisions,
+    audit = audit_rows.assign(
+        decision_at=audit_decisions,
         membership_known_at=first,
         membership_valid_from=first,
-        close_feature=ordered["close"],
-        observed_at=decisions,
-        available_at=decisions,
+        close_feature=audit_rows["close"],
+        observed_at=audit_decisions,
+        available_at=audit_decisions,
     )
     contract = RepresentationContract(
         contract_id=f"alpha002-{assignment['question_digest'][:16]}",
@@ -926,8 +941,12 @@ def execute_registered(
             )
             for variant in variants
         ]
-        for item in validation:
+        for index, item in enumerate(validation):
             item["evaluation_partition"] = "validation"
+            item["maximum_drawdown"] = float(
+                results[index].get("max_drawdown_r", 0.0)
+            )
+            item["maximum_drawdown_authority"] = "classic_engine_canonical_R"
             item["record_digest"] = digest(item)
         selected_index = select_funding_basis_variant(validation)
         selection_metric = "validation_treated_minus_control_mean"
@@ -1005,6 +1024,12 @@ def execute_registered(
     )
     if heldout_evaluation is not None:
         heldout_evaluation["evaluation_partition"] = "test"
+        heldout_evaluation["maximum_drawdown"] = float(
+            results[selected_index].get("max_drawdown_r", 0.0)
+        )
+        heldout_evaluation["maximum_drawdown_authority"] = (
+            "classic_engine_canonical_R"
+        )
         heldout_evaluation["record_digest"] = digest(heldout_evaluation)
     unsupported_validation = None
     if is_funding_basis and selected_index is None:
