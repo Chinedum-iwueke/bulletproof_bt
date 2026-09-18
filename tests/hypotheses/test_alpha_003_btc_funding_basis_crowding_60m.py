@@ -59,8 +59,8 @@ def test_contract_is_frozen_classic_only_and_admitted() -> None:
     assert contract.materialize_grid() == contract.materialize_grid()
     assert len(contract.materialize_grid()) == 4
     raw = yaml.safe_load(YAML_PATH.read_text())
-    assert raw["version"] == "1.1.0"
-    assert raw["costs"]["delay_bars"] == 0
+    assert raw["version"] == "1.2.0"
+    assert raw["costs"]["delay_bars"] == 1
     assert raw["immutable_contract"]["question"] == QUESTION
     assert raw["evaluation"]["selection_metric"] == "validation_treated_minus_control_mean"
     assert raw["evaluation"]["outcome_retention"] == ["positive", "negative", "invalid", "failed"]
@@ -136,7 +136,7 @@ def test_missing_funding_occupies_its_decision_row_in_percentile_window(
     )
 
     assert result["decision_records"][-1]["funding_threshold"] is None
-    assert result["decision_records"][-1]["status"] == "control"
+    assert result["decision_records"][-1]["status"] == "invalid"
 
 
 def test_incomplete_target_is_invalid_and_all_outcomes_are_retained() -> None:
@@ -361,6 +361,19 @@ def test_missing_basis_is_invalid_not_a_control(monkeypatch) -> None:
     assert result["decision_records"][0]["status"] == "invalid"
 
 
+def test_unavailable_funding_percentile_is_invalid_not_a_control() -> None:
+    result = funding_basis_matched_evaluation(
+        _frame(600),
+        params={"funding_percentile_threshold": .95, "basis_threshold_bps": 0.0},
+    )
+    assert result["decision_records"]
+    assert all(
+        item["status"] == "invalid"
+        for item in result["decision_records"]
+        if item["funding_threshold"] is None
+    )
+
+
 def test_funding_observed_before_its_source_time_is_not_available() -> None:
     frame = _frame(10)
     frame["funding_source_ts"] = frame["ts"] + pd.Timedelta(hours=1)
@@ -435,11 +448,9 @@ def test_native_fixed_stop_is_detected_then_exits_on_next_bar() -> None:
         "target_exit_ts": (start + pd.Timedelta(hours=1)).isoformat(),
     }}}
     breached = Bar(start, "BTCUSDT", 100.0, 104.0, 99.0, 101.0, 1.0, {"quote_volume": 1_000_000.0})
-    assert strategy.on_bars(start, {"BTCUSDT": breached}, {"BTCUSDT"}, {"positions": position}) == []
-    next_ts = start + pd.Timedelta(minutes=1)
-    next_bar = Bar(next_ts, "BTCUSDT", 101.0, 102.0, 100.0, 101.0, 1.0, {"quote_volume": 1_000_000.0})
-    exits = strategy.on_bars(next_ts, {"BTCUSDT": next_bar}, {"BTCUSDT"}, {"positions": position})
+    exits = strategy.on_bars(start, {"BTCUSDT": breached}, {"BTCUSDT"}, {"positions": position})
     assert len(exits) == 1
+    assert exits[0].ts == start
     assert exits[0].side == Side.BUY
     assert exits[0].metadata["exit_reason"] == "fixed_3pct_stop_breached"
 
@@ -489,7 +500,7 @@ def test_classic_engine_executes_fills_costs_exit_and_trade_metadata(tmp_path: P
         universe=UniverseEngine(min_history_bars=1, lookback_bars=1, min_avg_volume=0.0, lag_bars=0),
         strategy=strategy,
         risk=RiskEngine(max_positions=1, config={"risk": {"mode": "r_fixed", "r_per_trade": .005, "stop": {}}}),
-        execution=ExecutionModel(fee_model=FeeModel(maker_fee_bps=6, taker_fee_bps=6), slippage_model=SlippageModel(k=.0002), delay_bars=0),
+        execution=ExecutionModel(fee_model=FeeModel(maker_fee_bps=6, taker_fee_bps=6), slippage_model=SlippageModel(k=.0002), delay_bars=1),
         portfolio=Portfolio(initial_cash=10_000, max_leverage=1),
         decisions_writer=JsonlWriter(run / "decisions.jsonl"),
         fills_writer=JsonlWriter(run / "fills.jsonl"),
@@ -557,9 +568,9 @@ def test_execute_registered_retains_per_variant_truth_and_finalized_bundles(
         assignment, ROOT, tmp_path / "output", max_workers=1
     )
     assert result["disposition"] == "native_execution_complete"
-    assert result["alpha_campaign_attempt"]["outcome"] == "failed"
-    assert result["alpha_campaign_attempt"]["failure_stage"] == "truth_gate"
-    assert result["alpha_campaign_attempt"]["gate_report"]["point_in_time_valid"] is True
+    assert result["alpha_campaign_attempt"]["outcome"] == "invalid"
+    assert result["alpha_campaign_attempt"]["failure_stage"] is None
+    assert result["alpha_campaign_attempt"]["gate_report"]["point_in_time_valid"] is False
     assert result["alpha_campaign_attempt"]["gate_report"]["out_of_sample_evaluated"] is False
     assert result["alpha_campaign_attempt"]["gate_report"]["cost_stress_evaluated"] is False
     assert result["publication_envelope"]["trial"]["held_out_evaluation"] is None

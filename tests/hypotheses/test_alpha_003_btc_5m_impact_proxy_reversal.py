@@ -50,9 +50,14 @@ def _assignment() -> dict:
     }
 
 
-def _bar(ts: pd.Timestamp, *, quote_volume: float | None = 2_000_000.0) -> Bar:
+def _bar(
+    ts: pd.Timestamp,
+    *,
+    quote_volume: float | None = 2_000_000.0,
+    close: float = 100.0,
+) -> Bar:
     extra = {} if quote_volume is None else {"quote_volume": quote_volume}
-    return Bar(ts, "BTCUSDT", 100.0, 101.0, 99.0, 100.0, 1.0, extra)
+    return Bar(ts, "BTCUSDT", close, close + 1.0, close - 1.0, close, 1.0, extra)
 
 
 def _closed(ts: pd.Timestamp, close: float, *, complete: bool = True) -> HTFBar:
@@ -68,36 +73,21 @@ def _run_returns(strategy, returns: list[float], *, tradeable=True, with_quote=T
     outputs = []
     close = 100.0
     start = pd.Timestamp("2023-01-01T00:00:00Z")
-    closed = None
     for index, value in enumerate(returns):
         bucket_start = start + pd.Timedelta(minutes=5 * index)
-        if closed is not None:
-            outputs.extend(strategy.on_bars(
-                bucket_start,
-                {"BTCUSDT": _bar(bucket_start, quote_volume=400_000.0 if with_quote else None)},
-                {"BTCUSDT"} if tradeable else set(),
-                {"positions": {}, "htf": {"5m": {"BTCUSDT": closed}}},
-            ))
-            minute_start = 1
-        else:
-            minute_start = 0
-        for minute in range(minute_start, 5):
+        close *= 1.0 + value
+        for minute in range(5):
             ts = bucket_start + pd.Timedelta(minutes=minute)
             outputs.extend(strategy.on_bars(
                 ts,
-                {"BTCUSDT": _bar(ts, quote_volume=400_000.0 if with_quote else None)},
+                {"BTCUSDT": _bar(
+                    ts,
+                    quote_volume=400_000.0 if with_quote else None,
+                    close=close,
+                )},
                 {"BTCUSDT"} if tradeable else set(),
                 {"positions": {}, "htf": {"5m": {}}},
             ))
-        close *= 1.0 + value
-        closed = _closed(bucket_start + pd.Timedelta(minutes=5), close)
-    rollover = start + pd.Timedelta(minutes=5 * len(returns))
-    outputs.extend(strategy.on_bars(
-        rollover,
-        {"BTCUSDT": _bar(rollover, quote_volume=400_000.0 if with_quote else None)},
-        {"BTCUSDT"} if tradeable else set(),
-        {"positions": {}, "htf": {"5m": {"BTCUSDT": closed}}},
-    ))
     return outputs
 
 
@@ -143,8 +133,8 @@ def test_yaml_grid_and_admission_are_deterministic_and_classic_only() -> None:
     assert len({item["config_hash"] for item in one}) == 8
     assert contract.schema.execution_semantics["required_extra_columns"] == ["quote_volume"]
     raw_contract = yaml.safe_load(YAML_PATH.read_text(encoding="utf-8"))
-    assert raw_contract["version"] == "1.1.0"
-    assert raw_contract["costs"]["delay_bars"] == 0
+    assert raw_contract["version"] == "1.2.0"
+    assert raw_contract["costs"]["delay_bars"] == 1
     assert raw_contract["immutable_contract"]["resampling_policy"] == (
         "left_closed_left_labeled_complete_bars"
     )
@@ -198,7 +188,7 @@ def test_future_mutation_cannot_change_prior_decisions() -> None:
     assert before_first == before_second
 
 
-def test_repeated_or_incomplete_htf_context_does_not_mutate_signal_history() -> None:
+def test_htf_context_cannot_override_native_completed_bar_history() -> None:
     strategy = Btc5mImpactProxyReversalStrategy(
         impact_proxy_threshold=0.75, normalization_window=2
     )
@@ -206,12 +196,12 @@ def test_repeated_or_incomplete_htf_context_does_not_mutate_signal_history() -> 
     close = 100.0
     latest = None
     signals = []
-    # The engine exposes one newly closed 5m bar at each bucket rollover and
-    # retains it in context for the four intervening 1m events.
-    for minute in range(111):
+    # Native reconstruction is authoritative; even a corrupt HTF context cannot
+    # alter the decision made on the fifth completed source row.
+    for minute in range(110):
         ts = start + pd.Timedelta(minutes=minute)
-        if minute and minute % 5 == 0:
-            close *= 1.10 if minute == 110 else 1.001
+        if minute % 5 == 0:
+            close *= 1.10 if minute == 105 else 1.001
             latest = _closed(ts, close)
         context_bar = latest
         if minute == 109 and latest is not None:
@@ -221,13 +211,16 @@ def test_repeated_or_incomplete_htf_context_does_not_mutate_signal_history() -> 
             ctx["htf"]["5m"]["BTCUSDT"] = context_bar
         signals.extend(strategy.on_bars(
             ts,
-            {"BTCUSDT": _bar(ts, quote_volume=400_000.0)},
-            {"BTCUSDT"} if minute == 110 else set(),
+            {"BTCUSDT": _bar(ts, quote_volume=400_000.0, close=close)},
+            {"BTCUSDT"} if minute == 109 else set(),
             ctx,
         ))
     entries = [item for item in signals if not item.metadata.get("is_exit")]
     assert len(entries) == 1
-    assert entries[0].ts == start + pd.Timedelta(minutes=110)
+    assert entries[0].ts == start + pd.Timedelta(minutes=109)
+    assert entries[0].metadata["decision_ts"] == (
+        start + pd.Timedelta(minutes=110)
+    ).isoformat()
     assert entries[0].metadata["quote_volume_5m"] == pytest.approx(2_000_000.0)
     assert entries[0].metadata["signal_return_5m"] == pytest.approx(0.10)
     assert entries[0].metadata["quote_volume_bucket_ts"] == (
@@ -286,7 +279,7 @@ def test_exit_state_begins_only_after_fill_and_lands_on_exact_target() -> None:
     strategy = Btc5mImpactProxyReversalStrategy()
     target = pd.Timestamp("2023-01-01T00:30:00Z")
     before = target - pd.Timedelta(minutes=2)
-    submit = target
+    submit = target - pd.Timedelta(minutes=1)
     bar = _bar(before)
 
     # Merely emitting an entry cannot manufacture active-trade state. With no
@@ -320,7 +313,7 @@ def test_exit_state_begins_only_after_fill_and_lands_on_exact_target() -> None:
     assert exits[0].side == Side.BUY
     assert exits[0].metadata["target_exit_ts"] == target.isoformat()
     assert exits[0].metadata["exit_submission_ts"] == submit.isoformat()
-    assert exits[0].metadata["execution_delay_minutes"] == 0
+    assert exits[0].metadata["execution_delay_minutes"] == 1
     assert strategy.on_bars(
         target,
         {"BTCUSDT": _bar(target)},
@@ -337,10 +330,9 @@ def test_fixed_at_entry_stop_is_detected_then_exits_on_next_bar() -> None:
         "target_exit_ts": (start + pd.Timedelta(minutes=30)).isoformat(),
     }}}
     breached = Bar(start, "BTCUSDT", 100.0, 100.5, 98.5, 99.5, 1.0, {"quote_volume": 1_000_000.0})
-    assert strategy.on_bars(start, {"BTCUSDT": breached}, {"BTCUSDT"}, {"positions": position, "htf": {"5m": {}}}) == []
-    next_bar = _bar(start + pd.Timedelta(minutes=1))
-    exits = strategy.on_bars(next_bar.ts, {"BTCUSDT": next_bar}, {"BTCUSDT"}, {"positions": position, "htf": {"5m": {}}})
+    exits = strategy.on_bars(start, {"BTCUSDT": breached}, {"BTCUSDT"}, {"positions": position, "htf": {"5m": {}}})
     assert len(exits) == 1
+    assert exits[0].ts == start
     assert exits[0].side == Side.SELL
     assert exits[0].metadata["exit_reason"] == "fixed_completed_5m_atr_stop_breached"
     assert exits[0].metadata["stop_detection_policy"] == "completed_1m_then_next_bar"

@@ -4,7 +4,7 @@ metadata:
   description: "Does an extreme point-in-time BTCUSDT 5m absolute return per unit quote_volume predict opposite-direction close-to-close return over the next 30m?"
   research_layer: "ALPHA"
   hypothesis_family: "impact_proxy_reversal"
-  version: "1.1.0"
+  version: "1.2.0"
   author: "bulletproof_bt"
   created_at: "2026-09-18T00:00:00Z"
 hypothesis_id: "ALPHA-003-BTC-IMPACT-PROXY-REVERSAL"
@@ -12,7 +12,7 @@ title: "BTC liquidity-stress proxy reversal"
 description: "Does an extreme point-in-time BTCUSDT 5m absolute return per unit quote_volume predict opposite-direction close-to-close return over the next 30m?"
 research_layer: "ALPHA"
 hypothesis_family: "impact_proxy_reversal"
-version: "1.1.0"
+version: "1.2.0"
 status: "draft"
 immutable_contract:
   question: "Does an extreme point-in-time BTCUSDT 5m absolute return per unit quote_volume predict opposite-direction close-to-close return over the next 30m?"
@@ -78,8 +78,7 @@ costs:
   taker_fee_bps: 6.0
   slippage_bps: 2.0
   spread_bps: 1.0
-  # The rollover row is already the next executable 1m bar.
-  delay_bars: 0
+  delay_bars: 1
   robustness_multiplier: 2.0
 data_availability:
   dataset_kind: "research_panel"
