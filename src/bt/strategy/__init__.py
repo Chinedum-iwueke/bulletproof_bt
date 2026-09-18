@@ -56,6 +56,7 @@ from bt.strategy.l1_h9_momentum_breakout import L1H9MomentumBreakoutStrategy  # 
 from bt.strategy.research_graph_v1 import ResearchGraphV1Strategy  # noqa: E402
 from bt.strategy.alpha_weekend_momentum import AlphaWeekendMomentumStrategy  # noqa: E402
 from bt.strategy.btc_5m_impact_proxy_reversal import Btc5mImpactProxyReversalStrategy  # noqa: E402
+from bt.strategy.btc_funding_basis_crowding_60m import BtcFundingBasisCrowding60mStrategy  # noqa: E402
 from bt.strategy.l1_h10a_mean_reversion_small_tp import L1H10AMeanReversionSmallTPStrategy  # noqa: E402
 from bt.strategy.l1_h10b_breakout_scalping import L1H10BBreakoutScalpingStrategy  # noqa: E402
 from bt.strategy.l1_h11_quality_filtered_continuation import L1H11QualityFilteredContinuationStrategy  # noqa: E402
@@ -89,6 +90,7 @@ __all__ = [
     "L1H9MomentumBreakoutStrategy",
     "AlphaWeekendMomentumStrategy",
     "Btc5mImpactProxyReversalStrategy",
+    "BtcFundingBasisCrowding60mStrategy",
     "L1H10AMeanReversionSmallTPStrategy",
     "L1H10BBreakoutScalpingStrategy",
     "L1H11QualityFilteredContinuationStrategy",

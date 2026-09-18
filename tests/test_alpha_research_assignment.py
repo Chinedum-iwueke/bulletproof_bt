@@ -23,6 +23,8 @@ from scripts.run_alpha_research_assignment import (
     representation,
     record_alpha_memory,
     retain_bundle,
+    prepare_execution_output,
+    finalize_execution_output,
 )
 
 
@@ -69,6 +71,24 @@ def test_unreviewed_qualification_stops_before_compute_or_output_creation(tmp_pa
     with pytest.raises(BridgeError, match="no compute started"):
         execute_registered(value, tmp_path, output)
     assert not output.exists()
+
+
+def test_interrupted_execution_is_preserved_and_completed_retry_is_idempotent(
+    tmp_path,
+) -> None:
+    value = assignment()
+    output = tmp_path / "attempt"
+    assert prepare_execution_output(output, value) is None
+    (output / "partial-artifact.json").write_text("{}\n", encoding="utf-8")
+
+    assert prepare_execution_output(output, value) is None
+    partials = list(tmp_path.glob(".attempt.partial-*"))
+    assert len(partials) == 1
+    assert (partials[0] / "partial-artifact.json").is_file()
+
+    result = {"disposition": "native_execution_complete", "value": 7}
+    finalize_execution_output(output, value, result)
+    assert prepare_execution_output(output, value) == result
 
 
 def test_commissioning_scope_is_review_contained_and_non_qualifying() -> None:

@@ -1,0 +1,55 @@
+{
+  "schema_version": "hypothesis_card_v1",
+  "card_id": "alpha-003-btc-funding-basis-crowding-7267bed217cb",
+  "program_id": "alpha-003",
+  "version": 1,
+  "status": "draft",
+  "title": "BTC funding-basis crowding and subsequent 60m return",
+  "claim": "Does point-in-time positive BTCUSDT funding stress combined with a positive completed-bar mark-to-index basis predict a lower BTCUSDT close-to-close return over the next 60m than matched controls?",
+  "intuition": "Joint positive funding stress and positive completed-bar basis may identify crowded leveraged-long positioning associated with subsequent unwind pressure.",
+  "market_mechanism": "This is predictive association only; the admitted panel cannot identify order-book or liquidation causality.",
+  "engine_strategy_name": "btc_funding_basis_crowding_60m",
+  "engine_hypothesis_template": "research/hypotheses/alpha_003_btc_funding_basis_crowding_60m.yaml",
+  "features": [
+    {"id": "funding_stress", "source": "research_panel", "source_field": "funding_rate", "transform": "percentile_rank", "window": 25920, "lag": 0, "join": "backward"},
+    {"id": "completed_basis", "source": "research_panel", "source_field": "basis_close_vs_index", "transform": "identity", "window": 1, "lag": 0, "join": "backward"},
+    {"id": "trailing_return_60m", "source": "ohlcv", "source_field": "close", "transform": "return", "window": 12, "lag": 0},
+    {"id": "realized_volatility_6h", "source": "ohlcv", "source_field": "close", "transform": "volatility", "window": 72, "lag": 0}
+  ],
+  "gates": [
+    {"left": "funding_stress", "op": ">=", "right_param": "funding_percentile_threshold"},
+    {"left": "completed_basis", "op": ">", "right_param": "basis_threshold_bps"}
+  ],
+  "entry": {"direction": "short", "timing": "strict_completed_5m_close_submit_next_bar_execution", "pyramiding": false, "flip": false},
+  "exit": {"type": "fixed_stop_time_exit", "target": "close-to-close return from decision boundary to exactly 60 minutes later", "max_hold_minutes": 60, "stop_model": "fixed_3pct_from_completed_close"},
+  "sizing": {"mode": "risk_at_stop", "r_per_trade": 0.005, "cap_policy": "allow_clip_with_truth", "min_risk_utilization_pct": 0.1, "report_under_risked_trades": true, "stop_required": true},
+  "risk_controls": {"authority": "engine", "max_positions": 1, "max_notional_pct_equity": 0.25, "max_gross_notional_pct_equity": 0.25, "max_leverage": 1.0, "unresolved_stops": "reject_entry", "forbid_pyramiding": true, "forbid_flips": true, "no_capital_research": true},
+  "parameters": {"funding_percentile_threshold": [0.95, 0.99], "basis_threshold_bps": [0.0, 1.0]},
+  "data_requirements": ["research_panel"],
+  "logging_requirements": ["decision_trace", "stop_price", "funding_rate", "funding_source_ts", "basis_close_vs_index", "funding_percentile_threshold_value", "target_exit_ts", "target_horizon_minutes", "requested_risk_amount", "risk_utilization_pct", "under_risked_trade"],
+  "evaluation": {
+    "tiers": ["Tier2B"],
+    "metrics": ["matched_support", "treated_support", "control_support", "treated_minus_control_mean", "confidence_interval_95", "doubled_cost_treated_minus_control", "maximum_drawdown"],
+    "split": {"method": "chronological_decision_row_fraction", "train_fraction": 0.6, "validation_fraction": 0.2, "test_fraction": 0.2, "boundary_policy": "next_row_after_prior_partition", "purge_seconds": 3600, "embargo_seconds": 3600},
+    "native_implementation": {"matched_control": {"path": "src/bt/strategy/btc_funding_basis_crowding_60m.py", "function": "funding_basis_matched_evaluation"}}
+  },
+  "falsification_criteria": [
+    "Reject unless the held-out stressed-minus-control mean next-60m return has its 95% confidence interval entirely below zero.",
+    "Reject if treated or matched-control support is below 30 or directional support is insufficient.",
+    "Reject incomplete 5m decisions, non-contiguous targets, missing liquidity, or future funding source timestamps.",
+    "Reject if matching on past return, volatility and funding-cycle position removes the effect.",
+    "Reject if doubled-cost treated-minus-control difference is not negative."
+  ],
+  "expected_failure_modes": ["trend continuation", "funding-cycle confounding", "volatility-regime confounding", "microstructure bounce", "transaction-cost sensitivity"],
+  "execution_semantics": {"resampling_interval": "left_closed_right_open", "resampling_label": "bucket_start", "strict_utc": true, "missing_bars": "no_decision", "interpolation": "forbidden", "htf_completeness": "closed_only", "aux_join_direction": "backward", "execution_authority": "engine", "risk_authority": "engine", "accounting": "engine_canonical_R", "signal_timeframe": "5m", "base_execution_timeframe": "1m", "base_data_frequency_expected": "1m", "exit_monitoring_timeframe": "1m", "signal_bar_policy": "strict_completed_bar_only", "stop_model": "fixed_3pct_from_completed_close", "stop_update_policy": "frozen_at_entry", "tp_update_policy": "none", "hold_time_unit": "wall_clock_minutes_after_signal_close"},
+  "source_citations": [],
+  "field_provenance": {
+    "claim": {"state": "recommended", "confidence": 1.0, "basis": "Exact admitted Research Intelligence question; no proxy substitution."},
+    "entry": {"state": "recommended", "confidence": 1.0, "basis": "Point-in-time joint funding stress and positive completed basis."},
+    "exit": {"state": "recommended", "confidence": 1.0, "basis": "Exact wall-clock 60m close-to-close target."}
+  },
+  "dataset_binding": {"dataset_build_id": "fbb81c42-953b-42fb-8fe1-89c75b45e1aa", "dataset_digest": "9a211d8818c5ab8ec82ad5a7d38957e63eb387ea83d4b00541922a0eeca4aacb", "venue": "bybit", "instrument": "BTCUSDT", "timeframe": "1m"},
+  "execution_window": {"start": "2023-01-01T00:00:00Z", "end": "2024-01-01T00:00:00Z"},
+  "immutable_contract": {"tier": "Tier2B", "maximum_variants": 4, "costs": {"taker_fee_bps": 6.0, "slippage_bps": 2.0, "spread_bps": 1.0, "delay_bars": 1, "double_cost_required": true}, "authority": {"capital": false, "orders": false, "production_promotion": false, "self_approval": false}},
+  "research_question": "Does point-in-time positive BTCUSDT funding stress combined with a positive completed-bar mark-to-index basis predict a lower BTCUSDT close-to-close return over the next 60m than matched controls?"
+}
