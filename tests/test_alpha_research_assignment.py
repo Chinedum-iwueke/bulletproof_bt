@@ -351,7 +351,7 @@ def test_representation_uses_complete_five_minute_decision_rows() -> None:
     assert pd.Timestamp(contract.split.train_start) == timestamps[0] + pd.Timedelta(minutes=5)
 
 
-def test_incomplete_five_minute_bucket_cannot_shift_split_boundaries() -> None:
+def test_incomplete_five_minute_bucket_is_excluded_from_decision_row_splits() -> None:
     timestamps = pd.date_range("2026-01-01T00:00:00Z", periods=240, freq="1min")
     frame = pd.DataFrame(
         {
@@ -369,7 +369,13 @@ def test_incomplete_five_minute_bucket_cannot_shift_split_boundaries() -> None:
         assignment(), frame.drop(index=100), "f" * 64,
         purge_seconds=1800, embargo_seconds=1800, decision_timeframe="5m",
     )
-    assert missing.split == complete.split
+    assert missing.split != complete.split
+    assert pd.Timestamp(missing.split.train_end) == (
+        pd.Timestamp(complete.split.train_end) + pd.Timedelta(minutes=5)
+    )
+    assert pd.Timestamp(missing.split.validation_start) == (
+        pd.Timestamp(complete.split.validation_start) + pd.Timedelta(minutes=5)
+    )
 
 
 def test_impact_proxy_evaluation_uses_complete_causal_five_minute_bars() -> None:

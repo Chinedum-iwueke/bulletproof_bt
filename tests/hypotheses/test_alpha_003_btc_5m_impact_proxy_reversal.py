@@ -133,7 +133,13 @@ def test_yaml_grid_and_admission_are_deterministic_and_classic_only() -> None:
     assert len({item["config_hash"] for item in one}) == 8
     assert contract.schema.execution_semantics["required_extra_columns"] == ["quote_volume"]
     raw_contract = yaml.safe_load(YAML_PATH.read_text(encoding="utf-8"))
-    assert raw_contract["version"] == "1.3.0"
+    assert raw_contract["version"] == "1.4.0"
+    assert (
+        raw_contract["evaluation"]["native_implementation"]["split_binding"][
+            "split_denominator"
+        ]
+        == "actual_strict_complete_5m_decision_rows"
+    )
     assert raw_contract["costs"]["delay_bars"] == 1
     assert raw_contract["immutable_contract"]["resampling_policy"] == (
         "left_closed_left_labeled_complete_bars"

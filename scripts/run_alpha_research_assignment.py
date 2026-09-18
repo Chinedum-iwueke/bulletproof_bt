@@ -462,18 +462,12 @@ def representation(
         if complete_rows.empty:
             raise BridgeError("representation has no complete decision rows")
         interval = pd.Timedelta(minutes=timeframe_minutes(decision_timeframe))
-        first_decision = ordered["ts"].min().floor(interval) + interval
-        last_decision = ordered["ts"].max().floor(interval) + interval
-        # Split membership is defined on the expected decision grid. Missing or
-        # incomplete buckets remain invalid opportunities and cannot shift a
-        # validation/test boundary.
-        decisions = pd.Series(
-            pd.date_range(
-                first_decision,
-                last_decision,
-                freq=interval,
-                tz="UTC",
-            )
+        # The registered split contract is a fraction of actual decision rows.
+        # Missing or incomplete buckets are not decision opportunities and must
+        # not enter the train/validation/test denominator.
+        decisions = (
+            complete_rows["ts"].drop_duplicates().sort_values().reset_index(drop=True)
+            + interval
         )
         audit_rows = complete_rows
         audit_decisions = complete_rows["ts"] + interval
