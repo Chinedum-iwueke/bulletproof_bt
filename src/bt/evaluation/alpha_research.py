@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -227,22 +228,39 @@ def impact_proxy_evaluation(
     ].copy()
     extreme = evaluated.loc[evaluated["impact_proxy"] >= evaluated["threshold_value"]]
     controls: list[float] = []
+    paired_differences: list[float] = []
+    used_control_indices: set[int] = set()
     for row in extreme.itertuples(index=False):
         magnitude = abs(float(row.signal_return))
         low, high = magnitude * (1.0 - band), magnitude * (1.0 + band)
         candidates = evaluated.loc[
             (evaluated["symbol"] == row.symbol)
             & (evaluated["ts"] != row.ts)
+            & (~evaluated.index.isin(used_control_indices))
             & (evaluated["impact_proxy"] < evaluated["threshold_value"])
             & (evaluated["signal_return"].abs().between(low, high))
             & ((evaluated["signal_return"] > 0) == (row.signal_return > 0))
         ]
         if not candidates.empty:
             distance = (candidates["signal_return"].abs() - magnitude).abs()
-            controls.append(float(candidates.loc[distance.idxmin(), "signed_reversal"]))
+            control_index = int(distance.idxmin())
+            used_control_indices.add(control_index)
+            control_return = float(candidates.loc[control_index, "signed_reversal"])
+            controls.append(control_return)
+            paired_differences.append(float(row.signed_reversal) - control_return)
     extreme_reversal = pd.to_numeric(extreme["signed_reversal"], errors="coerce").dropna()
     control_mean = float(pd.Series(controls, dtype=float).mean()) if controls else 0.0
     extreme_mean = float(extreme_reversal.mean()) if len(extreme_reversal) else 0.0
+    paired = pd.Series(paired_differences, dtype=float)
+    paired_mean = float(paired.mean()) if len(paired) else 0.0
+    paired_standard_error = (
+        float(paired.std(ddof=1) / math.sqrt(len(paired))) if len(paired) > 1 else 0.0
+    )
+    paired_lower_95 = paired_mean - 1.96 * paired_standard_error
+    minimum_matched_pairs = 30
+    statistically_outperformed = bool(
+        len(paired) >= minimum_matched_pairs and paired_lower_95 > 0.0
+    )
     matched = {
         "extreme_observations": int(len(extreme_reversal)),
         "matched_control_observations": len(controls),
@@ -250,9 +268,33 @@ def impact_proxy_evaluation(
         "control_mean_signed_30m_return": control_mean,
         "extreme_minus_control": extreme_mean - control_mean,
         "outperformed_control": bool(controls and extreme_mean > control_mean),
+        "control_reuse": False,
+        "paired_difference_mean": paired_mean,
+        "paired_difference_standard_error": paired_standard_error,
+        "paired_difference_lower_95": paired_lower_95,
+        "minimum_matched_pairs": minimum_matched_pairs,
+        "statistically_outperformed_control": statistically_outperformed,
     }
+    direction_observations: dict[str, dict[str, Any]] = {}
+    for direction, mask in (
+        ("long", extreme["signal_return"] < 0),
+        ("short", extreme["signal_return"] > 0),
+    ):
+        returns = pd.to_numeric(
+            extreme.loc[mask, "signed_reversal"], errors="coerce"
+        ).dropna()
+        direction_observations[direction] = {
+            "observations": int(len(returns)),
+            "mean_signed_30m_return": float(returns.mean()) if len(returns) else 0.0,
+        }
+    minimum_per_direction = 10
+    direction_gate_passed = all(
+        item["observations"] >= minimum_per_direction
+        and item["mean_signed_30m_return"] > 0.0
+        for item in direction_observations.values()
+    )
     report = {
-        "schema_version": "alpha-impact-proxy-evaluation-v1.0.0",
+        "schema_version": "alpha-impact-proxy-evaluation-v1.1.0",
         "measurement": "held-out causal predictive association; not executable PnL",
         "test_start": pd.Timestamp(test_start).isoformat(),
         "resampling": "strict complete left-labeled 5m bars from unique 1m rows",
@@ -262,8 +304,11 @@ def impact_proxy_evaluation(
             "return_shock_control_band": band,
         },
         "direction_balance": {
-            "long": int((extreme["signal_return"] < 0).sum()),
-            "short": int((extreme["signal_return"] > 0).sum()),
+            "long": direction_observations["long"]["observations"],
+            "short": direction_observations["short"]["observations"],
+            "minimum_per_direction": minimum_per_direction,
+            "per_direction": direction_observations,
+            "balanced_positive_reversal": direction_gate_passed,
         },
         "matched_return_shock_control": matched,
     }

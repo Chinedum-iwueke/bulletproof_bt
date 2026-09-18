@@ -903,9 +903,14 @@ def execute_registered(
         and scope["qualification_authority"]
         and (
             not is_impact_proxy
-            or evaluation_artifact["matched_return_shock_control"][
-                "outperformed_control"
-            ]
+            or (
+                evaluation_artifact["matched_return_shock_control"][
+                    "statistically_outperformed_control"
+                ]
+                and evaluation_artifact["direction_balance"][
+                    "balanced_positive_reversal"
+                ]
+            )
         )
     )
     failed_gates = [
@@ -923,10 +928,15 @@ def execute_registered(
         failed_gates.append("required_trade_logging")
     if not scope["qualification_authority"]:
         failed_gates.append("commissioning_run_has_no_qualification_authority")
-    if is_impact_proxy and not evaluation_artifact["matched_return_shock_control"][
-        "outperformed_control"
-    ]:
-        failed_gates.append("matched_return_shock_control")
+    if is_impact_proxy:
+        if not evaluation_artifact["matched_return_shock_control"][
+            "statistically_outperformed_control"
+        ]:
+            failed_gates.append("matched_return_shock_control_95pct_lower_bound")
+        if not evaluation_artifact["direction_balance"][
+            "balanced_positive_reversal"
+        ]:
+            failed_gates.append("positive_reversal_in_both_directions")
     gate_report = {
         "truth_certified": True,
         "point_in_time_valid": True,
