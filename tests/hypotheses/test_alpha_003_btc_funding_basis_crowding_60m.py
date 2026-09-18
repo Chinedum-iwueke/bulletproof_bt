@@ -5,6 +5,7 @@ import pandas as pd
 import yaml
 
 from bt.contracts.research_specs_v2 import canonical_hash
+from bt.core.enums import Side
 from bt.core.engine import BacktestEngine
 from bt.core.types import Bar
 from bt.data.feed import HistoricalDataFeed
@@ -58,6 +59,8 @@ def test_contract_is_frozen_classic_only_and_admitted() -> None:
     assert contract.materialize_grid() == contract.materialize_grid()
     assert len(contract.materialize_grid()) == 4
     raw = yaml.safe_load(YAML_PATH.read_text())
+    assert raw["version"] == "1.1.0"
+    assert raw["costs"]["delay_bars"] == 0
     assert raw["immutable_contract"]["question"] == QUESTION
     assert raw["evaluation"]["selection_metric"] == "validation_treated_minus_control_mean"
     assert raw["evaluation"]["outcome_retention"] == ["positive", "negative", "invalid", "failed"]
@@ -115,6 +118,8 @@ def test_missing_funding_occupies_its_decision_row_in_percentile_window(
             "funding_rate": None if index == 100 else .001,
             "funding_source_ts": None if index == 100 else decision,
             "basis": .001,
+            "mark_close": 101.0,
+            "index_close": 100.0,
             "trailing_return_60m": .01,
             "realized_volatility_6h": .02,
             "target_return_60m": -.01,
@@ -189,6 +194,8 @@ def test_negative_outcome_and_all_decision_classes_are_retained(monkeypatch) -> 
             "funding_rate": .002 if treated else .001,
             "funding_source_ts": start + pd.Timedelta(minutes=5 * index),
             "basis": .001 if treated else 0.0,
+            "mark_close": 101.0,
+            "index_close": 100.0,
             "trailing_return_60m": .01 if index % 4 < 2 else -.01,
             "realized_volatility_6h": .02,
             "target_return_60m": .01 if treated else 0.0,
@@ -223,7 +230,9 @@ def test_positive_outcome_requires_supported_disjoint_matched_windows(monkeypatc
             "quote_volume_5m": 1_250_000.0,
             "funding_rate": .001,
             "funding_source_ts": start + pd.Timedelta(minutes=5 * index),
-            "basis": 0.0,
+                "basis": 0.0,
+                "mark_close": 100.0,
+                "index_close": 100.0,
             "trailing_return_60m": 0.0,
             "realized_volatility_6h": .02,
             "target_return_60m": 0.0,
@@ -244,7 +253,9 @@ def test_positive_outcome_requires_supported_disjoint_matched_windows(monkeypatc
                 "quote_volume_5m": 1_250_000.0,
                 "funding_rate": .002 if treated else .001,
                 "funding_source_ts": decision,
-                "basis": .001 if treated else 0.0,
+                    "basis": .001 if treated else 0.0,
+                    "mark_close": 101.0,
+                    "index_close": 100.0,
                 "trailing_return_60m": (
                     .01 if treated and index % 4 == 0 else -.01 if treated else 0.0
                 ),
@@ -268,6 +279,7 @@ def test_positive_outcome_requires_supported_disjoint_matched_windows(monkeypatc
     assert result["matched_support"] == 40
     assert result["confidence_interval_95"]["upper"] < 0
     assert result["doubled_cost_treated_minus_control"] < 0
+    assert result["maximum_drawdown"] >= 0
 
 
 def test_future_mutation_cannot_change_prior_completed_decisions() -> None:
@@ -330,6 +342,8 @@ def test_missing_basis_is_invalid_not_a_control(monkeypatch) -> None:
         "funding_rate": .001,
         "funding_source_ts": pd.Timestamp("2023-01-01T05:59:00Z"),
         "basis": None,
+        "mark_close": 101.0,
+        "index_close": 100.0,
         "trailing_return_60m": .01,
         "realized_volatility_6h": .02,
         "target_return_60m": -.01,
@@ -353,6 +367,32 @@ def test_funding_observed_before_its_source_time_is_not_available() -> None:
     decisions = _complete_decisions(frame)
     assert decisions["funding_rate"].isna().all()
     assert decisions["funding_source_ts"].isna().all()
+
+
+def test_missing_raw_mark_or_index_is_invalid_even_with_derived_basis() -> None:
+    frame = _frame(80)
+    frame.loc[frame.index[-1], "mark_close"] = float("nan")
+    decisions = _complete_decisions(frame)
+    assert decisions.iloc[-1]["basis"] == .01
+    assert pd.isna(decisions.iloc[-1]["mark_close"])
+    result = funding_basis_matched_evaluation(frame, params={"funding_percentile_threshold": .95, "basis_threshold_bps": 0.0})
+    record = next(item for item in result["decision_records"] if item["decision_ts"] == decisions.iloc[-1]["decision_ts"].isoformat())
+    assert record["valid"] is False
+
+
+def test_native_history_inserts_wholly_missing_decision_rows() -> None:
+    strategy = BtcFundingBasisCrowding60mStrategy()
+    start = pd.Timestamp("2023-01-01T00:00:00Z")
+    def feed(ts: pd.Timestamp) -> None:
+        strategy.on_bars(ts, {"BTCUSDT": Bar(ts, "BTCUSDT", 100.0, 101.0, 99.0, 100.0, 1.0, {
+            "quote_volume": 250_000.0, "mark_close": 101.0, "index_close": 100.0,
+            "basis_close_vs_index": .01, "funding_rate": .001, "funding_source_ts": ts,
+        })}, set(), {"positions": {}})
+    for minute in range(6):
+        feed(start + pd.Timedelta(minutes=minute))
+    assert len(strategy.funding_history["BTCUSDT"]) == 1
+    feed(start + pd.Timedelta(minutes=20))
+    assert len(strategy.funding_history["BTCUSDT"]) == 4
 
 
 def test_native_strategy_does_not_evaluate_stale_bucket_after_whole_gap() -> None:
@@ -385,6 +425,23 @@ def test_native_strategy_does_not_evaluate_stale_bucket_after_whole_gap() -> Non
             strategy.on_bars(ts, {"BTCUSDT": bar}, {"BTCUSDT"}, {"positions": {}})
         )
     assert emitted == []
+
+
+def test_native_fixed_stop_is_detected_then_exits_on_next_bar() -> None:
+    strategy = BtcFundingBasisCrowding60mStrategy()
+    start = pd.Timestamp("2023-01-01T00:00:00Z")
+    position = {"BTCUSDT": {"side": "sell", "metadata": {
+        "entry_stop_price": 103.0,
+        "target_exit_ts": (start + pd.Timedelta(hours=1)).isoformat(),
+    }}}
+    breached = Bar(start, "BTCUSDT", 100.0, 104.0, 99.0, 101.0, 1.0, {"quote_volume": 1_000_000.0})
+    assert strategy.on_bars(start, {"BTCUSDT": breached}, {"BTCUSDT"}, {"positions": position}) == []
+    next_ts = start + pd.Timedelta(minutes=1)
+    next_bar = Bar(next_ts, "BTCUSDT", 101.0, 102.0, 100.0, 101.0, 1.0, {"quote_volume": 1_000_000.0})
+    exits = strategy.on_bars(next_ts, {"BTCUSDT": next_bar}, {"BTCUSDT"}, {"positions": position})
+    assert len(exits) == 1
+    assert exits[0].side == Side.BUY
+    assert exits[0].metadata["exit_reason"] == "fixed_3pct_stop_breached"
 
 
 def test_runner_selects_matched_control_evidence_not_engine_pnl() -> None:
@@ -432,7 +489,7 @@ def test_classic_engine_executes_fills_costs_exit_and_trade_metadata(tmp_path: P
         universe=UniverseEngine(min_history_bars=1, lookback_bars=1, min_avg_volume=0.0, lag_bars=0),
         strategy=strategy,
         risk=RiskEngine(max_positions=1, config={"risk": {"mode": "r_fixed", "r_per_trade": .005, "stop": {}}}),
-        execution=ExecutionModel(fee_model=FeeModel(maker_fee_bps=6, taker_fee_bps=6), slippage_model=SlippageModel(k=.0002), delay_bars=1),
+        execution=ExecutionModel(fee_model=FeeModel(maker_fee_bps=6, taker_fee_bps=6), slippage_model=SlippageModel(k=.0002), delay_bars=0),
         portfolio=Portfolio(initial_cash=10_000, max_leverage=1),
         decisions_writer=JsonlWriter(run / "decisions.jsonl"),
         fills_writer=JsonlWriter(run / "fills.jsonl"),
@@ -446,6 +503,9 @@ def test_classic_engine_executes_fills_costs_exit_and_trade_metadata(tmp_path: P
     assert not trades.empty
     assert trades.iloc[0]["funding_source_ts"] == "2023-01-01T00:04:00+00:00"
     assert float(trades.iloc[0]["fees"]) > 0
+    assert float(trades.iloc[0]["requested_risk_amount"]) > 0
+    assert float(trades.iloc[0]["risk_utilization_pct"]) > 0
+    assert str(trades.iloc[0]["under_risked_trade"]).lower() in {"true", "false"}
 
 
 def test_execute_registered_retains_per_variant_truth_and_finalized_bundles(

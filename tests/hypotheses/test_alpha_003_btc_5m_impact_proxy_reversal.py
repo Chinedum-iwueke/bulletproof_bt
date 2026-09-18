@@ -143,6 +143,8 @@ def test_yaml_grid_and_admission_are_deterministic_and_classic_only() -> None:
     assert len({item["config_hash"] for item in one}) == 8
     assert contract.schema.execution_semantics["required_extra_columns"] == ["quote_volume"]
     raw_contract = yaml.safe_load(YAML_PATH.read_text(encoding="utf-8"))
+    assert raw_contract["version"] == "1.1.0"
+    assert raw_contract["costs"]["delay_bars"] == 0
     assert raw_contract["immutable_contract"]["resampling_policy"] == (
         "left_closed_left_labeled_complete_bars"
     )
@@ -284,7 +286,7 @@ def test_exit_state_begins_only_after_fill_and_lands_on_exact_target() -> None:
     strategy = Btc5mImpactProxyReversalStrategy()
     target = pd.Timestamp("2023-01-01T00:30:00Z")
     before = target - pd.Timedelta(minutes=2)
-    submit = target - pd.Timedelta(minutes=1)
+    submit = target
     bar = _bar(before)
 
     # Merely emitting an entry cannot manufacture active-trade state. With no
@@ -318,13 +320,30 @@ def test_exit_state_begins_only_after_fill_and_lands_on_exact_target() -> None:
     assert exits[0].side == Side.BUY
     assert exits[0].metadata["target_exit_ts"] == target.isoformat()
     assert exits[0].metadata["exit_submission_ts"] == submit.isoformat()
-    assert exits[0].metadata["execution_delay_minutes"] == 1
+    assert exits[0].metadata["execution_delay_minutes"] == 0
     assert strategy.on_bars(
         target,
         {"BTCUSDT": _bar(target)},
         {"BTCUSDT"},
         {"positions": position, "htf": {"5m": {}}},
     ) == []
+
+
+def test_fixed_at_entry_stop_is_detected_then_exits_on_next_bar() -> None:
+    strategy = Btc5mImpactProxyReversalStrategy()
+    start = pd.Timestamp("2023-01-01T00:00:00Z")
+    position = {"BTCUSDT": {"side": "buy", "metadata": {
+        "entry_stop_price": 99.0,
+        "target_exit_ts": (start + pd.Timedelta(minutes=30)).isoformat(),
+    }}}
+    breached = Bar(start, "BTCUSDT", 100.0, 100.5, 98.5, 99.5, 1.0, {"quote_volume": 1_000_000.0})
+    assert strategy.on_bars(start, {"BTCUSDT": breached}, {"BTCUSDT"}, {"positions": position, "htf": {"5m": {}}}) == []
+    next_bar = _bar(start + pd.Timedelta(minutes=1))
+    exits = strategy.on_bars(next_bar.ts, {"BTCUSDT": next_bar}, {"BTCUSDT"}, {"positions": position, "htf": {"5m": {}}})
+    assert len(exits) == 1
+    assert exits[0].side == Side.SELL
+    assert exits[0].metadata["exit_reason"] == "fixed_completed_5m_atr_stop_breached"
+    assert exits[0].metadata["stop_detection_policy"] == "completed_1m_then_next_bar"
 
 
 @pytest.mark.parametrize("case", ["missing_quote", "inactive", "invalid_parameter"])
