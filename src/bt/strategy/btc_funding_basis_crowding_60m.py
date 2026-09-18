@@ -474,28 +474,28 @@ class BtcFundingBasisCrowding60mStrategy(Strategy):
                 }))
                 self.exit_sent.add(symbol)
 
+            bucket_start = bar.ts.floor("5min")
+            current = self.buckets.get(symbol)
+            if current is not None and current.start != bucket_start and current.rows:
+                output.extend(self._evaluate_bucket(
+                    symbol, current, signal_ts=ts, decision_ts=bucket_start,
+                    contiguous=(
+                        current.start + pd.Timedelta(minutes=5) == bucket_start
+                    ),
+                    tradeable=tradeable,
+                    position=position,
+                ))
+
+            # The rollover bar establishes that the prior left-closed bucket is
+            # complete, but none of its values may enter that prior decision.
             extra = bar.extra if isinstance(bar.extra, Mapping) else {}
             source = pd.Timestamp(extra["funding_source_ts"]) if extra.get("funding_source_ts") is not None else None
             rate = _number(extra.get("funding_rate"))
             if source is not None and rate is not None and source <= bar.ts:
                 self.funding[symbol].append((source, rate))
 
-            bucket_start = bar.ts.floor("5min")
-            current = self.buckets.get(symbol)
-            if current is not None and current.start != bucket_start and current.rows:
-                output.extend(self._evaluate_bucket(
-                    symbol, current, signal_ts=ts, decision_ts=bucket_start,
-                    contiguous=False, tradeable=tradeable, position=position,
-                ))
             if current is None or current.start != bucket_start:
                 current = _Bucket(bucket_start, [])
                 self.buckets[symbol] = current
             current.rows.append(bar)
-            if bar.ts == bucket_start + pd.Timedelta(minutes=4):
-                decision_ts = bucket_start + pd.Timedelta(minutes=5)
-                output.extend(self._evaluate_bucket(
-                    symbol, current, signal_ts=bar.ts, decision_ts=decision_ts,
-                    contiguous=True, tradeable=tradeable, position=position,
-                ))
-                self.buckets[symbol] = _Bucket(decision_ts, [])
         return output
