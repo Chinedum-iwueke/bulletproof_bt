@@ -77,6 +77,8 @@ class PositionBook:
         "stop_model",
         "stop_update_policy",
         "strategy",
+        "target_exit_ts",
+        "target_horizon_minutes",
         "timeframe",
         "tp_distance",
         "tp_enabled",
@@ -116,6 +118,10 @@ class PositionBook:
 
     def all_positions(self) -> dict[str, Position]:
         return dict(self._positions)
+
+    def position_metadata(self, symbol: str) -> dict[str, object]:
+        """Return a defensive copy of immutable entry context for a position."""
+        return dict(self._position_metadata.get(symbol, {}))
 
     def open_positions_count(self) -> int:
         """Count positions that are OPEN/OPENING/REDUCING (not FLAT/CLOSED)."""

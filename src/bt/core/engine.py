@@ -286,6 +286,12 @@ class BacktestEngine:
                 "qty": qty,
                 "entry_price": entry_price,
                 "notional": float(notional),
+                "opened_ts": (
+                    position.opened_ts.isoformat()
+                    if position.opened_ts is not None
+                    else None
+                ),
+                "metadata": self._portfolio.position_book.position_metadata(symbol),
             }
         return positions_ctx
 

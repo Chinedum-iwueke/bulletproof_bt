@@ -71,7 +71,16 @@
     "metrics": [
       "oos_trade_count", "oos_mean_net_r", "double_cost_oos_mean_net_r",
       "direction_balance", "matched_return_shock_control", "maximum_drawdown"
-    ]
+    ],
+    "split": {
+      "method": "chronological_decision_row_fraction",
+      "train_fraction": 0.6,
+      "validation_fraction": 0.2,
+      "test_fraction": 0.2,
+      "boundary_policy": "next_row_after_prior_partition",
+      "purge_seconds": 60,
+      "embargo_seconds": 60
+    }
   },
   "falsification_criteria": [
     "Reject if held-out future return signed opposite to signal-bar direction is nonpositive after registered costs.",
@@ -87,6 +96,8 @@
     "The ratio is driven mechanically by low volume or measurement error."
   ],
   "execution_semantics": {
+    "resampling_interval": "left_closed_right_open",
+    "resampling_label": "bucket_start",
     "strict_utc": true,
     "missing_bars": "no_decision",
     "interpolation": "forbidden",
