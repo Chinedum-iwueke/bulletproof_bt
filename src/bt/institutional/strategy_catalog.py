@@ -13,6 +13,28 @@ from bt.institutional.receipt import digest
 from bt.strategy import STRATEGY_REGISTRY
 
 
+_RESEARCH_CONTRACT_FIELDS = (
+    "required_indicators",
+    "indicator_defaults",
+    "gates",
+    "parameter_grid",
+    "entry",
+    "exit",
+    "execution_semantics",
+    "sizing",
+    "risk_controls",
+    "data_assumptions",
+    "evaluation",
+    "falsification_criteria",
+    "truth_contract",
+    "expected_failure_modes",
+)
+
+
+def _research_contract(raw: dict[str, Any]) -> dict[str, Any]:
+    return {key: raw[key] for key in _RESEARCH_CONTRACT_FIELDS if key in raw}
+
+
 def build_strategy_capability_catalog(
     repository_root: Path, *, source_commit: str
 ) -> dict[str, Any]:
@@ -46,6 +68,7 @@ def build_strategy_capability_catalog(
             *([] if 1 <= variant_count <= 8 else ["variant_budget_exceeded"]),
             *([] if not fixture_only else ["non_research_fixture"]),
         ]
+        research_contract = _research_contract(raw)
         capabilities.append(
             {
                 "hypothesis_id": contract.schema.metadata.hypothesis_id,
@@ -76,10 +99,12 @@ def build_strategy_capability_catalog(
                 "bounded_weekly_reuse_eligible": not reuse_blockers,
                 "contract_path": relative,
                 "contract_digest": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "research_contract": research_contract,
+                "research_contract_digest": digest(research_contract),
             }
         )
     core = {
-        "schema_version": "alpha-strategy-capability-catalog-v1.0.0",
+        "schema_version": "alpha-strategy-capability-catalog-v1.1.0",
         "source_commit": source_commit,
         "capabilities": capabilities,
         "capital_or_order_authority": False,
