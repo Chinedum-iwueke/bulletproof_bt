@@ -99,15 +99,18 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
         index = int((len(ordered) - 1) * probability)
         return ordered[index]
 
-    def _roll_quote_bucket(self, bar: Bar) -> tuple[float | None, bool]:
+    def _roll_quote_bucket(
+        self, bar: Bar
+    ) -> tuple[pd.Timestamp | None, float | None, bool]:
         """Return the prior bucket total at rollover, then consume current bar."""
         bucket = bar.ts.floor("5min")
         value = self._quote_volume(bar)
         prior = self._quote_bucket.get(bar.symbol)
+        completed_ts: pd.Timestamp | None = None
         completed: float | None = None
         complete = False
         if prior is not None and prior[0] != bucket:
-            completed, complete = prior[1], prior[2]
+            completed_ts, completed, complete = prior
         if prior is None or prior[0] != bucket:
             self._quote_bucket[bar.symbol] = (bucket, value or 0.0, value is not None)
         else:
@@ -116,7 +119,7 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
                 prior[1] + (value or 0.0),
                 prior[2] and value is not None,
             )
-        return completed, complete
+        return completed_ts, completed, complete
 
     def on_bars(
         self,
@@ -129,7 +132,9 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
         htf = ctx.get("htf") if isinstance(ctx, Mapping) else None
         by_symbol = htf.get(self.SIGNAL_TIMEFRAME, {}) if isinstance(htf, Mapping) else {}
         for symbol, bar in sorted(bars_by_symbol.items()):
-            completed_quote, quote_complete = self._roll_quote_bucket(bar)
+            quote_bucket_ts, completed_quote, quote_complete = (
+                self._roll_quote_bucket(bar)
+            )
             position = self._position(ctx, symbol)
             if position is None:
                 self._exit_submitted.discard(symbol)
@@ -168,6 +173,7 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
             if closed is None or not bool(closed.is_complete):
                 continue
             closed_ts = pd.Timestamp(closed.ts)
+            quote_aligned = quote_bucket_ts is not None and quote_bucket_ts == closed_ts
             previous_signal_ts = self._last_signal_bar_ts.get(symbol)
             if previous_signal_ts is not None and closed_ts <= previous_signal_ts:
                 continue
@@ -184,7 +190,12 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
             )
             ranges = self._ranges[symbol]
             ranges.append(true_range)
-            if completed_quote is None or not quote_complete or completed_quote <= 0:
+            if (
+                not quote_aligned
+                or completed_quote is None
+                or not quote_complete
+                or completed_quote <= 0
+            ):
                 continue
             ratio = abs(signal_return) / completed_quote
             ratios = self._ratios[symbol]
@@ -239,6 +250,7 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
                     gate_values={
                         "signal_return_5m": signal_return,
                         "quote_volume_5m": completed_quote,
+                        "quote_volume_bucket_ts": quote_bucket_ts.isoformat(),
                         "impact_proxy": ratio,
                         "impact_proxy_percentile": percentile,
                     },
@@ -278,6 +290,7 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
                         "stop_distance": stop_distance,
                         "signal_return_5m": signal_return,
                         "quote_volume_5m": completed_quote,
+                        "quote_volume_bucket_ts": quote_bucket_ts.isoformat(),
                         "impact_proxy": ratio,
                         "impact_proxy_threshold_value": threshold_value,
                         "impact_proxy_percentile": percentile,

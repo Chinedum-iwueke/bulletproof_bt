@@ -20,6 +20,10 @@ from typing import Any
 import pandas as pd
 import yaml
 
+from bt.evaluation.alpha_research import (
+    held_out_trade_evaluation,
+    impact_proxy_evaluation,
+)
 from bt.execution.model_registry import declared_classic_bundle
 from bt.experiments.hypothesis_runner import execute_hypothesis_variant
 from bt.experiments.representation_contract import (
@@ -288,12 +292,25 @@ def available_fields(path: Path) -> tuple[str, ...]:
 
 
 def representation(
-    assignment: dict[str, Any], frame: pd.DataFrame, code_digest: str
+    assignment: dict[str, Any],
+    frame: pd.DataFrame,
+    code_digest: str,
+    *,
+    purge_seconds: int = 60,
+    embargo_seconds: int = 60,
 ) -> tuple[RepresentationContract, dict[str, Any]]:
     decisions = pd.to_datetime(frame["ts"], utc=True)
     first, last = decisions.iloc[0], decisions.iloc[-1]
     split_one = decisions.iloc[len(decisions) * 6 // 10]
     split_two = decisions.iloc[len(decisions) * 8 // 10]
+    validation_index = decisions.searchsorted(
+        split_one + pd.Timedelta(seconds=purge_seconds), side="right"
+    )
+    test_index = decisions.searchsorted(
+        split_two + pd.Timedelta(seconds=embargo_seconds), side="right"
+    )
+    if validation_index >= len(decisions) or test_index >= len(decisions):
+        raise BridgeError("evaluation window is too short for its purge/embargo contract")
     audit = frame.assign(
         decision_at=decisions,
         membership_known_at=first,
@@ -331,55 +348,17 @@ def representation(
         split=EvaluationSplit(
             train_start=first.isoformat(),
             train_end=split_one.isoformat(),
-            validation_start=decisions.iloc[len(decisions) * 6 // 10 + 1].isoformat(),
+            validation_start=decisions.iloc[validation_index].isoformat(),
             validation_end=split_two.isoformat(),
-            test_start=decisions.iloc[len(decisions) * 8 // 10 + 1].isoformat(),
+            test_start=decisions.iloc[test_index].isoformat(),
             test_end=last.isoformat(),
             fit_start=first.isoformat(),
             fit_end=split_one.isoformat(),
-            purge_seconds=60,
-            embargo_seconds=60,
+            purge_seconds=purge_seconds,
+            embargo_seconds=embargo_seconds,
         ),
     )
     return contract, certify_representation_frame(contract, audit)
-
-
-def held_out_evaluation(run_dir: Path, test_start: str) -> dict[str, Any]:
-    trades_path = run_dir / "trades.csv"
-    try:
-        trades = pd.read_csv(trades_path)
-    except pd.errors.EmptyDataError:
-        trades = pd.DataFrame()
-    if trades.empty:
-        return {
-            "test_start": test_start,
-            "trade_count": 0,
-            "mean_net_r": 0.0,
-            "double_cost_mean_net_r": 0.0,
-            "adequate_support": False,
-            "positive_net_edge": False,
-            "cost_stress_passed": False,
-        }
-    entry = pd.to_datetime(trades["entry_ts"], utc=True, errors="coerce")
-    sample = trades.loc[entry >= pd.Timestamp(test_start)]
-    net_column = "r_net" if "r_net" in sample else "r_multiple_net"
-    cost_column = "cost_drag_r" if "cost_drag_r" in sample else None
-    net = pd.to_numeric(sample[net_column], errors="coerce").dropna()
-    costs = (
-        pd.to_numeric(sample.loc[net.index, cost_column], errors="coerce").fillna(0.0)
-        if cost_column
-        else pd.Series(0.0, index=net.index)
-    )
-    stressed = net - costs.abs()
-    return {
-        "test_start": test_start,
-        "trade_count": int(len(net)),
-        "mean_net_r": float(net.mean()) if len(net) else 0.0,
-        "double_cost_mean_net_r": float(stressed.mean()) if len(stressed) else 0.0,
-        "adequate_support": len(net) >= 50,
-        "positive_net_edge": bool(len(net) and net.mean() > 0),
-        "cost_stress_passed": bool(len(stressed) and stressed.mean() > 0),
-    }
 
 
 def period_evaluation(run_dir: Path, start: str, end: str) -> dict[str, Any]:
@@ -437,135 +416,6 @@ def weekend_regime_comparison(
             - groups["weekday"]["mean_signed_next_return"]
         ),
     }
-
-
-def complete_five_minute_bars(frame: pd.DataFrame) -> pd.DataFrame:
-    """Build strict left-labeled 5m bars from complete, unique 1m observations."""
-    required = {"ts", "symbol", "close", "quote_volume"}
-    missing = required - set(frame.columns)
-    if missing:
-        raise BridgeError(
-            f"impact-proxy evaluation is missing source fields: {sorted(missing)}"
-        )
-    ordered = frame.loc[:, sorted(required)].copy()
-    ordered["ts"] = pd.to_datetime(ordered["ts"], utc=True, errors="raise")
-    ordered = ordered.sort_values(["symbol", "ts"])
-    if ordered.duplicated(["symbol", "ts"]).any():
-        raise BridgeError("impact-proxy evaluation rejects duplicate minute bars")
-    if (ordered["ts"].dt.second != 0).any() or (
-        ordered["ts"].dt.microsecond != 0
-    ).any():
-        raise BridgeError("impact-proxy evaluation requires minute-aligned source bars")
-    ordered["bucket"] = ordered["ts"].dt.floor("5min")
-    grouped = ordered.groupby(["symbol", "bucket"], sort=True)
-    complete = grouped.filter(
-        lambda sample: len(sample) == 5
-        and sample["ts"].nunique() == 5
-        and (
-            sample["ts"].max() - sample["ts"].min()
-            == pd.Timedelta(minutes=4)
-        )
-    )
-    if complete.empty:
-        return pd.DataFrame(
-            columns=["symbol", "ts", "close", "quote_volume"]
-        )
-    return (
-        complete.groupby(["symbol", "bucket"], sort=True)
-        .agg(close=("close", "last"), quote_volume=("quote_volume", "sum"))
-        .reset_index()
-        .rename(columns={"bucket": "ts"})
-    )
-
-
-def impact_proxy_evaluation(
-    frame: pd.DataFrame,
-    *,
-    test_start: str,
-    params: dict[str, Any],
-) -> dict[str, Any]:
-    """Evaluate the preregistered held-out impact proxy against matched shocks."""
-    bars = complete_five_minute_bars(frame)
-    if bars.empty:
-        raise BridgeError("impact-proxy evaluation has no complete 5m bars")
-    threshold = float(params["impact_proxy_threshold"])
-    window = int(params["normalization_window"])
-    band = float(params["return_shock_control_band"])
-    parts: list[pd.DataFrame] = []
-    for _, sample in bars.groupby("symbol", sort=False):
-        sample = sample.sort_values("ts").copy()
-        sample["signal_return"] = sample["close"].pct_change()
-        sample["impact_proxy"] = (
-            sample["signal_return"].abs() / sample["quote_volume"]
-        )
-        sample["threshold_value"] = sample["impact_proxy"].shift(1).rolling(
-            window=window, min_periods=window
-        ).quantile(threshold)
-        sample["next_30m_return"] = sample["close"].shift(-6) / sample["close"] - 1.0
-        sample["signed_reversal"] = (
-            -sample["signal_return"].apply(
-                lambda value: 1.0 if value > 0 else -1.0
-            )
-            * sample["next_30m_return"]
-        )
-        parts.append(sample)
-    evaluated = pd.concat(parts, ignore_index=True)
-    evaluated = evaluated.loc[
-        (evaluated["ts"] >= pd.Timestamp(test_start))
-        & evaluated["signal_return"].notna()
-        & evaluated["next_30m_return"].notna()
-        & evaluated["threshold_value"].notna()
-        & (evaluated["quote_volume"] >= 1_000_000.0)
-    ].copy()
-    extreme = evaluated.loc[
-        evaluated["impact_proxy"] >= evaluated["threshold_value"]
-    ]
-    controls: list[float] = []
-    for row in extreme.itertuples(index=False):
-        magnitude = abs(float(row.signal_return))
-        low, high = magnitude * (1.0 - band), magnitude * (1.0 + band)
-        candidates = evaluated.loc[
-            (evaluated["symbol"] == row.symbol)
-            & (evaluated["ts"] != row.ts)
-            & (evaluated["impact_proxy"] < evaluated["threshold_value"])
-            & (evaluated["signal_return"].abs().between(low, high))
-            & ((evaluated["signal_return"] > 0) == (row.signal_return > 0))
-        ]
-        if not candidates.empty:
-            distance = (candidates["signal_return"].abs() - magnitude).abs()
-            controls.append(float(candidates.loc[distance.idxmin(), "signed_reversal"]))
-    extreme_reversal = pd.to_numeric(
-        extreme["signed_reversal"], errors="coerce"
-    ).dropna()
-    control_mean = float(pd.Series(controls, dtype=float).mean()) if controls else 0.0
-    extreme_mean = float(extreme_reversal.mean()) if len(extreme_reversal) else 0.0
-    direction = {
-        "long": int((extreme["signal_return"] < 0).sum()),
-        "short": int((extreme["signal_return"] > 0).sum()),
-    }
-    matched = {
-        "extreme_observations": int(len(extreme_reversal)),
-        "matched_control_observations": len(controls),
-        "extreme_mean_signed_30m_return": extreme_mean,
-        "control_mean_signed_30m_return": control_mean,
-        "extreme_minus_control": extreme_mean - control_mean,
-        "outperformed_control": bool(controls and extreme_mean > control_mean),
-    }
-    report = {
-        "schema_version": "alpha-impact-proxy-evaluation-v1.0.0",
-        "measurement": "held-out causal predictive association; not executable PnL",
-        "test_start": pd.Timestamp(test_start).isoformat(),
-        "resampling": "strict complete left-labeled 5m bars from unique 1m rows",
-        "parameters": {
-            "impact_proxy_threshold": threshold,
-            "normalization_window": window,
-            "return_shock_control_band": band,
-        },
-        "direction_balance": direction,
-        "matched_return_shock_control": matched,
-    }
-    report["record_digest"] = digest(report)
-    return report
 
 
 def execute_variant_grid(jobs: list[dict[str, Any]], max_workers: int) -> list[dict[str, Any]]:
@@ -781,7 +631,14 @@ def execute_registered(
         execution_data_path, columns=lightweight_columns
     )
     code_digest = digest(assignment["base_ref"].encode())
-    rep, leakage = representation(assignment, lightweight, code_digest)
+    split_contract = contract_document.get("evaluation", {}).get("split", {})
+    rep, leakage = representation(
+        assignment,
+        lightweight,
+        code_digest,
+        purge_seconds=int(split_contract.get("purge_seconds", 60)),
+        embargo_seconds=int(split_contract.get("embargo_seconds", 60)),
+    )
     model = declared_classic_bundle(
         profile="tier2",
         parameters={
@@ -950,7 +807,7 @@ def execute_registered(
         )
     bundle = bundles[selected_index]
     retained_bundle = retained[selected_index]
-    holdout = held_out_evaluation(run_dir, rep.split.test_start)
+    holdout = held_out_trade_evaluation(run_dir, rep.split.test_start)
     manifest = json.loads(
         (retained_bundle / "run_bundle_manifest.json").read_text(encoding="utf-8")
     )

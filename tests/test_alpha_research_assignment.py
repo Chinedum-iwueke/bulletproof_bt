@@ -1,6 +1,10 @@
 from pathlib import Path
 import pytest
 
+from bt.evaluation.alpha_research import (
+    held_out_trade_evaluation,
+    impact_proxy_evaluation,
+)
 from bt.governance.research_bridge import BridgeError
 
 from scripts.run_alpha_research_assignment import (
@@ -9,9 +13,8 @@ from scripts.run_alpha_research_assignment import (
     execute_registered,
     execution_scope,
     independent_review_required,
-    held_out_evaluation,
-    impact_proxy_evaluation,
     hypothesis_identity,
+    representation,
     record_alpha_memory,
     retain_bundle,
 )
@@ -158,11 +161,35 @@ def test_held_out_evaluation_is_temporal_and_doubles_observed_costs(
             "cost_drag_r": [0.1, 0.1, 0.1],
         }
     ).to_csv(tmp_path / "trades.csv", index=False)
-    report = held_out_evaluation(tmp_path, "2026-02-01T00:00:00Z")
+    report = held_out_trade_evaluation(tmp_path, "2026-02-01T00:00:00Z")
     assert report["trade_count"] == 2
     assert report["mean_net_r"] == 0.375
     assert report["double_cost_mean_net_r"] == 0.275
     assert report["adequate_support"] is False
+
+
+def test_representation_applies_horizon_aware_split_gaps() -> None:
+    import pandas as pd
+
+    timestamps = pd.date_range(
+        "2026-01-01T00:00:00Z", periods=240, freq="1min"
+    )
+    frame = pd.DataFrame(
+        {"ts": timestamps, "symbol": "BTCUSDT", "close": 100.0}
+    )
+    contract, report = representation(
+        assignment(),
+        frame,
+        "f" * 64,
+        purge_seconds=1800,
+        embargo_seconds=1800,
+    )
+    split = contract.split
+    assert pd.Timestamp(split.validation_start) - pd.Timestamp(split.train_end) > pd.Timedelta(minutes=30)
+    assert pd.Timestamp(split.test_start) - pd.Timestamp(split.validation_end) > pd.Timedelta(minutes=30)
+    assert split.purge_seconds == 1800
+    assert split.embargo_seconds == 1800
+    assert report["status"] == "certified"
 
 
 def test_impact_proxy_evaluation_uses_complete_causal_five_minute_bars() -> None:

@@ -61,6 +61,7 @@
   "data_requirements": ["research_panel"],
   "logging_requirements": [
     "decision_trace", "stop_price", "signal_return_5m", "quote_volume_5m",
+    "quote_volume_bucket_ts",
     "impact_proxy", "impact_proxy_percentile", "impact_proxy_threshold_value",
     "normalization_window", "counterfactual_return_shock_band", "target_exit_ts",
     "target_horizon_minutes", "requested_risk_amount", "risk_utilization_pct",
@@ -78,8 +79,22 @@
       "validation_fraction": 0.2,
       "test_fraction": 0.2,
       "boundary_policy": "next_row_after_prior_partition",
-      "purge_seconds": 60,
-      "embargo_seconds": 60
+      "purge_seconds": 1800,
+      "embargo_seconds": 1800
+    },
+    "native_implementation": {
+      "held_out_cost_stress": {
+        "path": "src/bt/evaluation/alpha_research.py",
+        "function": "held_out_trade_evaluation"
+      },
+      "matched_return_shock_control": {
+        "path": "src/bt/evaluation/alpha_research.py",
+        "function": "impact_proxy_evaluation"
+      },
+      "split_binding": {
+        "path": "scripts/run_alpha_research_assignment.py",
+        "function": "representation"
+      }
     }
   },
   "falsification_criteria": [

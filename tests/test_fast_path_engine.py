@@ -424,6 +424,47 @@ def test_precomputed_htf_context_matches_streaming_cold_start() -> None:
     assert inner.emitted == [pd.Timestamp("2024-01-01T00:00:00Z")]
 
 
+def test_precomputed_htf_context_rejects_unclosed_or_incomplete_buckets() -> None:
+    class Recorder(Strategy):
+        def __init__(self) -> None:
+            self.emitted: list[pd.Timestamp] = []
+
+        def on_bars(self, ts, bars_by_symbol, tradeable, ctx):  # type: ignore[no-untyped-def]
+            self.emitted.extend(
+                item.ts for item in ctx.get("htf", {}).get("15m", {}).values()
+            )
+            return []
+
+    inner = Recorder()
+    adapter = PrecomputedHTFContextStrategyAdapter(inner=inner, timeframes=["15m"])
+
+    def stamped(ts: str, htf_ts: str, *, n_bars: int = 15, complete: bool = True) -> Bar:
+        return Bar(
+            ts=pd.Timestamp(ts), symbol="BTCUSDT", open=100.0, high=101.0,
+            low=99.0, close=100.5, volume=1000.0,
+            extra={
+                "htf_15m_ready": True, "htf_15m_ts": pd.Timestamp(htf_ts),
+                "htf_15m_open": 100.0, "htf_15m_high": 101.0,
+                "htf_15m_low": 99.0, "htf_15m_close": 100.5,
+                "htf_15m_volume": 1000.0, "htf_15m_n_bars": n_bars,
+                "htf_15m_expected_bars": 15,
+                "htf_15m_is_complete": complete,
+            },
+        )
+
+    future = stamped("2024-01-01T00:10:00Z", "2024-01-01T00:00:00Z")
+    adapter.on_bars(future.ts, {"BTCUSDT": future}, {"BTCUSDT"}, {})
+    incomplete = stamped(
+        "2024-01-01T00:30:00Z", "2024-01-01T00:15:00Z", n_bars=14
+    )
+    adapter.on_bars(incomplete.ts, {"BTCUSDT": incomplete}, {"BTCUSDT"}, {})
+    flagged = stamped(
+        "2024-01-01T00:45:00Z", "2024-01-01T00:30:00Z", complete=False
+    )
+    adapter.on_bars(flagged.ts, {"BTCUSDT": flagged}, {"BTCUSDT"}, {})
+    assert inner.emitted == []
+
+
 def test_precomputed_htf_event_kernel_skips_only_flat_no_event_minutes() -> None:
     class CountingStrategy(Strategy):
         def __init__(self) -> None:

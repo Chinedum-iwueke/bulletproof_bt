@@ -6,7 +6,7 @@ from typing import Any, Mapping
 import pandas as pd
 
 from bt.core.types import Bar, Signal
-from bt.data.resample import HTFBar, TimeframeResampler
+from bt.data.resample import HTFBar, TimeframeResampler, timeframe_minutes
 from bt.strategy.base import Strategy
 from bt.strategy.context_view import StrategyContextView
 from bt.strategy.signal_conflicts import SignalConflictSummary, resolve_signal_conflicts
@@ -150,6 +150,12 @@ class PrecomputedHTFContextStrategyAdapter(Strategy):
                 if pd.isna(htf_ts):
                     continue
                 htf_ts = pd.Timestamp(htf_ts)
+                current_ts = pd.Timestamp(bar.ts)
+                closed_at = htf_ts + pd.Timedelta(
+                    minutes=timeframe_minutes(timeframe)
+                )
+                if closed_at > current_ts:
+                    continue
                 # Match the classic streaming resampler's cold-start behavior:
                 # a backtest that begins at T has not seen any HTF bucket whose
                 # open timestamp is before T, even if the full-history panel has
@@ -172,6 +178,12 @@ class PrecomputedHTFContextStrategyAdapter(Strategy):
                         metadata={},
                     )
                 except (KeyError, TypeError, ValueError):
+                    continue
+                if (
+                    not htf_bar.is_complete
+                    or htf_bar.expected_bars <= 0
+                    or htf_bar.n_bars != htf_bar.expected_bars
+                ):
                     continue
                 emitted_index.setdefault(timeframe, {})[bar.symbol] = htf_bar
 

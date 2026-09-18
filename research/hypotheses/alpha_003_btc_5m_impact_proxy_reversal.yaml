@@ -114,8 +114,18 @@ evaluation:
     validation_fraction: 0.20
     test_fraction: 0.20
     boundary_policy: "next_row_after_prior_partition"
-    purge_seconds: 60
-    embargo_seconds: 60
+    purge_seconds: 1800
+    embargo_seconds: 1800
+  native_implementation:
+    held_out_cost_stress:
+      path: "src/bt/evaluation/alpha_research.py"
+      function: "held_out_trade_evaluation"
+    matched_return_shock_control:
+      path: "src/bt/evaluation/alpha_research.py"
+      function: "impact_proxy_evaluation"
+    split_binding:
+      path: "scripts/run_alpha_research_assignment.py"
+      function: "representation"
 falsification_criteria:
   - "Reject if held-out return signed opposite to the signal-bar direction is nonpositive after registered costs."
   - "Reject if the result is indistinguishable from the preregistered control matched on absolute signal-bar return but not impact-proxy extremity."
@@ -129,7 +139,7 @@ expected_failure_modes:
   - "The ratio is driven by low quote volume or measurement error."
 logging:
   schema_version: "1.0"
-  required_fields: [decision_trace, stop_price, signal_return_5m, quote_volume_5m, impact_proxy, impact_proxy_percentile, impact_proxy_threshold_value, normalization_window, counterfactual_return_shock_band, target_exit_ts, target_horizon_minutes, requested_risk_amount, risk_utilization_pct, under_risked_trade]
+  required_fields: [decision_trace, stop_price, signal_return_5m, quote_volume_5m, quote_volume_bucket_ts, impact_proxy, impact_proxy_percentile, impact_proxy_threshold_value, normalization_window, counterfactual_return_shock_band, target_exit_ts, target_horizon_minutes, requested_risk_amount, risk_utilization_pct, under_risked_trade]
 runtime_controls:
   enabled: true
   max_variants: 8
