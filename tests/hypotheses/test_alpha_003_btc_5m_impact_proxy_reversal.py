@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import yaml
 
 from bt.contracts.research_specs_v2 import canonical_hash
 from bt.core.enums import Side
@@ -103,6 +104,22 @@ def test_yaml_grid_and_admission_are_deterministic_and_classic_only() -> None:
     assert len(one) == 8
     assert len({item["config_hash"] for item in one}) == 8
     assert contract.schema.execution_semantics["required_extra_columns"] == ["quote_volume"]
+    raw_contract = yaml.safe_load(YAML_PATH.read_text(encoding="utf-8"))
+    assert raw_contract["immutable_contract"]["resampling_policy"] == (
+        "left_closed_left_labeled_complete_bars"
+    )
+    assert contract.schema.execution_semantics["resampling_interval"] == (
+        "left_closed_right_open"
+    )
+    assert raw_contract["evaluation"]["split"] == {
+        "method": "chronological_decision_row_fraction",
+        "train_fraction": 0.6,
+        "validation_fraction": 0.2,
+        "test_fraction": 0.2,
+        "boundary_policy": "next_row_after_prior_partition",
+        "purge_seconds": 60,
+        "embargo_seconds": 60,
+    }
     report = validate_hypothesis_admission(YAML_PATH)
     assert report.status == "PASS", report.to_dict()
     raw = YAML_PATH.read_text(encoding="utf-8")
@@ -172,6 +189,53 @@ def test_repeated_or_incomplete_htf_context_does_not_mutate_signal_history() -> 
     assert entries[0].ts == start + pd.Timedelta(minutes=110)
     assert entries[0].metadata["quote_volume_5m"] == pytest.approx(2_000_000.0)
     assert entries[0].metadata["signal_return_5m"] == pytest.approx(0.10)
+
+
+def test_exit_state_begins_only_after_fill_and_lands_on_exact_target() -> None:
+    strategy = Btc5mImpactProxyReversalStrategy()
+    target = pd.Timestamp("2023-01-01T00:30:00Z")
+    before = target - pd.Timedelta(minutes=2)
+    submit = target - pd.Timedelta(minutes=1)
+    bar = _bar(before)
+
+    # Merely emitting an entry cannot manufacture active-trade state. With no
+    # filled position in engine context, no time exit is generated.
+    assert strategy.on_bars(
+        before,
+        {"BTCUSDT": bar},
+        {"BTCUSDT"},
+        {"positions": {}, "htf": {"5m": {}}},
+    ) == []
+
+    position = {
+        "BTCUSDT": {
+            "side": "sell",
+            "metadata": {"target_exit_ts": target.isoformat()},
+        }
+    }
+    assert strategy.on_bars(
+        before,
+        {"BTCUSDT": bar},
+        {"BTCUSDT"},
+        {"positions": position, "htf": {"5m": {}}},
+    ) == []
+    exits = strategy.on_bars(
+        submit,
+        {"BTCUSDT": _bar(submit)},
+        {"BTCUSDT"},
+        {"positions": position, "htf": {"5m": {}}},
+    )
+    assert len(exits) == 1
+    assert exits[0].side == Side.BUY
+    assert exits[0].metadata["target_exit_ts"] == target.isoformat()
+    assert exits[0].metadata["exit_submission_ts"] == submit.isoformat()
+    assert exits[0].metadata["execution_delay_minutes"] == 1
+    assert strategy.on_bars(
+        target,
+        {"BTCUSDT": _bar(target)},
+        {"BTCUSDT"},
+        {"positions": position, "htf": {"5m": {}}},
+    ) == []
 
 
 @pytest.mark.parametrize("case", ["missing_quote", "inactive", "invalid_parameter"])

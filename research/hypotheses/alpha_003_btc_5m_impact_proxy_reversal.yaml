@@ -27,7 +27,7 @@ immutable_contract:
   instrument: "BTCUSDT"
   source_timeframe: "1m"
   research_timeframe: "5m"
-  resampling_policy: "right_closed_left_labeled_complete_bars"
+  resampling_policy: "left_closed_left_labeled_complete_bars"
   window: {start: "2023-01-01T00:00:00Z", end: "2024-01-01T00:00:00Z"}
   evidence_class: "live_exchange_history"
   required_fields: [ts, open, high, low, close, volume, quote_volume]
@@ -88,6 +88,8 @@ data_availability:
   missing_quote_volume: "no_decision"
   liquidity_floor_usd: 1000000.0
 execution_semantics:
+  resampling_interval: "left_closed_right_open"
+  resampling_label: "bucket_start"
   signal_timeframe: "5m"
   base_execution_timeframe: "1m"
   exit_monitoring_timeframe: "1m"
@@ -106,6 +108,14 @@ execution_semantics:
 evaluation:
   required_tiers: ["Tier2B"]
   metrics: [oos_trade_count, oos_mean_net_r, double_cost_oos_mean_net_r, direction_balance, matched_return_shock_control, maximum_drawdown]
+  split:
+    method: "chronological_decision_row_fraction"
+    train_fraction: 0.60
+    validation_fraction: 0.20
+    test_fraction: 0.20
+    boundary_policy: "next_row_after_prior_partition"
+    purge_seconds: 60
+    embargo_seconds: 60
 falsification_criteria:
   - "Reject if held-out return signed opposite to the signal-bar direction is nonpositive after registered costs."
   - "Reject if the result is indistinguishable from the preregistered control matched on absolute signal-bar return but not impact-proxy extremity."

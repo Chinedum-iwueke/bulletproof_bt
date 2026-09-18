@@ -23,6 +23,7 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
     ATR_WINDOW = 20
     STOP_ATR_MULTIPLE = 3.0
     TARGET_HORIZON = pd.Timedelta(minutes=30)
+    EXECUTION_DELAY = pd.Timedelta(minutes=1)
 
     def __init__(
         self,
@@ -54,7 +55,7 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
         )
         self._previous_close: dict[str, float] = {}
         self._quote_bucket: dict[str, tuple[pd.Timestamp, float, bool]] = {}
-        self._target_exit: dict[str, pd.Timestamp] = {}
+        self._exit_submitted: set[str] = set()
         self._last_signal_bar_ts: dict[str, pd.Timestamp] = {}
 
     @staticmethod
@@ -67,6 +68,21 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
         if isinstance(side, str) and side.lower() in {"buy", "sell"}:
             return Side.BUY if side.lower() == "buy" else Side.SELL
         return None
+
+    @staticmethod
+    def _target_exit_ts(
+        ctx: Mapping[str, Any], symbol: str
+    ) -> pd.Timestamp | None:
+        positions = ctx.get("positions")
+        raw = positions.get(symbol) if isinstance(positions, Mapping) else None
+        metadata = raw.get("metadata") if isinstance(raw, Mapping) else None
+        value = metadata.get("target_exit_ts") if isinstance(metadata, Mapping) else None
+        if value is None:
+            return None
+        timestamp = pd.Timestamp(value)
+        if timestamp.tz is None:
+            raise ValueError("target_exit_ts must be timezone aware")
+        return timestamp
 
     @staticmethod
     def _quote_volume(bar: Bar) -> float | None:
@@ -115,8 +131,21 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
         for symbol, bar in sorted(bars_by_symbol.items()):
             completed_quote, quote_complete = self._roll_quote_bucket(bar)
             position = self._position(ctx, symbol)
-            target_exit = self._target_exit.get(symbol)
-            if position is not None and target_exit is not None and ts >= target_exit:
+            if position is None:
+                self._exit_submitted.discard(symbol)
+            target_exit = self._target_exit_ts(ctx, symbol)
+            submit_exit_at = (
+                target_exit - self.EXECUTION_DELAY
+                if target_exit is not None
+                else None
+            )
+            if (
+                position is not None
+                and symbol not in self._exit_submitted
+                and target_exit is not None
+                and submit_exit_at is not None
+                and ts >= submit_exit_at
+            ):
                 signals.append(Signal(
                     ts=ts,
                     symbol=symbol,
@@ -129,9 +158,11 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
                         "is_exit": True,
                         "exit_reason": "fixed_30m_target_horizon",
                         "target_exit_ts": target_exit.isoformat(),
+                        "exit_submission_ts": pd.Timestamp(ts).isoformat(),
+                        "execution_delay_minutes": 1,
                     },
                 ))
-                self._target_exit.pop(symbol, None)
+                self._exit_submitted.add(symbol)
 
             closed = by_symbol.get(symbol) if isinstance(by_symbol, Mapping) else None
             if closed is None or not bool(closed.is_complete):
@@ -164,7 +195,7 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
             )
             liquid = completed_quote >= self.LIQUIDITY_FLOOR_USD
             extreme = threshold_value is not None and ratio >= threshold_value
-            flat = position is None and symbol not in self._target_exit
+            flat = position is None
             proposed_side = Side.SELL if signal_return > 0 else Side.BUY
             direction_allowed = (
                 self._signal_direction == "both"
@@ -257,6 +288,5 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
                         "decision_trace": trace,
                     },
                 ))
-                self._target_exit[symbol] = target_exit_ts
             ratios.append(ratio)
         return signals
