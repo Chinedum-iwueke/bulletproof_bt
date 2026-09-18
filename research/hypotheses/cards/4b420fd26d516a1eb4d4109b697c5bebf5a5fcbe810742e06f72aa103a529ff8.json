@@ -1,0 +1,133 @@
+{
+  "schema_version": "hypothesis_card_v1",
+  "card_id": "alpha-003-btc-impact-proxy-reversal-4b420fd26d51",
+  "program_id": "alpha-003",
+  "version": 1,
+  "status": "draft",
+  "title": "BTC liquidity-stress proxy reversal",
+  "claim": "Does an extreme point-in-time BTCUSDT 5m absolute return per unit quote_volume predict opposite-direction close-to-close return over the next 30m?",
+  "intuition": "An unusually large completed-bar displacement relative to observed quote volume can identify transient liquidity stress whose price effect subsequently decays.",
+  "market_mechanism": "The ratio is a point-in-time liquidity-stress proxy, not evidence that observed trades caused market impact; reversal is tested against informed-flow continuation, volatility clustering, and a matched return-shock control.",
+  "engine_strategy_name": "btc_5m_impact_proxy_reversal",
+  "engine_hypothesis_template": "research/hypotheses/alpha_003_btc_5m_impact_proxy_reversal.yaml",
+  "features": [
+    {"id": "completed_5m_return", "source": "ohlcv", "source_field": "close", "transform": "return", "window": 1, "lag": 0},
+    {"id": "completed_5m_quote_volume", "source": "research_panel", "source_field": "quote_volume", "transform": "identity", "window": 5, "lag": 0, "join": "backward"},
+    {"id": "impact_proxy", "source": "derived", "transform": "identity", "inputs": ["completed_5m_return", "completed_5m_quote_volume"], "lag": 0},
+    {"id": "impact_proxy_extremity", "source": "derived", "transform": "percentile_rank", "inputs": ["impact_proxy"], "lag": 1}
+  ],
+  "gates": [
+    {"left": "completed_5m_quote_volume", "op": ">=", "right": 1000000.0},
+    {"left": "impact_proxy_extremity", "op": ">=", "right_param": "impact_proxy_threshold"}
+  ],
+  "entry": {
+    "direction": "opposite_feature_sign",
+    "direction_feature": "completed_5m_return",
+    "timing": "strict_completed_5m_close_submit_next_bar_execution",
+    "pyramiding": false,
+    "flip": false
+  },
+  "exit": {
+    "type": "fixed_stop_time_exit",
+    "target": "close-to-close return during the 30m immediately following the completed 5m signal bar",
+    "max_hold_minutes": 30,
+    "stop_model": "fixed_completed_5m_atr_3x"
+  },
+  "sizing": {
+    "mode": "risk_at_stop",
+    "r_per_trade": 0.005,
+    "cap_policy": "allow_clip_with_truth",
+    "min_risk_utilization_pct": 0.1,
+    "report_under_risked_trades": true,
+    "stop_required": true
+  },
+  "risk_controls": {
+    "authority": "engine",
+    "max_positions": 1,
+    "max_notional_pct_equity": 0.25,
+    "max_gross_notional_pct_equity": 0.25,
+    "max_leverage": 1.0,
+    "unresolved_stops": "reject_entry",
+    "forbid_pyramiding": true,
+    "forbid_flips": true,
+    "no_capital_research": true
+  },
+  "parameters": {
+    "impact_proxy_threshold": [0.99, 0.995],
+    "normalization_window": [288, 2016],
+    "signal_direction": ["both"],
+    "return_shock_control_band": [0.1, 0.2]
+  },
+  "data_requirements": ["research_panel"],
+  "logging_requirements": [
+    "decision_trace", "stop_price", "signal_return_5m", "quote_volume_5m",
+    "impact_proxy", "impact_proxy_percentile", "impact_proxy_threshold_value",
+    "normalization_window", "counterfactual_return_shock_band", "target_exit_ts",
+    "target_horizon_minutes", "requested_risk_amount", "risk_utilization_pct",
+    "under_risked_trade"
+  ],
+  "evaluation": {
+    "tiers": ["Tier2B"],
+    "metrics": [
+      "oos_trade_count", "oos_mean_net_r", "double_cost_oos_mean_net_r",
+      "direction_balance", "matched_return_shock_control", "maximum_drawdown"
+    ]
+  },
+  "falsification_criteria": [
+    "Reject if held-out future return signed opposite to signal-bar direction is nonpositive after registered costs.",
+    "Reject if the result is indistinguishable from a control matched on absolute signal-bar return but not impact-proxy extremity.",
+    "Reject if reversal is confined to one direction without preregistered asymmetric support.",
+    "Reject if held-out support is below 50 trades or doubled-cost mean net R is nonpositive.",
+    "Reject observations whose completed signal-bar quote_volume is below USD 1,000,000."
+  ],
+  "expected_failure_modes": [
+    "The displacement reflects informed flow and continues.",
+    "Volatility clustering explains subsequent moves without reversal.",
+    "Broad market movement rather than transient liquidity stress generated the signal.",
+    "The ratio is driven mechanically by low volume or measurement error."
+  ],
+  "execution_semantics": {
+    "strict_utc": true,
+    "missing_bars": "no_decision",
+    "interpolation": "forbidden",
+    "htf_completeness": "closed_only",
+    "aux_join_direction": "backward",
+    "execution_authority": "engine",
+    "risk_authority": "engine",
+    "accounting": "engine_canonical_R",
+    "signal_timeframe": "5m",
+    "base_execution_timeframe": "1m",
+    "base_data_frequency_expected": "1m",
+    "exit_monitoring_timeframe": "1m",
+    "signal_bar_policy": "strict_completed_bar_only",
+    "stop_model": "fixed_completed_5m_atr",
+    "stop_update_policy": "frozen_at_entry",
+    "tp_update_policy": "none",
+    "hold_time_unit": "wall_clock_minutes_after_signal_close",
+    "atr_source_timeframe": "5m"
+  },
+  "source_citations": [],
+  "field_provenance": {
+    "claim": {"state": "recommended", "confidence": 1.0, "basis": "Exact admitted Research Intelligence question; no proxy substitution."},
+    "entry": {"state": "recommended", "confidence": 1.0, "basis": "Opposite direction of the strict completed 5m signal-bar return using only trailing normalization."},
+    "exit": {"state": "recommended", "confidence": 1.0, "basis": "Frozen 30-minute close-to-close target boundary after signal-bar close."}
+  },
+  "dataset_binding": {
+    "dataset_build_id": "fbb81c42-953b-42fb-8fe1-89c75b45e1aa",
+    "dataset_digest": "9a211d8818c5ab8ec82ad5a7d38957e63eb387ea83d4b00541922a0eeca4aacb",
+    "venue": "bybit",
+    "instrument": "BTCUSDT",
+    "timeframe": "1m"
+  },
+  "execution_window": {
+    "start": "2023-01-01T00:00:00Z",
+    "end": "2024-01-01T00:00:00Z"
+  },
+  "immutable_contract": {
+    "tier": "Tier2B",
+    "maximum_variants": 8,
+    "costs": {"taker_fee_bps": 6.0, "slippage_bps": 2.0, "spread_bps": 1.0, "delay_bars": 1, "double_cost_required": true},
+    "authority": {"capital": false, "orders": false, "production_promotion": false, "self_approval": false}
+  },
+  "research_question": "Does an extreme point-in-time BTCUSDT 5m absolute return per unit quote_volume predict opposite-direction close-to-close return over the next 30m?"
+}
