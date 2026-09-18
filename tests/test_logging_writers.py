@@ -198,6 +198,43 @@ def test_trades_csv_writer_maps_l1_entry_context_metadata(tmp_path: Path) -> Non
     assert float(row["custom_quality_score"]) == 0.77
 
 
+def test_trades_csv_writer_retains_canonical_decision_trace(tmp_path: Path) -> None:
+    path = tmp_path / "trades.csv"
+    writer = TradesCsvWriter(path)
+    writer.write_trade(
+        Trade(
+            symbol="BTCUSDT",
+            side=Side.BUY,
+            entry_ts=pd.Timestamp("2024-01-01T00:00:00Z"),
+            exit_ts=pd.Timestamp("2024-01-01T00:30:00Z"),
+            entry_price=100.0,
+            exit_price=101.0,
+            qty=1.0,
+            pnl=1.0,
+            fees=0.1,
+            slippage=0.0,
+            mae_price=99.0,
+            mfe_price=102.0,
+            metadata={
+                "decision_trace": {
+                    "setup_class": "impact_proxy_reversal",
+                    "reason_code": "extreme-impact",
+                }
+            },
+        )
+    )
+    writer.close()
+
+    with path.open(encoding="utf-8", newline="") as handle:
+        row = next(csv.DictReader(handle))
+
+    assert row["decision_trace"] == (
+        '{"reason_code":"extreme-impact",'
+        '"setup_class":"impact_proxy_reversal"}'
+    )
+    assert row["entry_decision_reason_code"] == "extreme-impact"
+
+
 def test_trades_csv_writer_uses_contract_identity_and_tier_defaults(tmp_path: Path) -> None:
     path = tmp_path / "trades.csv"
     writer = TradesCsvWriter(path, run_id="run_1", hypothesis_id="L1-H1C", tier="Tier2")
