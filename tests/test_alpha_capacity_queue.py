@@ -68,3 +68,33 @@ def test_wrapper_refuses_duplicate_immutable_assignment(tmp_path, monkeypatch):
         "--repository-root", str(tmp_path), "--output", str(tmp_path / "output"), "--receipt", str(tmp_path / "receipt")])
     with pytest.raises(RuntimeError, match="already entered"):
         wrapper.main()
+
+
+def test_wrapper_allows_fresh_record_after_failed_assignment(tmp_path, monkeypatch):
+    database = tmp_path / "db"
+    assignment = tmp_path / "assignment"
+    assignment.write_text(json.dumps({"stage": "execute", "max_variants": 8, "question_digest": "a" * 64}))
+    digest = hashlib.sha256(assignment.read_bytes()).hexdigest()
+    db = ResearchDB(database)
+    db.init_schema()
+    failed_id = db.enqueue(
+        queue_name="approved_backtests",
+        item_type="governed_alpha_assignment",
+        item_id=digest,
+        payload={},
+    )
+    db.mark_queue_failed(failed_id, "interrupted")
+    db.close()
+    monkeypatch.setattr("sys.argv", ["wrapper", "--db", str(database), "--assignment", str(assignment),
+        "--repository-root", str(tmp_path), "--output", str(tmp_path / "output"), "--receipt", str(tmp_path / "receipt")])
+    monkeypatch.setattr(wrapper.time, "sleep", lambda _: (_ for _ in ()).throw(RuntimeError("stop")))
+
+    with pytest.raises(RuntimeError, match="stop"):
+        wrapper.main()
+
+    check = ResearchDB(database)
+    rows = check.connect().execute(
+        "SELECT status FROM queues WHERE item_id = ? ORDER BY rowid", (digest,)
+    ).fetchall()
+    assert [row["status"] for row in rows] == ["FAILED", "PENDING"]
+    check.close()

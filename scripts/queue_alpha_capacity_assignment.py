@@ -41,12 +41,21 @@ def main() -> int:
         raise ValueError("Invalid variant budget")
     db.connect().execute("BEGIN IMMEDIATE")
     existing = db.connect().execute(
-        "SELECT id FROM queues WHERE queue_name = ? AND item_type = ? AND item_id = ?",
+        """
+        SELECT id, status FROM queues
+        WHERE queue_name = ? AND item_type = ? AND item_id = ?
+          AND status != 'FAILED'
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
         ("approved_backtests", "governed_alpha_assignment", payload["assignment_sha256"]),
     ).fetchone()
     if existing:
         db.close()
-        raise RuntimeError("This immutable assignment already entered the queue; reconcile its receipt before retrying")
+        raise RuntimeError(
+            "This immutable assignment already entered a non-failed queue record; "
+            "reconcile its receipt before retrying"
+        )
     queue_id = db.enqueue(queue_name="approved_backtests", item_type="governed_alpha_assignment",
                           item_id=payload["assignment_sha256"], payload=payload)
     def stop(signum, frame):

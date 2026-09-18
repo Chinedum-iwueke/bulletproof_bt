@@ -59,6 +59,7 @@ class CapacitySchedulerConfig:
     state_path: str = "logs/research_capacity_scheduler_state.json"
     child_log_dir: str = "logs/research_capacity_scheduler_jobs"
     estimated_worker_ram_gb: float = 2.0
+    max_job_attempts: int = 2
 
 
 @dataclass
@@ -135,6 +136,9 @@ def load_capacity_config(daemon_config: dict[str, Any], args: argparse.Namespace
         state_path=str(block.get("state_path", "logs/research_capacity_scheduler_state.json")),
         child_log_dir=str(block.get("child_log_dir", "logs/research_capacity_scheduler_jobs")),
         estimated_worker_ram_gb=float(block.get("estimated_worker_ram_gb", 2.0)),
+        max_job_attempts=int(
+            block.get("max_job_attempts", daemon_config.get("max_job_attempts", 2))
+        ),
     )
     if cfg.target_workers <= 0:
         raise ValueError("target_workers must be positive")
@@ -144,6 +148,8 @@ def load_capacity_config(daemon_config: dict[str, Any], args: argparse.Namespace
         raise ValueError("max_concurrent_jobs must be positive")
     if not math.isfinite(cfg.estimated_worker_ram_gb) or cfg.estimated_worker_ram_gb <= 0:
         raise ValueError("estimated_worker_ram_gb must be finite and positive")
+    if cfg.max_job_attempts <= 0:
+        raise ValueError("max_job_attempts must be positive")
     if cfg.pause_free_ram_gb >= cfg.resume_free_ram_gb:
         raise ValueError("pause_free_ram_gb must be lower than resume_free_ram_gb")
     return cfg
@@ -254,6 +260,65 @@ def find_locked_queue_item(db: ResearchDB, locked_by: str) -> tuple[str | None, 
     return str(row["id"]), str(payload.get("name") or "")
 
 
+def reconcile_orphaned_capacity_locks(
+    db: ResearchDB,
+    *,
+    queue_name: str,
+    hostname: str,
+    max_job_attempts: int,
+) -> dict[str, int]:
+    """Resolve locks owned by a prior scheduler process on this host.
+
+    The scheduler's systemd unit owns its complete child cgroup, so acquiring the
+    exclusive leader lock proves that no prior managed child can still be valid.
+    A governed job may be requeued only while its Hermes wrapper is still alive;
+    otherwise it must fail and let the control plane issue a fresh task attempt.
+    """
+    from orchestrator.alpha_capacity_owner import owner_alive
+
+    rows = db.connect().execute(
+        """
+        SELECT id, payload_json, attempts
+        FROM queues
+        WHERE queue_name = ?
+          AND status = 'LOCKED'
+          AND locked_by LIKE ?
+        ORDER BY locked_at ASC
+        """,
+        (queue_name, f"capacity:{hostname}:%"),
+    ).fetchall()
+    result = {"requeued": 0, "failed_dead_owner": 0, "failed_attempts": 0}
+    for row in rows:
+        queue_id = str(row["id"])
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            payload = {}
+        attempts = int(row["attempts"] or 0)
+        governed = payload.get("kind") == "governed_alpha_assignment"
+        if governed and not owner_alive(payload):
+            db.mark_queue_failed(
+                queue_id,
+                "capacity scheduler restart detected dead Hermes lease owner; "
+                "partial artifacts retained",
+            )
+            result["failed_dead_owner"] += 1
+        elif attempts >= max_job_attempts:
+            db.mark_queue_failed(
+                queue_id,
+                "capacity scheduler restart exhausted native queue attempts; "
+                "partial artifacts retained",
+            )
+            result["failed_attempts"] += 1
+        else:
+            db.release_queue_lock(
+                queue_id,
+                "capacity scheduler restart recovered orphan lock; partial artifacts retained",
+            )
+            result["requeued"] += 1
+    return result
+
+
 def pending_queue_candidates(db: ResearchDB, queue_name: str, *, limit: int = 25) -> list[sqlite3.Row]:
     now = utc_now_iso()
     return list(
@@ -339,6 +404,16 @@ class CapacityScheduler:
             raise RuntimeError("A capacity scheduler already owns this database") from None
         self.logger = configure_logging(PROJECT_ROOT / cfg.log_path)
         self.jobs: list[ManagedJob] = []
+        self.startup_recovery = reconcile_orphaned_capacity_locks(
+            self.db,
+            queue_name=cfg.queue_name,
+            hostname=socket.gethostname(),
+            max_job_attempts=cfg.max_job_attempts,
+        )
+        if any(self.startup_recovery.values()):
+            self.logger.warning(
+                "reconciled orphaned capacity locks: %s", self.startup_recovery
+            )
         self.shutdown_requested = False
         signal.signal(signal.SIGINT, self._request_shutdown)
         signal.signal(signal.SIGTERM, self._request_shutdown)
@@ -366,6 +441,7 @@ class CapacityScheduler:
                 "target": self.cfg.target_workers,
             },
             "jobs": [asdict(job) | {"rss_gb": process_tree_rss_gb(job.pid)} for job in self.jobs],
+            "startup_recovery": self.startup_recovery,
         }
         if snap is not None:
             payload["memory"] = asdict(snap)
