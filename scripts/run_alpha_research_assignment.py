@@ -781,7 +781,10 @@ def execute_registered(
         if is_impact_proxy
         else "weekend_regime_comparison.json"
     )
-    logging_reports = [required_trade_logging_evaluation(path) for path in run_dirs]
+    logging_reports = [
+        required_trade_logging_evaluation(path, card["logging_requirements"])
+        for path in run_dirs
+    ]
     failed_logging = [
         index for index, report in enumerate(logging_reports) if not report["passed"]
     ]

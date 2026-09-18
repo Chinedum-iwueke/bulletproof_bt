@@ -12,7 +12,7 @@ import yaml
 
 from bt.data.config_utils import parse_date_range
 from bt.logging.formatting import FLOAT_DECIMALS_CSV, write_json_deterministic
-from bt.logging.decision_trace import flatten_decision_trace
+from bt.logging.decision_trace import flatten_decision_trace, serialize_decision_trace
 from bt.logging.trade_enrichment import enrich_trade_row
 from bt.data.dataset import load_dataset_manifest
 from bt.core.types import Trade
@@ -268,6 +268,7 @@ class TradesCsvWriter:
         "touched_1r_before_exit",
         "touched_2r_before_exit",
         "touched_3r_before_exit",
+        "decision_trace",
         "entry_decision_reason_code",
         "entry_decision_setup_class",
         "entry_decision_hypothesis_branch",
@@ -596,6 +597,9 @@ class TradesCsvWriter:
             "risk_stop_distance": entry_stop_distance,
             "risk_qty": entry_qty,
             "risk_initial_stop_r": 1.0 if entry_stop_distance else None,
+            "decision_trace": serialize_decision_trace(
+                metadata.get("decision_trace")
+            ),
         }
         computed_values.update(flatten_decision_trace(metadata.get("decision_trace")))
         dynamic_columns: list[str] = []

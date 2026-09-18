@@ -207,6 +207,40 @@ def test_required_trade_logging_fails_closed_on_null_risk_fields(tmp_path: Path)
     assert report["null_fields"] == {"requested_risk_amount": 1}
 
 
+def test_required_trade_logging_enforces_complete_declared_contract(
+    tmp_path: Path,
+) -> None:
+    row = {
+        "identity_ts_signal": "2026-01-01T00:00:00Z",
+        "requested_risk_amount": 100.0,
+        "risk_amount": 80.0,
+        "risk_utilization_pct": 0.8,
+        "under_risked_trade": True,
+        "decision_trace": '{"reason_code":"impact-reversal"}',
+        "impact_proxy": 0.01,
+    }
+    pd.DataFrame([row]).to_csv(tmp_path / "trades.csv", index=False)
+    report = required_trade_logging_evaluation(
+        tmp_path, ["decision_trace", "impact_proxy", "target_exit_ts"]
+    )
+    assert report["passed"] is False
+    assert report["missing_columns"] == ["target_exit_ts"]
+    assert report["declared_fields"] == [
+        "decision_trace",
+        "impact_proxy",
+        "target_exit_ts",
+    ]
+
+    row["target_exit_ts"] = "2026-01-01T00:30:00Z"
+    row["decision_trace"] = "not-json"
+    pd.DataFrame([row]).to_csv(tmp_path / "trades.csv", index=False)
+    report = required_trade_logging_evaluation(
+        tmp_path, ["decision_trace", "impact_proxy", "target_exit_ts"]
+    )
+    assert report["passed"] is False
+    assert report["invalid_fields"] == {"decision_trace": 1}
+
+
 def test_representation_applies_horizon_aware_split_gaps() -> None:
     import pandas as pd
 

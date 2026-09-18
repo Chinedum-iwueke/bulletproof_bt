@@ -50,6 +50,19 @@ def flatten_decision_trace(payload: dict[str, Any] | StrategyDecisionTrace | Non
     }
 
 
+def serialize_decision_trace(
+    payload: dict[str, Any] | StrategyDecisionTrace | None,
+) -> str | None:
+    """Retain the complete decision trace as deterministic JSON."""
+    if isinstance(payload, StrategyDecisionTrace):
+        data = payload.__dict__
+    elif isinstance(payload, dict):
+        data = payload
+    else:
+        return None
+    return json.dumps(data, sort_keys=True, separators=(",", ":"), default=str)
+
+
 def make_decision_trace(
     reason_code: str,
     setup_class: str,

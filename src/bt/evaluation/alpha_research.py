@@ -39,35 +39,62 @@ def trade_decision_timestamps(trades: pd.DataFrame) -> pd.Series:
     return timestamps
 
 
-def required_trade_logging_evaluation(run_dir: Path) -> dict[str, Any]:
-    """Prove that every retained trade carries the preregistered risk fields."""
+def required_trade_logging_evaluation(
+    run_dir: Path,
+    required_fields: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    """Prove every retained trade carries its exact preregistered logging contract."""
     trades_path = run_dir / "trades.csv"
     try:
         trades = pd.read_csv(trades_path)
     except pd.errors.EmptyDataError:
         trades = pd.DataFrame()
-    required = (
+    engine_required = (
         "identity_ts_signal",
         "requested_risk_amount",
         "risk_amount",
         "risk_utilization_pct",
         "under_risked_trade",
     )
+    declared = list(required_fields or ())
+    if any(not isinstance(field, str) or not field for field in declared):
+        raise BridgeError("required trade logging fields must be non-empty strings")
+    if len(declared) != len(set(declared)):
+        raise BridgeError("required trade logging fields must be unique")
+    required = tuple(dict.fromkeys([*declared, *engine_required]))
     missing_columns = sorted(set(required) - set(trades.columns))
     null_fields: dict[str, int] = {}
+    invalid_fields: dict[str, int] = {}
     if not trades.empty:
         for field in required:
             if field in trades:
                 count = int(trades[field].isna().sum())
                 if count:
                     null_fields[field] = count
-    passed = not missing_columns and not null_fields
+        if "decision_trace" in trades:
+            import json
+
+            invalid = 0
+            for value in trades["decision_trace"].dropna():
+                try:
+                    parsed = json.loads(str(value))
+                except (TypeError, ValueError):
+                    invalid += 1
+                    continue
+                if not isinstance(parsed, dict) or not parsed:
+                    invalid += 1
+            if invalid:
+                invalid_fields["decision_trace"] = invalid
+    passed = not missing_columns and not null_fields and not invalid_fields
     report = {
-        "schema_version": "alpha-required-trade-logging-v1.0.0",
+        "schema_version": "alpha-required-trade-logging-v1.1.0",
         "trade_count": int(len(trades)),
+        "declared_fields": declared,
+        "engine_required_fields": list(engine_required),
         "required_fields": list(required),
         "missing_columns": missing_columns,
         "null_fields": null_fields,
+        "invalid_fields": invalid_fields,
         "passed": passed,
     }
     report["record_digest"] = digest(report)
