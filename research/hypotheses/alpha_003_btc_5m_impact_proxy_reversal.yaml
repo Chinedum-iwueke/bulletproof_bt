@@ -138,8 +138,8 @@ evaluation:
       trade_writer_path: "src/bt/logging/trades.py"
 falsification_criteria:
   - "Reject if held-out return signed opposite to the signal-bar direction is nonpositive after registered costs."
-  - "Reject if the result is indistinguishable from the preregistered control matched on absolute signal-bar return but not impact-proxy extremity."
-  - "Reject if reversal is confined to one direction without preregistered asymmetric support."
+  - "Reject unless at least 30 one-to-one, no-reuse matched controls exist and the normal-approximation 95% lower confidence bound of paired extreme-minus-control signed 30m returns is strictly positive."
+  - "Reject unless both long and short directions each contain at least 10 held-out extreme observations and each direction has positive mean signed 30m reversal."
   - "Reject if held-out trade support is below 50 or doubled-cost mean net R is nonpositive."
   - "Reject observations whose completed signal-bar quote_volume is below USD 1,000,000."
 expected_failure_modes:

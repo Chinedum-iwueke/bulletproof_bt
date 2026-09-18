@@ -331,9 +331,13 @@ def test_impact_proxy_evaluation_uses_complete_causal_five_minute_bars() -> None
             "return_shock_control_band": 0.2,
         },
     )
-    assert report["schema_version"] == "alpha-impact-proxy-evaluation-v1.0.0"
+    assert report["schema_version"] == "alpha-impact-proxy-evaluation-v1.1.0"
     assert report["direction_balance"]["short"] >= 1
     assert report["matched_return_shock_control"]["extreme_observations"] >= 1
+    assert report["matched_return_shock_control"]["control_reuse"] is False
+    assert "paired_difference_lower_95" in report["matched_return_shock_control"]
+    assert report["direction_balance"]["minimum_per_direction"] == 10
+    assert report["direction_balance"]["balanced_positive_reversal"] is False
     assert "record_digest" in report
 
 
