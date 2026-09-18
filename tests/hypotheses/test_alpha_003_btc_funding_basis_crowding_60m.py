@@ -38,7 +38,7 @@ def _assignment() -> dict:
 
 def _frame(minutes: int = 70) -> pd.DataFrame:
     ts = pd.date_range("2023-01-01", periods=minutes, freq="1min", tz="UTC")
-    return pd.DataFrame({"ts": ts, "symbol": "BTCUSDT", "close": [100 + i / 100 for i in range(minutes)], "quote_volume": 250_000.0, "mark_close": 101.0, "index_close": 100.0, "funding_rate": .001, "funding_source_ts": ts})
+    return pd.DataFrame({"ts": ts, "symbol": "BTCUSDT", "close": [100 + i / 100 for i in range(minutes)], "quote_volume": 250_000.0, "mark_close": 101.0, "index_close": 100.0, "basis_close_vs_index": .01, "funding_rate": .001, "funding_source_ts": ts})
 
 
 def test_exact_card_compiles_deterministically_without_template_substitution() -> None:
@@ -72,6 +72,66 @@ def test_latest_backward_funding_join_uses_source_time_not_row_order() -> None:
     decisions = _complete_decisions(frame)
     assert decisions.iloc[1]["funding_rate"] == .2
     assert decisions.iloc[1]["funding_source_ts"] == frame.loc[1, "ts"]
+
+
+def test_exact_admitted_basis_is_used_without_mark_index_substitution() -> None:
+    frame = _frame(10)
+    frame["basis_close_vs_index"] = -.002
+    frame["mark_close"] = 110.0
+    frame["index_close"] = 100.0
+
+    decisions = _complete_decisions(frame)
+
+    assert decisions["basis"].tolist() == [-.002, -.002]
+
+
+def test_missing_admitted_basis_is_invalid_even_when_mark_index_are_available() -> None:
+    frame = _frame(70).drop(columns="basis_close_vs_index")
+
+    decisions = _complete_decisions(frame)
+
+    assert decisions["basis"].isna().all()
+    result = funding_basis_matched_evaluation(
+        frame,
+        params={"funding_percentile_threshold": .95, "basis_threshold_bps": 0.0},
+    )
+    assert all(not item["valid"] for item in result["decision_records"])
+
+
+def test_missing_funding_occupies_its_decision_row_in_percentile_window(
+    monkeypatch,
+) -> None:
+    history = 25_920
+    start = pd.Timestamp("2023-01-01T00:05:00Z")
+    rows = []
+    for index in range(history + 1):
+        decision = start + pd.Timedelta(minutes=5 * index)
+        rows.append({
+            "decision_ts": decision,
+            "bucket_ts": decision - pd.Timedelta(minutes=5),
+            "complete": True,
+            "close": 100.0,
+            "quote_volume_5m": 1_250_000.0,
+            "funding_rate": None if index == 100 else .001,
+            "funding_source_ts": None if index == 100 else decision,
+            "basis": .001,
+            "trailing_return_60m": .01,
+            "realized_volatility_6h": .02,
+            "target_return_60m": -.01,
+            "target_complete": True,
+        })
+    monkeypatch.setattr(
+        "bt.strategy.btc_funding_basis_crowding_60m._complete_decisions",
+        lambda frame: pd.DataFrame(rows),
+    )
+
+    result = funding_basis_matched_evaluation(
+        pd.DataFrame(),
+        params={"funding_percentile_threshold": .95, "basis_threshold_bps": 0.0},
+    )
+
+    assert result["decision_records"][-1]["funding_threshold"] is None
+    assert result["decision_records"][-1]["status"] == "control"
 
 
 def test_incomplete_target_is_invalid_and_all_outcomes_are_retained() -> None:
