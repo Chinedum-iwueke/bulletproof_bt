@@ -7,6 +7,7 @@ from orchestrator.alpha_capacity_owner import current_owner, owner_alive
 from orchestrator.global_capacity_scheduler import (
     CapacitySchedulerConfig, CapacityScheduler, ManagedJob,
     external_locked_worker_slots,
+    reconcile_orphaned_capacity_locks,
 )
 
 
@@ -15,6 +16,7 @@ def test_owner_binding_rejects_missing_and_reused_pid():
     assert owner_alive(payload)
     assert not owner_alive({})
     assert not owner_alive({**payload, "owner_start_ticks": "impossible"})
+    assert not owner_alive({**payload, "owner_boot_id": "previous-boot"})
 
 
 @pytest.fixture
@@ -45,6 +47,72 @@ def test_orphan_capacity_locks_are_counted(scheduler):
     scheduler.db.dequeue_by_id("approved_backtests", queue_id, "capacity:old-leader")
     assert external_locked_worker_slots(scheduler.db, "approved_backtests", scheduler.cfg, {}) == 8
     assert external_locked_worker_slots(scheduler.db, "approved_backtests", scheduler.cfg, {}, {"capacity:old-leader"}) == 0
+
+
+def test_startup_reconciliation_fails_dead_governed_owner(scheduler):
+    queue_id = scheduler.db.enqueue(
+        queue_name="approved_backtests",
+        item_type="governed_alpha_assignment",
+        item_id="orphan",
+        payload={
+            "kind": "governed_alpha_assignment",
+            "max_workers": 8,
+            "owner_pid": 999999,
+            "owner_start_ticks": "missing",
+            "owner_boot_id": "previous-boot",
+        },
+    )
+    scheduler.db.dequeue_by_id(
+        "approved_backtests", queue_id, f"capacity:{os.uname().nodename}:old"
+    )
+
+    recovered = reconcile_orphaned_capacity_locks(
+        scheduler.db,
+        queue_name="approved_backtests",
+        hostname=os.uname().nodename,
+        max_job_attempts=2,
+    )
+
+    row = scheduler.db.connect().execute(
+        "SELECT status, last_error FROM queues WHERE id = ?", (queue_id,)
+    ).fetchone()
+    assert recovered == {
+        "requeued": 0,
+        "failed_dead_owner": 1,
+        "failed_attempts": 0,
+    }
+    assert row["status"] == "FAILED"
+    assert "partial artifacts retained" in row["last_error"]
+
+
+def test_startup_reconciliation_requeues_live_governed_owner(scheduler):
+    payload = {
+        "kind": "governed_alpha_assignment",
+        "max_workers": 8,
+        **current_owner(),
+    }
+    queue_id = scheduler.db.enqueue(
+        queue_name="approved_backtests",
+        item_type="governed_alpha_assignment",
+        item_id="live-owner",
+        payload=payload,
+    )
+    scheduler.db.dequeue_by_id(
+        "approved_backtests", queue_id, f"capacity:{os.uname().nodename}:old"
+    )
+
+    recovered = reconcile_orphaned_capacity_locks(
+        scheduler.db,
+        queue_name="approved_backtests",
+        hostname=os.uname().nodename,
+        max_job_attempts=2,
+    )
+
+    row = scheduler.db.connect().execute(
+        "SELECT status, locked_by FROM queues WHERE id = ?", (queue_id,)
+    ).fetchone()
+    assert recovered["requeued"] == 1
+    assert dict(row) == {"status": "PENDING", "locked_by": None}
 
 
 def test_two_eight_worker_jobs_fit_but_third_does_not(scheduler):
