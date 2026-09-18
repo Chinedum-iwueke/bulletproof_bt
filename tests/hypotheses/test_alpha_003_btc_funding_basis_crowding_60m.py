@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import pandas as pd
 import yaml
@@ -59,7 +60,7 @@ def test_contract_is_frozen_classic_only_and_admitted() -> None:
     assert contract.materialize_grid() == contract.materialize_grid()
     assert len(contract.materialize_grid()) == 4
     raw = yaml.safe_load(YAML_PATH.read_text())
-    assert raw["version"] == "1.3.0"
+    assert raw["version"] == "1.4.0"
     assert raw["costs"]["delay_bars"] == 1
     assert raw["immutable_contract"]["question"] == QUESTION
     assert raw["evaluation"]["selection_metric"] == "validation_treated_minus_control_mean"
@@ -415,6 +416,81 @@ def test_native_history_inserts_wholly_missing_decision_rows() -> None:
     assert len(strategy.funding_history["BTCUSDT"]) == 4
 
 
+def test_native_signal_is_emitted_at_rollover_without_rollover_bar_inputs() -> None:
+    strategy = BtcFundingBasisCrowding60mStrategy()
+    strategy.funding_history["BTCUSDT"].extend([.001] * 25_920)
+    strategy.completed_buckets["BTCUSDT"].extend(
+        (
+            pd.Timestamp("2022-12-31T18:00:00Z")
+            + pd.Timedelta(minutes=5 * index),
+            99.0 + index / 100,
+            True,
+        )
+        for index in range(72)
+    )
+    start = pd.Timestamp("2023-01-01T00:00:00Z")
+    emitted = []
+    for minute in range(6):
+        ts = start + pd.Timedelta(minutes=minute)
+        funding_rate = .002 if minute < 5 else -99.0
+        basis = .01 if minute < 5 else -99.0
+        emitted.extend(strategy.on_bars(ts, {"BTCUSDT": Bar(
+            ts=ts,
+            symbol="BTCUSDT",
+            open=100.0,
+            high=101.0,
+            low=99.0,
+            close=100.0,
+            volume=1.0,
+            extra={
+                "quote_volume": 250_000.0,
+                "mark_close": 101.0,
+                "index_close": 100.0,
+                "basis_close_vs_index": basis,
+                "funding_rate": funding_rate,
+                "funding_source_ts": ts,
+            },
+        )}, {"BTCUSDT"}, {"positions": {}}))
+        if minute == 4:
+            assert emitted == []
+
+    assert len(emitted) == 1
+    signal = emitted[0]
+    assert signal.ts == start + pd.Timedelta(minutes=5)
+    assert signal.metadata["decision_ts"] == signal.ts.isoformat()
+    assert signal.metadata["signal_emitted_at"] == signal.ts.isoformat()
+    assert signal.metadata["funding_rate"] == .002
+    assert signal.metadata["basis_close_vs_index"] == .01
+
+
+def test_period_evaluation_drawdown_is_scoped_to_requested_partition(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "run"
+    run.mkdir()
+    pd.DataFrame({
+        "signal_ts": pd.to_datetime([
+            "2023-01-01T00:00:00Z",
+            "2023-01-02T00:00:00Z",
+            "2023-01-03T00:00:00Z",
+            "2023-01-04T00:00:00Z",
+        ]),
+        "r_net": [-100.0, 2.0, -3.0, -100.0],
+    }).to_csv(run / "trades.csv", index=False)
+
+    result = assignment_runner.period_evaluation(
+        run,
+        "2023-01-02T00:00:00Z",
+        "2023-01-03T00:00:00Z",
+    )
+
+    assert result == {
+        "trade_count": 2,
+        "mean_net_r": -0.5,
+        "maximum_drawdown": 3.0,
+    }
+
+
 def test_native_strategy_does_not_evaluate_stale_bucket_after_whole_gap() -> None:
     strategy = BtcFundingBasisCrowding60mStrategy()
     strategy.funding_history["BTCUSDT"].extend([.001] * 25_920)
@@ -515,9 +591,17 @@ def test_classic_engine_executes_fills_costs_exit_and_trade_metadata(tmp_path: P
         equity_path=run / "equity.csv", config={},
     )
     engine.run()
-    fills = (run / "fills.jsonl").read_text().splitlines()
+    fills = [
+        json.loads(line)
+        for line in (run / "fills.jsonl").read_text().splitlines()
+    ]
     trades = pd.read_csv(run / "trades.csv")
     assert len(fills) >= 2
+    entry_fill = fills[0]
+    assert pd.Timestamp(entry_fill["ts"]) == (
+        pd.Timestamp(entry_fill["metadata"]["signal_ts"])
+        + pd.Timedelta(minutes=1)
+    )
     assert not trades.empty
     assert trades.iloc[0]["funding_source_ts"] == "2023-01-01T00:04:00+00:00"
     assert float(trades.iloc[0]["fees"]) > 0
@@ -664,5 +748,5 @@ def test_execute_registered_retains_per_variant_truth_and_finalized_bundles(
     heldout_evaluation = yaml.safe_load(heldout[0].read_text())
     assert heldout_evaluation["maximum_drawdown"] >= 0
     assert heldout_evaluation["maximum_drawdown_authority"] == (
-        "classic_engine_canonical_R"
+        "classic_engine_trade_log_partition_R"
     )

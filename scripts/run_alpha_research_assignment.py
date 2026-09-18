@@ -545,16 +545,26 @@ def period_evaluation(run_dir: Path, start: str, end: str) -> dict[str, Any]:
     except pd.errors.EmptyDataError:
         trades = pd.DataFrame()
     if trades.empty:
-        return {"trade_count": 0, "mean_net_r": 0.0}
+        return {
+            "trade_count": 0,
+            "mean_net_r": 0.0,
+            "maximum_drawdown": 0.0,
+        }
     decisions = trade_decision_timestamps(trades)
     sample = trades.loc[
         (decisions >= pd.Timestamp(start)) & (decisions <= pd.Timestamp(end))
     ]
     net_column = "r_net" if "r_net" in sample else "r_multiple_net"
     net = pd.to_numeric(sample[net_column], errors="coerce").dropna()
+    cumulative = pd.concat(
+        [pd.Series([0.0], dtype=float), net.reset_index(drop=True)],
+        ignore_index=True,
+    ).cumsum()
+    maximum_drawdown = float((cumulative.cummax() - cumulative).max())
     return {
         "trade_count": int(len(net)),
         "mean_net_r": float(net.mean()) if len(net) else 0.0,
+        "maximum_drawdown": maximum_drawdown,
     }
 
 
@@ -942,11 +952,16 @@ def execute_registered(
             for variant in variants
         ]
         for index, item in enumerate(validation):
-            item["evaluation_partition"] = "validation"
-            item["maximum_drawdown"] = float(
-                results[index].get("max_drawdown_r", 0.0)
+            partition = period_evaluation(
+                run_dirs[index],
+                rep.split.validation_start,
+                rep.split.validation_end,
             )
-            item["maximum_drawdown_authority"] = "classic_engine_canonical_R"
+            item["evaluation_partition"] = "validation"
+            item["maximum_drawdown"] = partition["maximum_drawdown"]
+            item["maximum_drawdown_authority"] = (
+                "classic_engine_trade_log_partition_R"
+            )
             item["record_digest"] = digest(item)
         selected_index = select_funding_basis_variant(validation)
         selection_metric = "validation_treated_minus_control_mean"
@@ -1023,12 +1038,17 @@ def execute_registered(
         else None
     )
     if heldout_evaluation is not None:
-        heldout_evaluation["evaluation_partition"] = "test"
-        heldout_evaluation["maximum_drawdown"] = float(
-            results[selected_index].get("max_drawdown_r", 0.0)
+        heldout_partition = period_evaluation(
+            run_dirs[selected_index],
+            rep.split.test_start,
+            rep.split.test_end,
         )
+        heldout_evaluation["evaluation_partition"] = "test"
+        heldout_evaluation["maximum_drawdown"] = heldout_partition[
+            "maximum_drawdown"
+        ]
         heldout_evaluation["maximum_drawdown_authority"] = (
-            "classic_engine_canonical_R"
+            "classic_engine_trade_log_partition_R"
         )
         heldout_evaluation["record_digest"] = digest(heldout_evaluation)
     unsupported_validation = None
@@ -1231,6 +1251,11 @@ def execute_registered(
                 "doubled_cost_treated_minus_control",
             )
         })
+        metrics["maximum_drawdown"] = (
+            evaluation_artifact["maximum_drawdown"]
+            if selected_index is not None
+            else validation[execution_index]["maximum_drawdown"]
+        )
     else:
         metrics["selection_bias_audit"] = selection_audit
     required_metrics = tuple(
