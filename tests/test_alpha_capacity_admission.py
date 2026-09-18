@@ -99,3 +99,37 @@ def test_admission_launches_two_jobs_with_one_shared_budget(scheduler, monkeypat
     assert not scheduler._launch_next_if_capacity(memory)
     assert len(commands) == 2
     assert sum(job.estimated_workers for job in scheduler.jobs) == 16
+
+
+def test_completed_child_is_reaped_before_expired_owner_can_overwrite_done(scheduler, monkeypatch):
+    queue_id = scheduler.db.enqueue(
+        queue_name="approved_backtests",
+        item_type="governed_alpha_assignment",
+        item_id="terminal",
+        payload={
+            "kind": "governed_alpha_assignment",
+            "owner_pid": 999999,
+            "owner_start_ticks": "expired",
+            "max_workers": 8,
+        },
+    )
+    scheduler.db.dequeue_by_id("approved_backtests", queue_id, "capacity:test")
+    scheduler.db.mark_queue_failed(queue_id, "stale race")
+    scheduler.db.mark_queue_done(queue_id)
+    scheduler.jobs.append(
+        ManagedJob(
+            "capacity:test", 123, 123, queue_id, "terminal", 8, 0, "running", "now"
+        )
+    )
+    monkeypatch.setattr(os, "waitpid", lambda pid, flags: (pid, 0))
+    killed = []
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: killed.append((pgid, sig)))
+
+    scheduler._reap_jobs()
+
+    row = scheduler.db.connect().execute(
+        "SELECT status, last_error FROM queues WHERE id = ?", (queue_id,)
+    ).fetchone()
+    assert dict(row) == {"status": "DONE", "last_error": None}
+    assert scheduler.jobs == []
+    assert killed == []

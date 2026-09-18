@@ -378,22 +378,26 @@ class CapacityScheduler:
     def _reap_jobs(self) -> None:
         kept: list[ManagedJob] = []
         for job in self.jobs:
-            if job.queue_id:
-                row = self.db.connect().execute("SELECT status, payload_json FROM queues WHERE id = ?", (job.queue_id,)).fetchone()
-                payload = json.loads(row["payload_json"]) if row else {}
-                from orchestrator.alpha_capacity_owner import owner_alive
-                if row and payload.get("kind") == "governed_alpha_assignment" and (row["status"] == "FAILED" or not owner_alive(payload)):
-                    if row["status"] != "FAILED":
-                        self.db.mark_queue_failed(job.queue_id, "Hermes execution lease owner disappeared")
-                    try:
-                        os.killpg(job.pgid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
             try:
                 pid, status = os.waitpid(job.pid, os.WNOHANG)
             except ChildProcessError:
                 pid, status = job.pid, 0
             if pid == 0:
+                if job.queue_id:
+                    row = self.db.connect().execute(
+                        "SELECT status, payload_json FROM queues WHERE id = ?",
+                        (job.queue_id,),
+                    ).fetchone()
+                    payload = json.loads(row["payload_json"]) if row else {}
+                    from orchestrator.alpha_capacity_owner import owner_alive
+
+                    if row and payload.get("kind") == "governed_alpha_assignment" and (row["status"] == "FAILED" or not owner_alive(payload)):
+                        if row["status"] != "FAILED":
+                            self.db.mark_queue_failed(job.queue_id, "Hermes execution lease owner disappeared")
+                        try:
+                            os.killpg(job.pgid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
                 kept.append(job)
                 continue
             if os.WIFEXITED(status):

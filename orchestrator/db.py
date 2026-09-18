@@ -623,7 +623,7 @@ class ResearchDB:
         now = self._now()
         conn = self.connect()
         conn.execute(
-            "UPDATE queues SET status = 'DONE', updated_at = ?, locked_at = NULL, locked_by = NULL WHERE id = ?",
+            "UPDATE queues SET status = 'DONE', updated_at = ?, last_error = NULL, locked_at = NULL, locked_by = NULL WHERE id = ?",
             (now, queue_id),
         )
         conn.commit()
