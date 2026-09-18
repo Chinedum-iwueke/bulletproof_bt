@@ -3,15 +3,34 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 import pandas as pd
 
 from bt.core.enums import Side
 from bt.core.types import Bar, Signal
+from bt.evaluation.alpha_research import empirical_lower_quantile
 from bt.logging.decision_trace import make_decision_trace
 from bt.strategy import register_strategy
 from bt.strategy.base import Strategy
+
+
+@dataclass
+class _QuoteBucket:
+    start: pd.Timestamp
+    total: float
+    valid: bool
+    count: int
+    last_ts: pd.Timestamp
+
+    @property
+    def complete(self) -> bool:
+        return (
+            self.valid
+            and self.count == 5
+            and self.last_ts - self.start == pd.Timedelta(minutes=4)
+        )
 
 
 @register_strategy("btc_5m_impact_proxy_reversal")
@@ -54,7 +73,7 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
             lambda: deque(maxlen=self.ATR_WINDOW)
         )
         self._previous_close: dict[str, float] = {}
-        self._quote_bucket: dict[str, tuple[pd.Timestamp, float, bool]] = {}
+        self._quote_bucket: dict[str, _QuoteBucket] = {}
         self._exit_submitted: set[str] = set()
         self._last_signal_bar_ts: dict[str, pd.Timestamp] = {}
 
@@ -93,12 +112,6 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
             return None
         return value if value >= 0.0 else None
 
-    @staticmethod
-    def _empirical_quantile(values: deque[float], probability: float) -> float:
-        ordered = sorted(values)
-        index = int((len(ordered) - 1) * probability)
-        return ordered[index]
-
     def _roll_quote_bucket(
         self, bar: Bar
     ) -> tuple[pd.Timestamp | None, float | None, bool]:
@@ -109,15 +122,24 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
         completed_ts: pd.Timestamp | None = None
         completed: float | None = None
         complete = False
-        if prior is not None and prior[0] != bucket:
-            completed_ts, completed, complete = prior
-        if prior is None or prior[0] != bucket:
-            self._quote_bucket[bar.symbol] = (bucket, value or 0.0, value is not None)
+        if prior is not None and prior.start != bucket:
+            completed_ts, completed, complete = prior.start, prior.total, prior.complete
+        if prior is None or prior.start != bucket:
+            self._quote_bucket[bar.symbol] = _QuoteBucket(
+                start=bucket,
+                total=value or 0.0,
+                valid=value is not None and bar.ts == bucket,
+                count=1,
+                last_ts=bar.ts,
+            )
         else:
-            self._quote_bucket[bar.symbol] = (
-                bucket,
-                prior[1] + (value or 0.0),
-                prior[2] and value is not None,
+            sequential = bar.ts == prior.last_ts + pd.Timedelta(minutes=1)
+            self._quote_bucket[bar.symbol] = _QuoteBucket(
+                start=bucket,
+                total=prior.total + (value or 0.0),
+                valid=prior.valid and value is not None and sequential,
+                count=prior.count + 1,
+                last_ts=bar.ts,
             )
         return completed_ts, completed, complete
 
@@ -201,7 +223,7 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
             ratios = self._ratios[symbol]
             enough_history = len(ratios) == self._window
             threshold_value = (
-                self._empirical_quantile(ratios, self._threshold)
+                empirical_lower_quantile(ratios, self._threshold)
                 if enough_history else None
             )
             liquid = completed_quote >= self.LIQUIDITY_FLOOR_USD
@@ -283,7 +305,6 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
                         "r_per_trade": self._r_per_trade,
                         "sizing_mode": "risk_at_stop",
                         "cap_policy": "allow_clip_with_truth",
-                        "requested_risk_amount": None,
                         "stop_model": "fixed_completed_5m_atr",
                         "stop_price": stop_price,
                         "entry_stop_price": stop_price,
@@ -298,6 +319,7 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
                         "counterfactual_return_shock_band": self._control_band,
                         "target_horizon_minutes": 30,
                         "target_exit_ts": target_exit_ts.isoformat(),
+                        "signal_ts": pd.Timestamp(ts).isoformat(),
                         "decision_trace": trace,
                     },
                 ))

@@ -11,6 +11,7 @@ from bt.contracts.research_specs_v2 import canonical_hash
 from bt.core.enums import Side
 from bt.core.types import Bar
 from bt.data.resample import HTFBar
+from bt.evaluation.alpha_research import empirical_lower_quantile
 from bt.governance.alpha_strategy_pipeline import (
     confirm_card,
     draft_research_card,
@@ -66,16 +67,42 @@ def _closed(ts: pd.Timestamp, close: float, *, complete: bool = True) -> HTFBar:
 def _run_returns(strategy, returns: list[float], *, tradeable=True, with_quote=True):
     outputs = []
     close = 100.0
-    start = pd.Timestamp("2023-01-01T00:05:00Z")
+    start = pd.Timestamp("2023-01-01T00:00:00Z")
+    closed = None
     for index, value in enumerate(returns):
-        ts = start + pd.Timedelta(minutes=5 * index)
+        bucket_start = start + pd.Timedelta(minutes=5 * index)
+        if closed is not None:
+            outputs.extend(strategy.on_bars(
+                bucket_start,
+                {"BTCUSDT": _bar(bucket_start, quote_volume=400_000.0 if with_quote else None)},
+                {"BTCUSDT"} if tradeable else set(),
+                {"positions": {}, "htf": {"5m": {"BTCUSDT": closed}}},
+            ))
+            minute_start = 1
+        else:
+            minute_start = 0
+        for minute in range(minute_start, 5):
+            ts = bucket_start + pd.Timedelta(minutes=minute)
+            outputs.extend(strategy.on_bars(
+                ts,
+                {"BTCUSDT": _bar(ts, quote_volume=400_000.0 if with_quote else None)},
+                {"BTCUSDT"} if tradeable else set(),
+                {"positions": {}, "htf": {"5m": {}}},
+            ))
         close *= 1.0 + value
-        bar = _bar(ts, quote_volume=2_000_000.0 if with_quote else None)
-        outputs.extend(strategy.on_bars(
-            ts, {"BTCUSDT": bar}, {"BTCUSDT"} if tradeable else set(),
-            {"positions": {}, "htf": {"5m": {"BTCUSDT": _closed(ts, close)}}},
-        ))
+        closed = _closed(bucket_start + pd.Timedelta(minutes=5), close)
+    rollover = start + pd.Timedelta(minutes=5 * len(returns))
+    outputs.extend(strategy.on_bars(
+        rollover,
+        {"BTCUSDT": _bar(rollover, quote_volume=400_000.0 if with_quote else None)},
+        {"BTCUSDT"} if tradeable else set(),
+        {"positions": {}, "htf": {"5m": {"BTCUSDT": closed}}},
+    ))
     return outputs
+
+
+def test_strategy_and_evaluator_share_exact_empirical_quantile() -> None:
+    assert empirical_lower_quantile([1.0, 2.0, 3.0, 100.0], 0.75) == 3.0
 
 
 def test_exact_native_card_is_discovered_and_compiles_deterministically() -> None:
@@ -150,6 +177,7 @@ def test_strategy_uses_only_completed_history_and_emits_opposite_direction() -> 
     assert entry.metadata["signal_return_5m"] == pytest.approx(0.10)
     assert entry.metadata["quote_volume_5m"] == pytest.approx(2_000_000.0)
     assert entry.metadata["target_horizon_minutes"] == 30
+    assert pd.Timestamp(entry.metadata["signal_ts"]) == entry.ts
     assert entry.metadata["decision_trace"]
     assert entry.metadata["stop_price"] > entry.metadata["entry_reference_price"]
 
@@ -226,6 +254,29 @@ def test_quote_volume_bucket_must_match_the_exact_closed_price_bucket() -> None:
                 {"positions": {}, "htf": {"5m": {"BTCUSDT": closed}}},
             )
         )
+    assert signals == []
+
+
+def test_quote_volume_bucket_rejects_a_missing_minute() -> None:
+    strategy = Btc5mImpactProxyReversalStrategy(
+        impact_proxy_threshold=0.75, normalization_window=2
+    )
+    start = pd.Timestamp("2023-01-01T00:00:00Z")
+    for minute in (0, 1, 3, 4):
+        ts = start + pd.Timedelta(minutes=minute)
+        strategy.on_bars(
+            ts,
+            {"BTCUSDT": _bar(ts, quote_volume=500_000.0)},
+            {"BTCUSDT"},
+            {"positions": {}, "htf": {"5m": {}}},
+        )
+    rollover = start + pd.Timedelta(minutes=5)
+    signals = strategy.on_bars(
+        rollover,
+        {"BTCUSDT": _bar(rollover, quote_volume=500_000.0)},
+        {"BTCUSDT"},
+        {"positions": {}, "htf": {"5m": {"BTCUSDT": _closed(rollover, 110.0)}}},
+    )
     assert signals == []
 
 

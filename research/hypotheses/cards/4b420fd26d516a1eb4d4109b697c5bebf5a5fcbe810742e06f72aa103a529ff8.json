@@ -83,6 +83,10 @@
       "embargo_seconds": 1800
     },
     "native_implementation": {
+      "shared_empirical_quantile": {
+        "path": "src/bt/evaluation/alpha_research.py",
+        "function": "empirical_lower_quantile"
+      },
       "held_out_cost_stress": {
         "path": "src/bt/evaluation/alpha_research.py",
         "function": "held_out_trade_evaluation"
@@ -93,7 +97,15 @@
       },
       "split_binding": {
         "path": "scripts/run_alpha_research_assignment.py",
-        "function": "representation"
+        "function": "representation",
+        "decision_timestamp_column": "identity_ts_signal",
+        "decision_opportunities": "strict_complete_5m_bars"
+      },
+      "required_trade_logging": {
+        "path": "src/bt/evaluation/alpha_research.py",
+        "function": "required_trade_logging_evaluation",
+        "engine_risk_path": "src/bt/risk/risk_engine.py",
+        "trade_writer_path": "src/bt/logging/trades.py"
       }
     }
   },

@@ -1,9 +1,13 @@
 from pathlib import Path
+import pandas as pd
 import pytest
 
 from bt.evaluation.alpha_research import (
+    complete_five_minute_bars,
+    complete_timeframe_bars,
     held_out_trade_evaluation,
     impact_proxy_evaluation,
+    required_trade_logging_evaluation,
 )
 from bt.governance.research_bridge import BridgeError
 
@@ -157,6 +161,11 @@ def test_held_out_evaluation_is_temporal_and_doubles_observed_costs(
                 "2026-02-01T00:00:00Z",
                 "2026-02-02T00:00:00Z",
             ],
+            "identity_ts_signal": [
+                "2026-01-01T00:00:00Z",
+                "2026-02-01T00:00:00Z",
+                "2026-02-02T00:00:00Z",
+            ],
             "r_net": [9.0, 0.5, 0.25],
             "cost_drag_r": [0.1, 0.1, 0.1],
         }
@@ -166,6 +175,36 @@ def test_held_out_evaluation_is_temporal_and_doubles_observed_costs(
     assert report["mean_net_r"] == 0.375
     assert report["double_cost_mean_net_r"] == 0.275
     assert report["adequate_support"] is False
+
+
+def test_held_out_membership_uses_decision_not_entry_fill(tmp_path: Path) -> None:
+    pd.DataFrame(
+        {
+            "entry_ts": ["2026-02-01T00:00:00Z"],
+            "identity_ts_signal": ["2026-01-31T23:59:00Z"],
+            "r_net": [10.0],
+            "cost_drag_r": [0.1],
+        }
+    ).to_csv(tmp_path / "trades.csv", index=False)
+    report = held_out_trade_evaluation(tmp_path, "2026-02-01T00:00:00Z")
+    assert report["trade_count"] == 0
+
+
+def test_required_trade_logging_fails_closed_on_null_risk_fields(tmp_path: Path) -> None:
+    complete = {
+        "identity_ts_signal": ["2026-01-01T00:00:00Z"],
+        "requested_risk_amount": [100.0],
+        "risk_amount": [80.0],
+        "risk_utilization_pct": [0.8],
+        "under_risked_trade": [True],
+    }
+    pd.DataFrame(complete).to_csv(tmp_path / "trades.csv", index=False)
+    assert required_trade_logging_evaluation(tmp_path)["passed"] is True
+    complete["requested_risk_amount"] = [None]
+    pd.DataFrame(complete).to_csv(tmp_path / "trades.csv", index=False)
+    report = required_trade_logging_evaluation(tmp_path)
+    assert report["passed"] is False
+    assert report["null_fields"] == {"requested_risk_amount": 1}
 
 
 def test_representation_applies_horizon_aware_split_gaps() -> None:
@@ -185,11 +224,45 @@ def test_representation_applies_horizon_aware_split_gaps() -> None:
         embargo_seconds=1800,
     )
     split = contract.split
+    assert pd.Timestamp(split.train_start) == timestamps[0] + pd.Timedelta(minutes=1)
     assert pd.Timestamp(split.validation_start) - pd.Timestamp(split.train_end) > pd.Timedelta(minutes=30)
     assert pd.Timestamp(split.test_start) - pd.Timestamp(split.validation_end) > pd.Timedelta(minutes=30)
     assert split.purge_seconds == 1800
     assert split.embargo_seconds == 1800
     assert report["status"] == "certified"
+
+
+def test_representation_sorts_source_and_rejects_duplicate_minutes() -> None:
+    frame = pd.DataFrame(
+        {
+            "ts": [
+                "2026-01-01T00:01:00Z",
+                "2026-01-01T00:00:00Z",
+                "2026-01-01T00:01:00Z",
+            ],
+            "symbol": ["BTCUSDT"] * 3,
+            "close": [101.0, 100.0, 101.0],
+        }
+    )
+    with pytest.raises(BridgeError, match="duplicate instrument timestamps"):
+        representation(assignment(), frame, "f" * 64)
+
+
+def test_representation_uses_complete_five_minute_decision_rows() -> None:
+    timestamps = pd.date_range("2026-01-01T00:00:00Z", periods=240, freq="1min")
+    frame = pd.DataFrame(
+        {
+            "ts": timestamps,
+            "symbol": "BTCUSDT",
+            "close": 100.0,
+            "quote_volume": 1_000_000.0,
+        }
+    )
+    contract, _ = representation(
+        assignment(), frame, "f" * 64,
+        purge_seconds=1800, embargo_seconds=1800, decision_timeframe="5m",
+    )
+    assert pd.Timestamp(contract.split.train_start) == timestamps[0] + pd.Timedelta(minutes=5)
 
 
 def test_impact_proxy_evaluation_uses_complete_causal_five_minute_bars() -> None:
@@ -251,6 +324,38 @@ def test_impact_proxy_evaluation_rejects_duplicate_minutes() -> None:
                 "return_shock_control_band": 0.2,
             },
         )
+
+
+def test_impact_proxy_target_requires_exact_wall_clock_horizon() -> None:
+    rows = []
+    start = pd.Timestamp("2026-01-01T00:00:00Z")
+    for minute in range(60):
+        if 30 <= minute < 35:
+            continue
+        rows.append(
+            {
+                "ts": start + pd.Timedelta(minutes=minute),
+                "symbol": "BTCUSDT",
+                "close": 100.0 + minute,
+                "quote_volume": 1_000_000.0,
+            }
+        )
+    bars = complete_five_minute_bars(pd.DataFrame(rows))
+    assert pd.Timestamp("2026-01-01T00:30:00Z") not in set(bars["ts"])
+
+
+def test_structural_reconstruction_supports_nonstandard_minute_timeframes() -> None:
+    start = pd.Timestamp("2026-01-01T00:00:00Z")
+    frame = pd.DataFrame(
+        {
+            "ts": pd.date_range(start, periods=14, freq="1min"),
+            "symbol": "BTCUSDT",
+            "close": range(14),
+        }
+    )
+    bars = complete_timeframe_bars(frame, "7m")
+    assert list(bars["ts"]) == [start, start + pd.Timedelta(minutes=7)]
+    assert list(bars["close"]) == [6, 13]
 
 
 def test_durable_bundle_and_native_memory_are_idempotent(tmp_path: Path) -> None:
