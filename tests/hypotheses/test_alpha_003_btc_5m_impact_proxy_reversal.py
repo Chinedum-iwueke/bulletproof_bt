@@ -92,6 +92,17 @@ def test_exact_native_card_is_discovered_and_compiles_deterministically() -> Non
     assert first["artifact_bundle"] == second["artifact_bundle"]
     assert first["artifact_bundle"]["compile_readiness"]["status"] == "registry_ready"
     assert first["artifact_bundle"]["run_config"]["strategy"]["name"] == "btc_5m_impact_proxy_reversal"
+    generated_evaluation = first["artifact_bundle"]["engine_hypothesis_yaml"][
+        "evaluation"
+    ]
+    assert generated_evaluation["split"]["purge_seconds"] == 1800
+    assert generated_evaluation["split"]["embargo_seconds"] == 1800
+    assert generated_evaluation["native_implementation"][
+        "matched_return_shock_control"
+    ] == {
+        "path": "src/bt/evaluation/alpha_research.py",
+        "function": "impact_proxy_evaluation",
+    }
     assert first["review"]["gates"]["independent_review_complete"] is False
     assert first["authority"] == {"capital": False, "orders": False, "promotion": False, "self_approval": False}
 
@@ -117,8 +128,8 @@ def test_yaml_grid_and_admission_are_deterministic_and_classic_only() -> None:
         "validation_fraction": 0.2,
         "test_fraction": 0.2,
         "boundary_policy": "next_row_after_prior_partition",
-        "purge_seconds": 60,
-        "embargo_seconds": 60,
+        "purge_seconds": 1800,
+        "embargo_seconds": 1800,
     }
     report = validate_hypothesis_admission(YAML_PATH)
     assert report.status == "PASS", report.to_dict()
@@ -189,6 +200,33 @@ def test_repeated_or_incomplete_htf_context_does_not_mutate_signal_history() -> 
     assert entries[0].ts == start + pd.Timedelta(minutes=110)
     assert entries[0].metadata["quote_volume_5m"] == pytest.approx(2_000_000.0)
     assert entries[0].metadata["signal_return_5m"] == pytest.approx(0.10)
+    assert entries[0].metadata["quote_volume_bucket_ts"] == (
+        start + pd.Timedelta(minutes=105)
+    ).isoformat()
+
+
+def test_quote_volume_bucket_must_match_the_exact_closed_price_bucket() -> None:
+    strategy = Btc5mImpactProxyReversalStrategy(
+        impact_proxy_threshold=0.75, normalization_window=2
+    )
+    start = pd.Timestamp("2023-01-01T00:00:00Z")
+    close = 100.0
+    signals = []
+    for index in range(21):
+        ts = start + pd.Timedelta(minutes=5 * index)
+        close *= 1.10 if index == 20 else 1.001
+        closed = _closed(ts, close)
+        if index == 20:
+            closed = _closed(ts - pd.Timedelta(minutes=5), close)
+        signals.extend(
+            strategy.on_bars(
+                ts,
+                {"BTCUSDT": _bar(ts)},
+                {"BTCUSDT"},
+                {"positions": {}, "htf": {"5m": {"BTCUSDT": closed}}},
+            )
+        )
+    assert signals == []
 
 
 def test_exit_state_begins_only_after_fill_and_lands_on_exact_target() -> None:

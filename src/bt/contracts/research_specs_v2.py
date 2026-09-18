@@ -173,7 +173,12 @@ def build_engine_hypothesis_yaml(ir: dict[str, Any], *, repo_root: str | Path = 
             "required_indicators": [], "indicator_defaults": {}, "parameter_grid": ir["parameters"],
             "gates": ir["gate_graph"], "entry": {**ir["entry"], "strategy": strategy_name, "signal_timeframe": signal_tf},
             "exit": ir["exit"], "execution_semantics": ir["execution_semantics"],
-            "evaluation": {"required_tiers": ir["evaluation"].get("tiers", ["Tier2", "Tier3"]), "metrics": ir["evaluation"].get("metrics", [])},
+            "evaluation": {
+                **deepcopy(ir["evaluation"]),
+                "required_tiers": ir["evaluation"].get(
+                    "tiers", ["Tier2", "Tier3"]
+                ),
+            },
             "logging": {"schema_version": "1.0", "required_fields": ir["logging_requirements"]},
             "runtime_controls": {"enabled": True, "max_variants": 128, "tags": ["generated", "confirmed_card"]},
             "notes": {"falsification_criteria": ir["falsification_criteria"], "failure_modes": ir["expected_failure_modes"]},
