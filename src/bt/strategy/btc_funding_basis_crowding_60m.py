@@ -126,8 +126,11 @@ def _complete_decisions(frame: pd.DataFrame) -> pd.DataFrame:
             latest = prior.loc[prior["funding_source_ts"] == latest_source].iloc[-1]
             funding, funding_source = _number(latest["funding_rate"]), latest_source
         last = part.iloc[-1] if len(part) else None
-        mark, index = (_number(last["mark_close"]), _number(last["index_close"])) if last is not None else (None, None)
-        basis = None if mark is None or index in (None, 0.0) else mark / index - 1.0
+        basis = (
+            _number(last.get("basis_close_vs_index"))
+            if last is not None
+            else None
+        )
         rows.append({
             "decision_ts": decision, "bucket_ts": bucket, "complete": bool(complete),
             "close": _number(last["close"]) if last is not None else None,
@@ -165,23 +168,38 @@ def funding_basis_matched_evaluation(
     decisions = _complete_decisions(frame)
     threshold = float(params["funding_percentile_threshold"])
     basis_threshold = float(params["basis_threshold_bps"]) / 10_000.0
-    history: deque[float] = deque(maxlen=25_920)
+    history: deque[float | None] = deque(maxlen=25_920)
     records: list[dict[str, Any]] = []
     for row in decisions.itertuples(index=False):
-        percentile_value = _quantile(list(history), threshold) if len(history) == history.maxlen else None
-        valid = bool(row.complete and row.target_complete and row.quote_volume_5m is not None and row.quote_volume_5m >= 1_000_000 and row.funding_rate is not None and row.funding_source_ts <= row.decision_ts and row.basis is not None and row.trailing_return_60m == row.trailing_return_60m and row.realized_volatility_6h == row.realized_volatility_6h and row.target_return_60m == row.target_return_60m)
-        stressed = bool(valid and percentile_value is not None and row.funding_rate > 0 and row.funding_rate >= percentile_value and row.basis is not None and row.basis > basis_threshold)
+        funding_rate = _number(row.funding_rate)
+        basis = _number(row.basis)
+        funding_source_ts = (
+            None if pd.isna(row.funding_source_ts) else pd.Timestamp(row.funding_source_ts)
+        )
+        complete_history = (
+            len(history) == history.maxlen
+            and all(value is not None for value in history)
+        )
+        percentile_value = (
+            _quantile([float(value) for value in history if value is not None], threshold)
+            if complete_history
+            else None
+        )
+        valid = bool(row.complete and row.target_complete and row.quote_volume_5m is not None and row.quote_volume_5m >= 1_000_000 and funding_rate is not None and funding_source_ts is not None and funding_source_ts <= row.decision_ts and basis is not None and row.trailing_return_60m == row.trailing_return_60m and row.realized_volatility_6h == row.realized_volatility_6h and row.target_return_60m == row.target_return_60m)
+        stressed = bool(valid and percentile_value is not None and funding_rate > 0 and funding_rate >= percentile_value and basis > basis_threshold)
         records.append({
             "decision_ts": row.decision_ts.isoformat(), "status": "treated" if stressed else "control" if valid else "invalid",
-            "valid": valid, "treated": stressed, "funding_rate": row.funding_rate,
-            "funding_source_ts": row.funding_source_ts.isoformat() if row.funding_source_ts is not None else None,
-            "funding_threshold": percentile_value, "basis": row.basis,
+            "valid": valid, "treated": stressed, "funding_rate": funding_rate,
+            "funding_source_ts": funding_source_ts.isoformat() if funding_source_ts is not None else None,
+            "funding_threshold": percentile_value, "basis": basis,
             "trailing_return_60m": row.trailing_return_60m, "realized_volatility_6h": row.realized_volatility_6h,
             "funding_cycle_position": int(row.decision_ts.hour * 60 + row.decision_ts.minute) % 480,
             "target_return_60m": row.target_return_60m,
         })
-        if row.funding_rate is not None:
-            history.append(float(row.funding_rate))
+        # The feature contract is a decision-row window, not an observation
+        # window. Missing point-in-time funding must occupy its row and make
+        # the window unavailable until it rolls out.
+        history.append(funding_rate)
     partition_records = [
         r for r in records
         if (start is None or pd.Timestamp(r["decision_ts"]) >= pd.Timestamp(start))
@@ -259,7 +277,9 @@ class BtcFundingBasisCrowding60mStrategy(Strategy):
         self.threshold, self.basis_bps, self.r = float(funding_percentile_threshold), float(basis_threshold_bps), float(r_per_trade)
         self.buckets: dict[str, _Bucket] = {}
         self.funding: dict[str, list[tuple[pd.Timestamp, float]]] = defaultdict(list)
-        self.funding_history: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=25_920))
+        self.funding_history: dict[str, deque[float | None]] = defaultdict(
+            lambda: deque(maxlen=25_920)
+        )
         self.completed_buckets: dict[str, deque[tuple[pd.Timestamp, float | None, bool]]] = defaultdict(
             lambda: deque(maxlen=73)
         )
@@ -273,8 +293,23 @@ class BtcFundingBasisCrowding60mStrategy(Strategy):
             metadata = position.get("metadata", {}) if isinstance(position, Mapping) else {}
             target = pd.Timestamp(metadata["target_exit_ts"]) if metadata.get("target_exit_ts") else None
             if target is not None and ts >= target - pd.Timedelta(minutes=1) and symbol not in self.exit_sent:
-                output.append(Signal(ts, symbol, Side.BUY, "funding_basis_60m_exit", 1.0, {"close_only": True, "is_exit": True, "target_exit_ts": target.isoformat()})); self.exit_sent.add(symbol)
-            if position is None: self.exit_sent.discard(symbol)
+                output.append(
+                    Signal(
+                        ts,
+                        symbol,
+                        Side.BUY,
+                        "funding_basis_60m_exit",
+                        1.0,
+                        {
+                            "close_only": True,
+                            "is_exit": True,
+                            "target_exit_ts": target.isoformat(),
+                        },
+                    )
+                )
+                self.exit_sent.add(symbol)
+            if position is None:
+                self.exit_sent.discard(symbol)
             bucket_start = bar.ts.floor("5min")
             current = self.buckets.get(symbol)
             closed = current if current is not None and current.start != bucket_start else None
@@ -292,10 +327,24 @@ class BtcFundingBasisCrowding60mStrategy(Strategy):
                 available = [(source, rate) for source, rate in self.funding[symbol] if source <= ts]
                 latest = max(available, key=lambda item: item[0]) if available else None
                 hist = self.funding_history[symbol]
-                funding_threshold = _quantile(list(hist), self.threshold) if len(hist) == hist.maxlen else None
-                if latest: hist.append(latest[1])
-                mark, index = (_number(values[-1].get("mark_close")), _number(values[-1].get("index_close"))) if values else (None, None)
-                basis = None if mark is None or index in (None, 0.0) else mark / index - 1
+                complete_funding_history = (
+                    len(hist) == hist.maxlen
+                    and all(value is not None for value in hist)
+                )
+                funding_threshold = (
+                    _quantile(
+                        [float(value) for value in hist if value is not None],
+                        self.threshold,
+                    )
+                    if complete_funding_history
+                    else None
+                )
+                hist.append(latest[1] if latest is not None else None)
+                basis = (
+                    _number(values[-1].get("basis_close_vs_index"))
+                    if values
+                    else None
+                )
                 contiguous_rollover = bucket_start == closed.start + pd.Timedelta(minutes=5)
                 complete_history = (
                     len(completed) == completed.maxlen
