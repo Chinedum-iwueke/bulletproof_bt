@@ -1,4 +1,5 @@
 """L2-H3 session VWAP reference-price reversion strategy."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -20,7 +21,6 @@ from bt.strategy.base import Strategy
 @dataclass
 class _State:
     atr_signal: ATR
-    signal_vwap: SessionVWAP
     base_vwap: SessionVWAP
     compression_gate: RollingQuantileGate
     liquidity_gate: RollingQuantileGate
@@ -30,6 +30,7 @@ class _State:
     atr_entry: float | None = None
     stop_distance_frozen: float | None = None
     stop_price_frozen: float | None = None
+    stop_anchored_to_fill: bool = False
     signal_bars_held: int = 0
     last_signal_ts: pd.Timestamp | None = None
 
@@ -64,10 +65,13 @@ class L2H3ReferencePriceReversionStrategy(Strategy):
         if symbol not in self._state:
             self._state[symbol] = _State(
                 atr_signal=ATR(14),
-                signal_vwap=SessionVWAP(session="utc_day", price_source="typical"),
                 base_vwap=SessionVWAP(session="utc_day", price_source="typical"),
-                compression_gate=RollingQuantileGate(bars_for_30_calendar_days(self._timeframe), q=self._q_comp),
-                liquidity_gate=RollingQuantileGate(bars_for_30_calendar_days(self._timeframe), q=self._q_liq),
+                compression_gate=RollingQuantileGate(
+                    bars_for_30_calendar_days(self._timeframe), q=self._q_comp
+                ),
+                liquidity_gate=RollingQuantileGate(
+                    bars_for_30_calendar_days(self._timeframe), q=self._q_liq
+                ),
             )
         return self._state[symbol]
 
@@ -94,7 +98,25 @@ class L2H3ReferencePriceReversionStrategy(Strategy):
         positions = ctx.get("positions")
         if not isinstance(positions, Mapping):
             return 0
-        return sum(1 for payload in positions.values() if isinstance(payload, Mapping) and payload.get("side"))
+        return sum(
+            1
+            for payload in positions.values()
+            if isinstance(payload, Mapping) and payload.get("side")
+        )
+
+    @staticmethod
+    def _ctx_position_entry_price(ctx: Mapping[str, Any], symbol: str) -> float | None:
+        positions = ctx.get("positions")
+        if not isinstance(positions, Mapping):
+            return None
+        raw = positions.get(symbol)
+        if not isinstance(raw, Mapping):
+            return None
+        try:
+            value = float(raw.get("entry_price"))
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
 
     @staticmethod
     def _session_key(ts: pd.Timestamp) -> pd.Timestamp:
@@ -105,8 +127,10 @@ class L2H3ReferencePriceReversionStrategy(Strategy):
         return str(ts.floor("D").date())
 
     @staticmethod
-    def _is_utc_session_end(ts: pd.Timestamp) -> bool:
-        return ts.hour == 23 and ts.minute == 59
+    def _is_utc_session_exit_signal(ts: pd.Timestamp) -> bool:
+        # With the required one-bar execution delay, submitting on the 23:58
+        # bar fills on the final 23:59 bar rather than leaking into tomorrow.
+        return ts.hour == 23 and ts.minute == 58
 
     @staticmethod
     def _clear_position_state(st: _State) -> None:
@@ -116,6 +140,7 @@ class L2H3ReferencePriceReversionStrategy(Strategy):
         st.atr_entry = None
         st.stop_distance_frozen = None
         st.stop_price_frozen = None
+        st.stop_anchored_to_fill = False
         st.signal_bars_held = 0
 
     def _decision_trace(
@@ -133,7 +158,10 @@ class L2H3ReferencePriceReversionStrategy(Strategy):
             hypothesis_branch="entry",
             conditions_bool_map=conditions,
             blockers_bool_map=blockers,
-            permission_layer_state={"reference_price": "session_vwap", "anchor": "utc_day"},
+            permission_layer_state={
+                "reference_price": "session_vwap",
+                "anchor": "utc_day",
+            },
             parameter_combination={
                 "strategy": "l2_h3_reference_price_reversion",
                 "z0": self._z0,
@@ -157,10 +185,14 @@ class L2H3ReferencePriceReversionStrategy(Strategy):
         signals: list[Signal] = []
         htf_root = ctx.get("htf") if isinstance(ctx, Mapping) else None
         if not isinstance(htf_root, Mapping):
-            raise RuntimeError(f"L2-H3 requires ctx['htf']['{self._timeframe}'] for two-clock semantics.")
+            raise RuntimeError(
+                f"L2-H3 requires ctx['htf']['{self._timeframe}'] for two-clock semantics."
+            )
         htf_for_tf = htf_root.get(self._timeframe) or {}
         if not isinstance(htf_for_tf, Mapping):
-            raise RuntimeError(f"L2-H3 requires mapping ctx['htf']['{self._timeframe}'] for two-clock semantics.")
+            raise RuntimeError(
+                f"L2-H3 requires mapping ctx['htf']['{self._timeframe}'] for two-clock semantics."
+            )
 
         for symbol in sorted(tradeable):
             bar = bars_by_symbol.get(symbol)
@@ -173,7 +205,9 @@ class L2H3ReferencePriceReversionStrategy(Strategy):
             st.base_vwap.update(bar)
 
             signal_bar = htf_for_tf.get(symbol)
-            has_new_signal_bar = signal_bar is not None and signal_bar.ts != st.last_signal_ts
+            has_new_signal_bar = (
+                signal_bar is not None and signal_bar.ts != st.last_signal_ts
+            )
             if has_new_signal_bar:
                 signal_bar_as_base = Bar(
                     ts=signal_bar.ts,
@@ -185,24 +219,42 @@ class L2H3ReferencePriceReversionStrategy(Strategy):
                     volume=float(signal_bar.volume),
                 )
                 st.atr_signal.update(signal_bar_as_base)
-                st.signal_vwap.update(signal_bar_as_base)
                 st.last_signal_ts = signal_bar.ts
 
             atr_v = st.atr_signal.value
-            signal_close = float(signal_bar.close) if signal_bar is not None else float(bar.close)
-            rv_t = None if atr_v is None or signal_close <= 0 else float(atr_v / signal_close)
-            spread_proxy_t = spread_proxy_from_bar(signal_bar if signal_bar is not None else bar)
-            comp_threshold_t, comp_gate_t = st.compression_gate.update(rv_t) if has_new_signal_bar else (None, None)
-            liq_threshold_t, liq_gate_t = st.liquidity_gate.update(spread_proxy_t) if has_new_signal_bar else (None, None)
-            signal_vwap_t = st.signal_vwap.value
+            signal_close = (
+                float(signal_bar.close) if signal_bar is not None else float(bar.close)
+            )
+            rv_t = (
+                None
+                if atr_v is None or signal_close <= 0
+                else float(atr_v / signal_close)
+            )
+            spread_proxy_t = spread_proxy_from_bar(
+                signal_bar if signal_bar is not None else bar
+            )
+            comp_threshold_t, comp_gate_t = (
+                st.compression_gate.update(rv_t) if has_new_signal_bar else (None, None)
+            )
+            liq_threshold_t, liq_gate_t = (
+                st.liquidity_gate.update(spread_proxy_t)
+                if has_new_signal_bar
+                else (None, None)
+            )
             base_vwap_t = st.base_vwap.value
-            z_vwap_t = None if atr_v in (None, 0.0) or signal_vwap_t is None else float((signal_close - signal_vwap_t) / atr_v)
+            z_vwap_t = (
+                None
+                if atr_v in (None, 0.0) or base_vwap_t is None
+                else float((signal_close - base_vwap_t) / atr_v)
+            )
 
             if current is not None:
                 st.position = current
-                session_changed = st.entry_session_key is not None and current_session_key != st.entry_session_key
-                session_end = self._is_utc_session_end(ts)
-                if session_changed or session_end:
+                session_changed = (
+                    st.entry_session_key is not None
+                    and current_session_key != st.entry_session_key
+                )
+                if session_changed:
                     signals.append(
                         Signal(
                             ts=ts,
@@ -219,8 +271,10 @@ class L2H3ReferencePriceReversionStrategy(Strategy):
                                     most_binding_gate=None,
                                 ),
                                 "close_only": True,
-                                "exit_reason": "session_end" if session_end else "session_rollover",
-                                "anchor_id": str(st.entry_session_key.date()) if st.entry_session_key is not None else None,
+                                "exit_reason": "session_rollover_recovery",
+                                "anchor_id": str(st.entry_session_key.date())
+                                if st.entry_session_key is not None
+                                else None,
                                 "session_vwap": base_vwap_t,
                                 "vwap_mode": "session",
                                 "exit_monitoring_timeframe": "1m",
@@ -229,38 +283,179 @@ class L2H3ReferencePriceReversionStrategy(Strategy):
                     )
                     self._clear_position_state(st)
                     continue
-                if has_new_signal_bar:
-                    st.signal_bars_held += 1
-                    if st.signal_bars_held >= self._t_hold:
-                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL if current == Side.BUY else Side.BUY, signal_type="l2_h3_exit", confidence=1.0, metadata={
-                            "decision_trace": self._decision_trace(conditions={}, blockers={}, gate_values={}, gate_thresholds={}, most_binding_gate=None),
-                            "close_only": True, "exit_reason": "time_stop", "signal_bars_held": st.signal_bars_held, "hold_time_unit": "signal_bars", "signal_timeframe": self._timeframe}))
-                        self._clear_position_state(st)
-                        continue
+                if not st.stop_anchored_to_fill and st.stop_distance_frozen is not None:
+                    entry_price = self._ctx_position_entry_price(ctx, symbol)
+                    if entry_price is not None:
+                        st.stop_price_frozen = (
+                            entry_price - st.stop_distance_frozen
+                            if current == Side.BUY
+                            else entry_price + st.stop_distance_frozen
+                        )
+                        st.stop_anchored_to_fill = True
                 if st.stop_price_frozen is not None:
                     if current == Side.BUY and bar.low <= st.stop_price_frozen:
-                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l2_h3_exit", confidence=1.0, metadata={
-                            "decision_trace": self._decision_trace(conditions={}, blockers={}, gate_values={}, gate_thresholds={}, most_binding_gate=None),
-                            "close_only": True, "exit_reason": "atr_stop", "stop_price": st.stop_price_frozen, "stop_distance": st.stop_distance_frozen, "atr_entry": st.atr_entry, "exit_monitoring_timeframe": "1m"}))
+                        signals.append(
+                            Signal(
+                                ts=ts,
+                                symbol=symbol,
+                                side=Side.SELL,
+                                signal_type="l2_h3_exit",
+                                confidence=1.0,
+                                metadata={
+                                    "decision_trace": self._decision_trace(
+                                        conditions={},
+                                        blockers={},
+                                        gate_values={},
+                                        gate_thresholds={},
+                                        most_binding_gate=None,
+                                    ),
+                                    "close_only": True,
+                                    "exit_reason": "atr_stop",
+                                    "stop_price": st.stop_price_frozen,
+                                    "stop_distance": st.stop_distance_frozen,
+                                    "atr_entry": st.atr_entry,
+                                    "exit_monitoring_timeframe": "1m",
+                                },
+                            )
+                        )
                         self._clear_position_state(st)
                         continue
                     if current == Side.SELL and bar.high >= st.stop_price_frozen:
-                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l2_h3_exit", confidence=1.0, metadata={
-                            "decision_trace": self._decision_trace(conditions={}, blockers={}, gate_values={}, gate_thresholds={}, most_binding_gate=None),
-                            "close_only": True, "exit_reason": "atr_stop", "stop_price": st.stop_price_frozen, "stop_distance": st.stop_distance_frozen, "atr_entry": st.atr_entry, "exit_monitoring_timeframe": "1m"}))
+                        signals.append(
+                            Signal(
+                                ts=ts,
+                                symbol=symbol,
+                                side=Side.BUY,
+                                signal_type="l2_h3_exit",
+                                confidence=1.0,
+                                metadata={
+                                    "decision_trace": self._decision_trace(
+                                        conditions={},
+                                        blockers={},
+                                        gate_values={},
+                                        gate_thresholds={},
+                                        most_binding_gate=None,
+                                    ),
+                                    "close_only": True,
+                                    "exit_reason": "atr_stop",
+                                    "stop_price": st.stop_price_frozen,
+                                    "stop_distance": st.stop_distance_frozen,
+                                    "atr_entry": st.atr_entry,
+                                    "exit_monitoring_timeframe": "1m",
+                                },
+                            )
+                        )
                         self._clear_position_state(st)
                         continue
+                if self._is_utc_session_exit_signal(ts):
+                    signals.append(
+                        Signal(
+                            ts=ts,
+                            symbol=symbol,
+                            side=Side.SELL if current == Side.BUY else Side.BUY,
+                            signal_type="l2_h3_exit",
+                            confidence=1.0,
+                            metadata={
+                                "decision_trace": self._decision_trace(
+                                    conditions={},
+                                    blockers={},
+                                    gate_values={},
+                                    gate_thresholds={},
+                                    most_binding_gate=None,
+                                ),
+                                "close_only": True,
+                                "exit_reason": "session_end",
+                                "anchor_id": str(st.entry_session_key.date())
+                                if st.entry_session_key is not None
+                                else None,
+                                "session_vwap": base_vwap_t,
+                                "vwap_mode": "session",
+                                "exit_monitoring_timeframe": "1m",
+                                "execution_timing": "submit_23:58_fill_23:59",
+                            },
+                        )
+                    )
+                    self._clear_position_state(st)
+                    continue
                 if base_vwap_t is not None:
-                    if current == Side.BUY and bar.close >= base_vwap_t:
-                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="l2_h3_exit", confidence=1.0, metadata={
-                            "decision_trace": self._decision_trace(conditions={}, blockers={}, gate_values={}, gate_thresholds={}, most_binding_gate=None),
-                            "close_only": True, "exit_reason": "session_vwap_touch", "session_vwap": base_vwap_t, "vwap_mode": "session", "exit_monitoring_timeframe": "1m"}))
+                    if current == Side.BUY and bar.high >= base_vwap_t:
+                        signals.append(
+                            Signal(
+                                ts=ts,
+                                symbol=symbol,
+                                side=Side.SELL,
+                                signal_type="l2_h3_exit",
+                                confidence=1.0,
+                                metadata={
+                                    "decision_trace": self._decision_trace(
+                                        conditions={},
+                                        blockers={},
+                                        gate_values={},
+                                        gate_thresholds={},
+                                        most_binding_gate=None,
+                                    ),
+                                    "close_only": True,
+                                    "exit_reason": "session_vwap_touch",
+                                    "session_vwap": base_vwap_t,
+                                    "vwap_mode": "session",
+                                    "exit_monitoring_timeframe": "1m",
+                                },
+                            )
+                        )
                         self._clear_position_state(st)
                         continue
-                    if current == Side.SELL and bar.close <= base_vwap_t:
-                        signals.append(Signal(ts=ts, symbol=symbol, side=Side.BUY, signal_type="l2_h3_exit", confidence=1.0, metadata={
-                            "decision_trace": self._decision_trace(conditions={}, blockers={}, gate_values={}, gate_thresholds={}, most_binding_gate=None),
-                            "close_only": True, "exit_reason": "session_vwap_touch", "session_vwap": base_vwap_t, "vwap_mode": "session", "exit_monitoring_timeframe": "1m"}))
+                    if current == Side.SELL and bar.low <= base_vwap_t:
+                        signals.append(
+                            Signal(
+                                ts=ts,
+                                symbol=symbol,
+                                side=Side.BUY,
+                                signal_type="l2_h3_exit",
+                                confidence=1.0,
+                                metadata={
+                                    "decision_trace": self._decision_trace(
+                                        conditions={},
+                                        blockers={},
+                                        gate_values={},
+                                        gate_thresholds={},
+                                        most_binding_gate=None,
+                                    ),
+                                    "close_only": True,
+                                    "exit_reason": "session_vwap_touch",
+                                    "session_vwap": base_vwap_t,
+                                    "vwap_mode": "session",
+                                    "exit_monitoring_timeframe": "1m",
+                                },
+                            )
+                        )
+                        self._clear_position_state(st)
+                        continue
+                if has_new_signal_bar:
+                    st.signal_bars_held += 1
+                    if st.signal_bars_held >= self._t_hold:
+                        signals.append(
+                            Signal(
+                                ts=ts,
+                                symbol=symbol,
+                                side=Side.SELL if current == Side.BUY else Side.BUY,
+                                signal_type="l2_h3_exit",
+                                confidence=1.0,
+                                metadata={
+                                    "decision_trace": self._decision_trace(
+                                        conditions={},
+                                        blockers={},
+                                        gate_values={},
+                                        gate_thresholds={},
+                                        most_binding_gate=None,
+                                    ),
+                                    "close_only": True,
+                                    "exit_reason": "time_stop",
+                                    "signal_bars_held": st.signal_bars_held,
+                                    "hold_time_unit": "signal_bars",
+                                    "signal_timeframe": self._timeframe,
+                                },
+                            )
+                        )
                         self._clear_position_state(st)
                         continue
                 continue
@@ -268,7 +463,7 @@ class L2H3ReferencePriceReversionStrategy(Strategy):
             self._clear_position_state(st)
             if not has_new_signal_bar:
                 continue
-            if atr_v is None or signal_vwap_t is None or z_vwap_t is None:
+            if atr_v is None or base_vwap_t is None or z_vwap_t is None:
                 continue
             if comp_gate_t is not True or liq_gate_t is not True:
                 continue
@@ -289,13 +484,18 @@ class L2H3ReferencePriceReversionStrategy(Strategy):
                 continue
 
             stop_distance = self._k_atr * atr_v
-            stop_price = bar.close - stop_distance if side == Side.BUY else bar.close + stop_distance
+            stop_price = (
+                bar.close - stop_distance
+                if side == Side.BUY
+                else bar.close + stop_distance
+            )
             entry_session_key = self._session_key(signal_bar.ts)
             st.entry_signal_ts = signal_bar.ts
             st.entry_session_key = entry_session_key
             st.atr_entry = float(atr_v)
             st.stop_distance_frozen = float(stop_distance)
             st.stop_price_frozen = float(stop_price)
+            st.stop_anchored_to_fill = False
             st.signal_bars_held = 0
 
             conditions = {
@@ -323,7 +523,7 @@ class L2H3ReferencePriceReversionStrategy(Strategy):
                                 "z": z_vwap_t,
                                 "rv_t": rv_t,
                                 "spread_proxy_t": spread_proxy_t,
-                                "session_vwap": signal_vwap_t,
+                                "session_vwap": base_vwap_t,
                             },
                             gate_thresholds={
                                 "z0": self._z0,
@@ -346,8 +546,8 @@ class L2H3ReferencePriceReversionStrategy(Strategy):
                         "no_pyramiding": self._no_pyramiding,
                         "anchor_id": str(entry_session_key.date()),
                         "session_anchor_id": str(entry_session_key.date()),
-                        "session_vwap": signal_vwap_t,
-                        "vwap_t": signal_vwap_t,
+                        "session_vwap": base_vwap_t,
+                        "vwap_t": base_vwap_t,
                         "vwap_mode": "session",
                         "z": z_vwap_t,
                         "z_vwap_t": z_vwap_t,
@@ -366,6 +566,8 @@ class L2H3ReferencePriceReversionStrategy(Strategy):
                         "atr_entry": st.atr_entry,
                         "stop_distance": st.stop_distance_frozen,
                         "stop_price": st.stop_price_frozen,
+                        "fill_anchored_stop_distance": st.stop_distance_frozen,
+                        "fill_anchored_stop_policy": "actual_fill_price_plus_or_minus_frozen_atr_distance",
                     },
                 )
             )

@@ -52,12 +52,12 @@ entry:
 
 exit:
   stop_kind: "atr_multiple"
-  stop_model: "fixed_atr_multiple"
+  stop_model: "fill_anchored_fixed_atr_distance"
   stop_atr_param: "k_atr"
   stop_update_policy: "frozen_at_entry"
   atr_source_timeframe: "signal_timeframe"
-  profit_exit: "session_vwap_touch"
-  hard_exit: "utc_session_end"
+  profit_exit: "intrabar_session_vwap_touch_stop_first_on_ambiguous_bar"
+  hard_exit: "submit_23:58_utc_fill_final_23:59_bar"
   time_stop_param: "T_hold"
   hold_time_unit: "signal_bars"
   exit_monitoring_timeframe: "1m"
@@ -72,9 +72,9 @@ execution_semantics:
   family_pattern: "session_vwap_zscore_fade_with_compression_and_liquidity_gates"
   reference_price: "session_vwap"
   session_anchor: "utc_day"
-  stop_model: "fixed_atr_multiple"
-  stop_update_policy: "frozen_at_entry"
-  tp_update_policy: "session_vwap_touch"
+  stop_model: "fill_anchored_fixed_atr_distance"
+  stop_update_policy: "atr_distance_frozen_at_signal_price_anchored_at_actual_fill"
+  tp_update_policy: "intrabar_session_vwap_touch_stop_first_on_ambiguous_bar"
   hold_time_unit: "signal_bars"
   atr_source_timeframe: "signal_timeframe"
   risk_accounting: "engine_canonical_R"
@@ -112,7 +112,7 @@ data_assumptions:
     - basis_close_vs_index
   rich_data_role: "logging_only_context"
   ohlcv_only_fallback: true
-  reference_price_contract: "SessionVWAP resets at UTC 00:00 and uses only bars seen inside the current UTC day."
+  reference_price_contract: "One base-1m SessionVWAP resets at UTC 00:00, uses only bars seen inside the current UTC day, and is shared by entry z-scores and intrabar exit-touch evaluation."
 
 evaluation:
   required_tiers: ["Tier2", "Tier3"]
@@ -160,7 +160,7 @@ logging:
     - entry_state_oi_level
     - entry_state_basis_raw
     - entry_decision_conditions_json
-    - entry_decision_gate_values_json
+    - entry_gate_values_json
 
 runtime_controls:
   enabled: true

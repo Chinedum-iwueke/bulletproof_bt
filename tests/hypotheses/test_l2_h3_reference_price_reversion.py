@@ -9,10 +9,19 @@ from bt.core.types import Bar
 from bt.experiments.hypothesis_runner import build_runtime_override
 from bt.experiments.parallel_grid import build_hypothesis_manifest
 from bt.hypotheses.contract import HypothesisContract
-from bt.strategy.l2_h3_reference_price_reversion import L2H3ReferencePriceReversionStrategy
+from bt.strategy.l2_h3_reference_price_reversion import (
+    L2H3ReferencePriceReversionStrategy,
+)
 
 
-def _bar(i: int, close: float, *, low: float | None = None, high: float | None = None, volume: float = 1000.0) -> Bar:
+def _bar(
+    i: int,
+    close: float,
+    *,
+    low: float | None = None,
+    high: float | None = None,
+    volume: float = 1000.0,
+) -> Bar:
     ts = pd.Timestamp("2024-01-01T00:00:00Z") + pd.Timedelta(minutes=i)
     return Bar(
         ts=ts,
@@ -25,7 +34,9 @@ def _bar(i: int, close: float, *, low: float | None = None, high: float | None =
     )
 
 
-def _bar_at(ts: str, close: float, *, low: float | None = None, high: float | None = None) -> Bar:
+def _bar_at(
+    ts: str, close: float, *, low: float | None = None, high: float | None = None
+) -> Bar:
     stamp = pd.Timestamp(ts)
     return Bar(
         ts=stamp,
@@ -38,8 +49,15 @@ def _bar_at(ts: str, close: float, *, low: float | None = None, high: float | No
     )
 
 
-def _ctx(signal_bar: Bar, *, side: str | None = None) -> dict:
-    positions = {} if side is None else {"BTCUSDT": {"side": side}}
+def _ctx(
+    signal_bar: Bar,
+    *,
+    side: str | None = None,
+    entry_price: float | None = None,
+) -> dict:
+    positions = (
+        {} if side is None else {"BTCUSDT": {"side": side, "entry_price": entry_price}}
+    )
     return {"htf": {"5m": {"BTCUSDT": signal_bar}}, "positions": positions}
 
 
@@ -53,7 +71,9 @@ def _warm_ready(strategy: L2H3ReferencePriceReversionStrategy) -> None:
 
 
 def test_l2_h3_contract_grid_and_runtime_mapping(tmp_path: Path) -> None:
-    contract = HypothesisContract.from_yaml("research/hypotheses/l2_h3_reference_price_reversion.yaml")
+    contract = HypothesisContract.from_yaml(
+        "research/hypotheses/l2_h3_reference_price_reversion.yaml"
+    )
     rows = contract.materialize_grid()
     assert len(rows) == 4
     assert {row["params"]["z0"] for row in rows} == {0.8, 1.2}
@@ -65,7 +85,9 @@ def test_l2_h3_contract_grid_and_runtime_mapping(tmp_path: Path) -> None:
     assert override["htf_resampler"]["timeframes"] == ["5m"]
 
     manifest = build_hypothesis_manifest(
-        hypothesis_path=Path("research/hypotheses/l2_h3_reference_price_reversion.yaml"),
+        hypothesis_path=Path(
+            "research/hypotheses/l2_h3_reference_price_reversion.yaml"
+        ),
         experiment_root=tmp_path / "exp",
         phase="tier2",
     )
@@ -96,7 +118,9 @@ def test_l2_h3_short_signal_and_liquidity_gate_block() -> None:
     strategy = L2H3ReferencePriceReversionStrategy(timeframe="5m", z0=0.8)
     _warm_ready(strategy)
     short_bar = _bar(21, 102.0, high=102.2, low=101.8)
-    out = strategy.on_bars(short_bar.ts, {"BTCUSDT": short_bar}, {"BTCUSDT"}, _ctx(short_bar))
+    out = strategy.on_bars(
+        short_bar.ts, {"BTCUSDT": short_bar}, {"BTCUSDT"}, _ctx(short_bar)
+    )
     assert out and out[0].side == Side.SELL
     assert out[0].metadata["entry_reason"] == "session_vwap_reference_fade_short"
 
@@ -118,10 +142,52 @@ def test_l2_h3_hard_exits_at_utc_session_end() -> None:
     st.stop_distance_frozen = 10.0
     st.atr_entry = 5.0
 
-    b = _bar_at("2024-01-01T23:59:00Z", 99.0, high=99.5, low=98.5)
-    out = strategy.on_bars(b.ts, {"BTCUSDT": b}, {"BTCUSDT"}, _ctx(b, side="buy"))
+    b = _bar_at("2024-01-01T23:58:00Z", 99.0, high=99.5, low=98.5)
+    out = strategy.on_bars(
+        b.ts,
+        {"BTCUSDT": b},
+        {"BTCUSDT"},
+        _ctx(b, side="buy", entry_price=100.0),
+    )
 
     assert out
     assert out[0].metadata["close_only"] is True
     assert out[0].metadata["exit_reason"] == "session_end"
     assert out[0].metadata["anchor_id"] == "2024-01-01"
+    assert out[0].metadata["execution_timing"] == "submit_23:58_fill_23:59"
+
+
+def test_l2_h3_reanchors_stop_to_actual_fill_and_uses_intrabar_vwap_touch() -> None:
+    strategy = L2H3ReferencePriceReversionStrategy(timeframe="5m")
+    st = strategy._state_for("BTCUSDT")
+    st.position = Side.BUY
+    st.entry_session_key = pd.Timestamp("2024-01-01T00:00:00Z")
+    st.stop_price_frozen = 90.0
+    st.stop_distance_frozen = 2.0
+    st.atr_entry = 2.0
+
+    stop_bar = _bar_at("2024-01-01T12:00:00Z", 101.0, high=101.5, low=98.9)
+    stopped = strategy.on_bars(
+        stop_bar.ts,
+        {"BTCUSDT": stop_bar},
+        {"BTCUSDT"},
+        _ctx(stop_bar, side="buy", entry_price=101.0),
+    )
+    assert stopped[0].metadata["exit_reason"] == "atr_stop"
+    assert stopped[0].metadata["stop_price"] == 99.0
+    assert st.stop_anchored_to_fill is False
+
+    st.position = Side.BUY
+    st.entry_session_key = pd.Timestamp("2024-01-01T00:00:00Z")
+    st.stop_price_frozen = 95.0
+    st.stop_distance_frozen = 5.0
+    st.atr_entry = 2.0
+    st.stop_anchored_to_fill = True
+    touch_bar = _bar_at("2024-01-01T12:01:00Z", 99.0, high=101.0, low=98.0)
+    touched = strategy.on_bars(
+        touch_bar.ts,
+        {"BTCUSDT": touch_bar},
+        {"BTCUSDT"},
+        _ctx(touch_bar, side="buy", entry_price=100.0),
+    )
+    assert touched[0].metadata["exit_reason"] == "session_vwap_touch"

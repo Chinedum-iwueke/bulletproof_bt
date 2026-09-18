@@ -1,4 +1,5 @@
 """Execution model placeholder."""
+
 from __future__ import annotations
 
 from dataclasses import replace
@@ -84,7 +85,9 @@ class ExecutionModel:
                 updated_orders.append(replace(updated_order, metadata=metadata))
                 continue
 
-            fill_price = market_fill_price(side=updated_order.side, bar=bar, intrabar_spec=self._intrabar_spec)
+            fill_price = market_fill_price(
+                side=updated_order.side, bar=bar, intrabar_spec=self._intrabar_spec
+            )
             spread_adjusted_fill_price = apply_instrument_spread(
                 price=fill_price,
                 side=updated_order.side.value,
@@ -97,10 +100,14 @@ class ExecutionModel:
                 },
                 instrument=self._instrument,
             )
-            spread_cost = abs(updated_order.qty) * abs(spread_adjusted_fill_price - fill_price)
+            spread_cost = abs(updated_order.qty) * abs(
+                spread_adjusted_fill_price - fill_price
+            )
             fill_price = spread_adjusted_fill_price
 
-            slippage_quote = self._slippage_model.estimate_slippage(qty=updated_order.qty, bar=bar)
+            slippage_quote = self._slippage_model.estimate_slippage(
+                qty=updated_order.qty, bar=bar
+            )
             slip_px = slippage_quote / max(abs(updated_order.qty), 1e-12)
             if updated_order.side == Side.BUY:
                 fill_price += slip_px
@@ -109,6 +116,11 @@ class ExecutionModel:
             else:
                 raise ValueError(f"Unsupported side: {updated_order.side}")
 
+            metadata = self._anchor_stop_to_actual_fill(
+                order=updated_order,
+                fill_price=fill_price,
+                metadata=metadata,
+            )
             fill_qty = self._risk_clipped_entry_qty(
                 order=updated_order,
                 fill_price=fill_price,
@@ -119,7 +131,11 @@ class ExecutionModel:
                     replace(
                         updated_order,
                         state=OrderState.REJECTED,
-                        metadata={**metadata, "risk_fill_rejected": True, "delay_remaining": 0},
+                        metadata={
+                            **metadata,
+                            "risk_fill_rejected": True,
+                            "delay_remaining": 0,
+                        },
                     )
                 )
                 continue
@@ -130,10 +146,14 @@ class ExecutionModel:
                 metadata["risk_fill_clipped_qty"] = float(fill_qty)
                 metadata["risk_fill_price"] = float(fill_price)
                 updated_order = replace(updated_order, qty=fill_qty, metadata=metadata)
-                slippage_quote = self._slippage_model.estimate_slippage(qty=updated_order.qty, bar=bar)
+                slippage_quote = self._slippage_model.estimate_slippage(
+                    qty=updated_order.qty, bar=bar
+                )
 
             notional = abs(updated_order.qty) * fill_price
-            exchange_fee = self._fee_model.fee_for_notional(notional=notional, is_maker=False)
+            exchange_fee = self._fee_model.fee_for_notional(
+                notional=notional, is_maker=False
+            )
             commission_fee = compute_commission(
                 instrument=self._instrument,
                 qty=updated_order.qty,
@@ -141,7 +161,7 @@ class ExecutionModel:
             )
             fee = exchange_fee + commission_fee
 
-            fill_metadata = dict(updated_order.metadata)
+            fill_metadata = dict(metadata)
             fill_metadata.update(
                 {
                     "actual_fill_notional": notional,
@@ -182,7 +202,39 @@ class ExecutionModel:
         return updated_orders, fills
 
     @staticmethod
-    def _risk_clipped_entry_qty(*, order: Order, fill_price: float, metadata: dict[str, object]) -> float:
+    def _anchor_stop_to_actual_fill(
+        *, order: Order, fill_price: float, metadata: dict[str, object]
+    ) -> dict[str, object]:
+        """Resolve an explicitly requested fixed distance at the causal fill price."""
+        if bool(
+            metadata.get("close_only")
+            or metadata.get("reduce_only")
+            or metadata.get("is_exit")
+        ):
+            return metadata
+        try:
+            distance = float(metadata.get("fill_anchored_stop_distance"))
+        except (TypeError, ValueError):
+            return metadata
+        if distance <= 0 or fill_price <= 0:
+            return metadata
+        stop_price = (
+            fill_price - distance if order.side == Side.BUY else fill_price + distance
+        )
+        return {
+            **metadata,
+            "stop_price": float(stop_price),
+            "entry_stop_price": float(stop_price),
+            "stop_distance": float(distance),
+            "entry_stop_distance": float(distance),
+            "execution_stop_price_initial": float(stop_price),
+            "stop_anchored_to_actual_fill": True,
+        }
+
+    @staticmethod
+    def _risk_clipped_entry_qty(
+        *, order: Order, fill_price: float, metadata: dict[str, object]
+    ) -> float:
         """Clip entry quantity at the actual fill price so stop risk cannot exceed budget.
 
         Risk sizing happens when the signal is approved, but market orders may fill
@@ -190,19 +242,29 @@ class ExecutionModel:
         first moment when exact stop distance is known, so clipping here is causal:
         it uses no future bars and preserves the user's risk budget.
         """
-        if bool(metadata.get("close_only") or metadata.get("reduce_only") or metadata.get("is_exit")):
+        if bool(
+            metadata.get("close_only")
+            or metadata.get("reduce_only")
+            or metadata.get("is_exit")
+        ):
             return float(order.qty)
 
         try:
-            risk_budget = float(metadata.get("risk_budget", metadata.get("risk_amount")))
-            stop_price = float(metadata.get("entry_stop_price", metadata.get("stop_price")))
+            risk_budget = float(
+                metadata.get("risk_budget", metadata.get("risk_amount"))
+            )
+            stop_price = float(
+                metadata.get("entry_stop_price", metadata.get("stop_price"))
+            )
         except (TypeError, ValueError):
             return float(order.qty)
         if risk_budget <= 0 or stop_price <= 0 or fill_price <= 0:
             return float(order.qty)
 
         try:
-            risk_value_per_price_unit = float(metadata.get("risk_value_per_price_unit", 1.0))
+            risk_value_per_price_unit = float(
+                metadata.get("risk_value_per_price_unit", 1.0)
+            )
         except (TypeError, ValueError):
             risk_value_per_price_unit = 1.0
         if risk_value_per_price_unit <= 0:
