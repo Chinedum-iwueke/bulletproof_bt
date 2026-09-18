@@ -42,7 +42,7 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
     ATR_WINDOW = 20
     STOP_ATR_MULTIPLE = 3.0
     TARGET_HORIZON = pd.Timedelta(minutes=30)
-    EXECUTION_DELAY = pd.Timedelta(minutes=1)
+    EXECUTION_DELAY = pd.Timedelta(0)
 
     def __init__(
         self,
@@ -75,6 +75,7 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
         self._previous_close: dict[str, float] = {}
         self._quote_bucket: dict[str, _QuoteBucket] = {}
         self._exit_submitted: set[str] = set()
+        self._stop_exit_pending: set[str] = set()
         self._last_signal_bar_ts: dict[str, pd.Timestamp] = {}
 
     @staticmethod
@@ -102,6 +103,17 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
         if timestamp.tz is None:
             raise ValueError("target_exit_ts must be timezone aware")
         return timestamp
+
+    @staticmethod
+    def _stop_price(ctx: Mapping[str, Any], symbol: str) -> float | None:
+        positions = ctx.get("positions")
+        raw = positions.get(symbol) if isinstance(positions, Mapping) else None
+        metadata = raw.get("metadata") if isinstance(raw, Mapping) else None
+        value = metadata.get("entry_stop_price") if isinstance(metadata, Mapping) else None
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _quote_volume(bar: Bar) -> float | None:
@@ -160,6 +172,22 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
             position = self._position(ctx, symbol)
             if position is None:
                 self._exit_submitted.discard(symbol)
+                self._stop_exit_pending.discard(symbol)
+            if position is not None and symbol in self._stop_exit_pending and symbol not in self._exit_submitted:
+                signals.append(Signal(
+                    ts=ts, symbol=symbol,
+                    side=Side.SELL if position == Side.BUY else Side.BUY,
+                    signal_type="btc_5m_impact_proxy_reversal_stop_exit",
+                    confidence=1.0,
+                    metadata={
+                        "strategy": "btc_5m_impact_proxy_reversal",
+                        "close_only": True, "is_exit": True,
+                        "exit_reason": "fixed_completed_5m_atr_stop_breached",
+                        "stop_detection_policy": "completed_1m_then_next_bar",
+                    },
+                ))
+                self._stop_exit_pending.discard(symbol)
+                self._exit_submitted.add(symbol)
             target_exit = self._target_exit_ts(ctx, symbol)
             submit_exit_at = (
                 target_exit - self.EXECUTION_DELAY
@@ -186,10 +214,20 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
                         "exit_reason": "fixed_30m_target_horizon",
                         "target_exit_ts": target_exit.isoformat(),
                         "exit_submission_ts": pd.Timestamp(ts).isoformat(),
-                        "execution_delay_minutes": 1,
+                        "execution_delay_minutes": 0,
                     },
                 ))
                 self._exit_submitted.add(symbol)
+
+            stop_price = self._stop_price(ctx, symbol)
+            if position is not None and stop_price is not None:
+                breached = (
+                    position == Side.BUY and float(bar.low) <= stop_price
+                ) or (
+                    position == Side.SELL and float(bar.high) >= stop_price
+                )
+                if breached and symbol not in self._exit_submitted:
+                    self._stop_exit_pending.add(symbol)
 
             closed = by_symbol.get(symbol) if isinstance(by_symbol, Mapping) else None
             if closed is None or not bool(closed.is_complete):
@@ -321,6 +359,10 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
                         "target_exit_ts": target_exit_ts.isoformat(),
                         "signal_ts": pd.Timestamp(ts).isoformat(),
                         "decision_trace": trace,
+                        "requested_risk_amount": None,
+                        "risk_utilization_pct": None,
+                        "under_risked_trade": None,
+                        "risk_metadata_authority": "bt.risk.risk_engine.RiskEngine",
                     },
                 ))
             ratios.append(ratio)

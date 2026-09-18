@@ -95,6 +95,18 @@ def _funding_cycle_distance(left: int, right: int) -> float:
     return min(difference, 480 - difference) / 480.0
 
 
+def _maximum_drawdown(returns: list[float]) -> float:
+    """Return positive peak-to-trough drawdown magnitude for ordered returns."""
+    equity = 1.0
+    peak = 1.0
+    maximum = 0.0
+    for value in returns:
+        equity *= 1.0 + value
+        peak = max(peak, equity)
+        maximum = max(maximum, (peak - equity) / peak)
+    return float(maximum)
+
+
 def _complete_decisions(frame: pd.DataFrame) -> pd.DataFrame:
     """Build causal completed-5m rows; a rollover row is never an input."""
     data = frame.copy()
@@ -131,12 +143,14 @@ def _complete_decisions(frame: pd.DataFrame) -> pd.DataFrame:
             if last is not None
             else None
         )
+        mark_close = _number(last.get("mark_close")) if last is not None else None
+        index_close = _number(last.get("index_close")) if last is not None else None
         rows.append({
             "decision_ts": decision, "bucket_ts": bucket, "complete": bool(complete),
             "close": _number(last["close"]) if last is not None else None,
             "quote_volume_5m": float(quote.sum()) if quote.notna().all() else None,
             "funding_rate": funding, "funding_source_ts": funding_source,
-            "basis": basis,
+            "basis": basis, "mark_close": mark_close, "index_close": index_close,
         })
     result = pd.DataFrame(rows).set_index("decision_ts", drop=False)
     valid_close = result["close"].where(result["complete"])
@@ -185,7 +199,7 @@ def funding_basis_matched_evaluation(
             if complete_history
             else None
         )
-        valid = bool(row.complete and row.target_complete and row.quote_volume_5m is not None and row.quote_volume_5m >= 1_000_000 and funding_rate is not None and funding_source_ts is not None and funding_source_ts <= row.decision_ts and basis is not None and row.trailing_return_60m == row.trailing_return_60m and row.realized_volatility_6h == row.realized_volatility_6h and row.target_return_60m == row.target_return_60m)
+        valid = bool(row.complete and row.target_complete and row.quote_volume_5m is not None and row.quote_volume_5m >= 1_000_000 and funding_rate is not None and funding_source_ts is not None and funding_source_ts <= row.decision_ts and basis is not None and _number(row.mark_close) is not None and _number(row.index_close) is not None and row.trailing_return_60m == row.trailing_return_60m and row.realized_volatility_6h == row.realized_volatility_6h and row.target_return_60m == row.target_return_60m)
         stressed = bool(valid and percentile_value is not None and funding_rate > 0 and funding_rate >= percentile_value and basis > basis_threshold)
         records.append({
             "decision_ts": row.decision_ts.isoformat(), "status": "treated" if stressed else "control" if valid else "invalid",
@@ -238,6 +252,11 @@ def funding_basis_matched_evaluation(
         "positive_trailing_return": sum(r["trailing_return_60m"] > 0 for r in treated),
         "nonpositive_trailing_return": sum(r["trailing_return_60m"] <= 0 for r in treated),
     }
+    treated_net_returns = [
+        -float(item["target_return_60m"]) - 2.0 * cost_bps / 10_000.0
+        for item in sorted(treated, key=lambda value: value["decision_ts"])
+    ]
+    maximum_drawdown = _maximum_drawdown(treated_net_returns)
     supported = (
         len(pairs) >= minimum_support
         and min(directional_support.values(), default=0) >= 10
@@ -259,6 +278,7 @@ def funding_basis_matched_evaluation(
         "confidence_interval_95": {"lower": mean - 1.96 * standard_error, "upper": upper},
         "confidence_interval_method": "overlap_component_cluster_robust_60m",
         "doubled_cost_treated_minus_control": doubled_cost_difference,
+        "maximum_drawdown": maximum_drawdown,
         "directional_support": directional_support,
         "passed": outcome == "positive",
     }
@@ -284,6 +304,25 @@ class BtcFundingBasisCrowding60mStrategy(Strategy):
             lambda: deque(maxlen=73)
         )
         self.exit_sent: set[str] = set()
+        self.stop_exit_pending: set[str] = set()
+        self.last_history_decision: dict[str, pd.Timestamp] = {}
+
+    def _funding_at(self, symbol: str, decision_ts: pd.Timestamp) -> tuple[pd.Timestamp, float] | None:
+        available = [(source, rate) for source, rate in self.funding[symbol] if source <= decision_ts]
+        return max(available, key=lambda item: item[0]) if available else None
+
+    def _advance_history_to(self, symbol: str, decision_ts: pd.Timestamp) -> tuple[deque[float | None], tuple[pd.Timestamp, float] | None]:
+        """Insert every elapsed 5m decision row, including wholly missing rows."""
+        history = self.funding_history[symbol]
+        previous = self.last_history_decision.get(symbol)
+        cursor = decision_ts if previous is None else previous + pd.Timedelta(minutes=5)
+        while cursor < decision_ts:
+            observation = self._funding_at(symbol, cursor)
+            history.append(observation[1] if observation is not None else None)
+            cursor += pd.Timedelta(minutes=5)
+        latest = self._funding_at(symbol, decision_ts)
+        self.last_history_decision[symbol] = decision_ts
+        return history, latest
 
     def on_bars(self, ts: pd.Timestamp, bars_by_symbol: dict[str, Bar], tradeable: set[str], ctx: Mapping[str, Any]) -> list[Signal]:
         output: list[Signal] = []
@@ -291,8 +330,15 @@ class BtcFundingBasisCrowding60mStrategy(Strategy):
         for symbol, bar in sorted(bars_by_symbol.items()):
             position = positions.get(symbol) if isinstance(positions, Mapping) else None
             metadata = position.get("metadata", {}) if isinstance(position, Mapping) else {}
+            if position is None:
+                self.exit_sent.discard(symbol)
+                self.stop_exit_pending.discard(symbol)
+            if position is not None and symbol in self.stop_exit_pending and symbol not in self.exit_sent:
+                output.append(Signal(ts, symbol, Side.BUY, "funding_basis_fixed_stop_exit", 1.0, {"close_only": True, "is_exit": True, "exit_reason": "fixed_3pct_stop_breached", "stop_detection_policy": "completed_1m_then_next_bar"}))
+                self.stop_exit_pending.discard(symbol)
+                self.exit_sent.add(symbol)
             target = pd.Timestamp(metadata["target_exit_ts"]) if metadata.get("target_exit_ts") else None
-            if target is not None and ts >= target - pd.Timedelta(minutes=1) and symbol not in self.exit_sent:
+            if target is not None and ts >= target and symbol not in self.exit_sent:
                 output.append(
                     Signal(
                         ts,
@@ -308,8 +354,12 @@ class BtcFundingBasisCrowding60mStrategy(Strategy):
                     )
                 )
                 self.exit_sent.add(symbol)
-            if position is None:
-                self.exit_sent.discard(symbol)
+            try:
+                stop_price = float(metadata.get("entry_stop_price"))
+            except (TypeError, ValueError):
+                stop_price = None
+            if position is not None and stop_price is not None and float(bar.high) >= stop_price and symbol not in self.exit_sent:
+                self.stop_exit_pending.add(symbol)
             bucket_start = bar.ts.floor("5min")
             current = self.buckets.get(symbol)
             closed = current if current is not None and current.start != bucket_start else None
@@ -324,9 +374,7 @@ class BtcFundingBasisCrowding60mStrategy(Strategy):
                 close = float(last.close) if last else None
                 completed = self.completed_buckets[symbol]
                 completed.append((closed.start, close, complete))
-                available = [(source, rate) for source, rate in self.funding[symbol] if source <= ts]
-                latest = max(available, key=lambda item: item[0]) if available else None
-                hist = self.funding_history[symbol]
+                hist, latest = self._advance_history_to(symbol, ts)
                 complete_funding_history = (
                     len(hist) == hist.maxlen
                     and all(value is not None for value in hist)
@@ -345,6 +393,8 @@ class BtcFundingBasisCrowding60mStrategy(Strategy):
                     if values
                     else None
                 )
+                mark_close = _number(values[-1].get("mark_close")) if values else None
+                index_close = _number(values[-1].get("index_close")) if values else None
                 contiguous_rollover = bucket_start == closed.start + pd.Timedelta(minutes=5)
                 complete_history = (
                     len(completed) == completed.maxlen
@@ -355,11 +405,11 @@ class BtcFundingBasisCrowding60mStrategy(Strategy):
                         for index in range(1, len(completed))
                     )
                 )
-                ready = contiguous_rollover and complete_history and all(v is not None for v in qv) and sum(qv) >= 1_000_000 and funding_threshold is not None and latest is not None and latest[1] > 0 and latest[1] >= funding_threshold and basis is not None and basis > self.basis_bps / 10_000 and symbol in tradeable and position is None
+                ready = contiguous_rollover and complete_history and all(v is not None for v in qv) and sum(qv) >= 1_000_000 and funding_threshold is not None and latest is not None and latest[1] > 0 and latest[1] >= funding_threshold and basis is not None and mark_close is not None and index_close is not None and basis > self.basis_bps / 10_000 and symbol in tradeable and position is None
                 if ready:
                     stop = close * 1.03
                     trace = make_decision_trace(reason_code="positive_funding_and_basis_crowding", setup_class="funding_basis_crowding", hypothesis_branch="lower_next_60m", conditions_bool_map={"complete": complete, "funding_stress": True, "positive_basis": True}, blockers_bool_map={"existing_position": False}, permission_layer_state={"tradeable": True}, parameter_combination={"funding_percentile_threshold": self.threshold, "basis_threshold_bps": self.basis_bps}, gate_values={"funding_rate": latest[1], "basis_close_vs_index": basis}, gate_thresholds={"funding_rate": funding_threshold, "basis": self.basis_bps / 10000}, gate_margins={"funding": latest[1]-funding_threshold}, most_binding_gate="funding")
-                    output.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="btc_funding_basis_crowding_entry", confidence=1.0, metadata={"strategy": "btc_funding_basis_crowding_60m", "strategy_id": "ALPHA-003-BTC-FUNDING-BASIS-CROWDING-60M", "decision_trace": trace, "stop_price": stop, "entry_stop_price": stop, "entry_reference_price": close, "r_per_trade": self.r, "sizing_mode": "risk_at_stop", "funding_rate": latest[1], "funding_source_ts": latest[0].isoformat(), "basis_close_vs_index": basis, "funding_percentile_threshold_value": funding_threshold, "target_horizon_minutes": 60, "target_exit_ts": (ts + pd.Timedelta(minutes=60)).isoformat()}))
+                    output.append(Signal(ts=ts, symbol=symbol, side=Side.SELL, signal_type="btc_funding_basis_crowding_entry", confidence=1.0, metadata={"strategy": "btc_funding_basis_crowding_60m", "strategy_id": "ALPHA-003-BTC-FUNDING-BASIS-CROWDING-60M", "decision_trace": trace, "stop_price": stop, "entry_stop_price": stop, "entry_reference_price": close, "r_per_trade": self.r, "sizing_mode": "risk_at_stop", "funding_rate": latest[1], "funding_source_ts": latest[0].isoformat(), "basis_close_vs_index": basis, "mark_close": mark_close, "index_close": index_close, "funding_percentile_threshold_value": funding_threshold, "target_horizon_minutes": 60, "target_exit_ts": (ts + pd.Timedelta(minutes=60)).isoformat(), "requested_risk_amount": None, "risk_utilization_pct": None, "under_risked_trade": None, "risk_metadata_authority": "bt.risk.risk_engine.RiskEngine"}))
             elif current is None:
                 self.buckets[symbol] = _Bucket(bucket_start, [])
             extra = bar.extra if isinstance(bar.extra, Mapping) else {}

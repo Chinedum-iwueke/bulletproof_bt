@@ -827,13 +827,16 @@ def execute_registered(
             contract.schema.execution_semantics.get("signal_timeframe", "1m")
         ),
     )
+    execution_delay_bars = int(
+        contract_document.get("costs", {}).get("delay_bars", 1)
+    )
     model = declared_classic_bundle(
         profile="tier2",
         parameters={
             "taker_fee_bps": 6.0,
             "slippage_bps": 2.0,
             "spread_bps": 1.0,
-            "delay_bars": 1,
+            "delay_bars": execution_delay_bars,
         },
     )
     search = compile_hypothesis_search_plan(
@@ -1394,7 +1397,7 @@ def execute_registered(
             "target": "net portfolio outcome under the registered strategy",
             "fees_bps": 6.0,
             "slippage_bps": 2.0,
-            "delay_bars": 1,
+            "delay_bars": execution_delay_bars,
             "sample_range": (
                 f"{proposal_without_digest['dataset']['start']}.."
                 f"{proposal_without_digest['dataset']['end']}"
