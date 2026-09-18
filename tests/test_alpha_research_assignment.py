@@ -392,6 +392,25 @@ def test_structural_reconstruction_supports_nonstandard_minute_timeframes() -> N
     assert list(bars["close"]) == [6, 13]
 
 
+def test_structural_reconstruction_rejects_partial_quote_volume_bucket() -> None:
+    start = pd.Timestamp("2026-01-01T00:00:00Z")
+    frame = pd.DataFrame(
+        {
+            "ts": pd.date_range(start, periods=10, freq="1min"),
+            "symbol": "BTCUSDT",
+            "close": range(10),
+            "quote_volume": [1_000_000.0] * 4
+            + [float("nan")]
+            + [1_000_000.0] * 5,
+        }
+    )
+
+    bars = complete_timeframe_bars(frame, "5m")
+
+    assert list(bars["ts"]) == [start + pd.Timedelta(minutes=5)]
+    assert list(bars["quote_volume"]) == [5_000_000.0]
+
+
 def test_durable_bundle_and_native_memory_are_idempotent(tmp_path: Path) -> None:
     import json
 

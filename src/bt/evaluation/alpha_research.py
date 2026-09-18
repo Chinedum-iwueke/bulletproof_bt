@@ -165,6 +165,7 @@ def complete_timeframe_bars(frame: pd.DataFrame, timeframe: str) -> pd.DataFrame
         lambda sample: len(sample) == minutes
         and sample["ts"].nunique() == minutes
         and sample["ts"].max() - sample["ts"].min() == pd.Timedelta(minutes=minutes - 1)
+        and bool(sample[columns].notna().all().all())
     )
     if complete.empty:
         optional = [column for column in columns if column not in required]
