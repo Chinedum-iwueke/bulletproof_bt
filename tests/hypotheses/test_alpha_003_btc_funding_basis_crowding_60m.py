@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import pandas as pd
@@ -60,12 +61,52 @@ def test_contract_is_frozen_classic_only_and_admitted() -> None:
     assert contract.materialize_grid() == contract.materialize_grid()
     assert len(contract.materialize_grid()) == 4
     raw = yaml.safe_load(YAML_PATH.read_text())
-    assert raw["version"] == "1.4.0"
+    assert raw["version"] == "1.5.0"
     assert raw["costs"]["delay_bars"] == 1
     assert raw["immutable_contract"]["question"] == QUESTION
     assert raw["evaluation"]["selection_metric"] == "validation_treated_minus_control_mean"
+    assert raw["execution_semantics"]["funding_percentile_window"] == (
+        "prior_25920_decision_rows_excluding_current"
+    )
+    assert raw["execution_semantics"]["funding_percentile_observation_lag"] == 1
+    assert raw["execution_semantics"]["funding_history_update_order"] == (
+        "compare_current_then_append_current"
+    )
     assert raw["evaluation"]["outcome_retention"] == ["positive", "negative", "invalid", "failed"]
     assert validate_hypothesis_admission(YAML_PATH).status == "PASS"
+
+
+def test_registered_card_retains_prior_only_funding_threshold_semantics() -> None:
+    assignment = _assignment() | {
+        "campaign_id": "11111111-1111-4111-8111-111111111111",
+        "max_variants": 4,
+        "research_timeframe": "5m",
+        "reusable_strategy": {
+            "bounded_weekly_reuse_eligible": True,
+            "input_mode": "single_instrument",
+            "maximum_instruments": 1,
+            "contract_path": str(YAML_PATH.relative_to(ROOT)),
+            "contract_digest": hashlib.sha256(YAML_PATH.read_bytes()).hexdigest(),
+            "hypothesis_id": "ALPHA-003-BTC-FUNDING-BASIS-CROWDING-60M",
+            "strategy": "btc_funding_basis_crowding_60m",
+            "title": "BTC funding-basis crowding and subsequent 60m return",
+            "description": QUESTION,
+            "variant_count": 4,
+            "logging_requirements": yaml.safe_load(YAML_PATH.read_text())["logging"][
+                "required_fields"
+            ],
+        },
+    }
+
+    card = draft_research_card(assignment, repository_root=str(ROOT))
+
+    assert card["execution_semantics"]["funding_percentile_window"] == (
+        "prior_25920_decision_rows_excluding_current"
+    )
+    assert card["execution_semantics"]["funding_percentile_observation_lag"] == 1
+    assert card["execution_semantics"]["funding_stress_comparison"] == (
+        "current_point_in_time_funding_gte_prior_only_threshold"
+    )
 
 
 def test_latest_backward_funding_join_uses_source_time_not_row_order() -> None:
