@@ -49,11 +49,15 @@ def test_fee_and_slippage_applied_with_delay_and_worst_case_fill() -> None:
     bar = _bar(ts=t0, symbol="BTC")
     order = _order(ts=t0, symbol="BTC", order_type=OrderType.MARKET)
 
-    updated_orders, fills = model.process(ts=t0, bars_by_symbol={"BTC": bar}, open_orders=[order])
+    updated_orders, fills = model.process(
+        ts=t0, bars_by_symbol={"BTC": bar}, open_orders=[order]
+    )
     assert len(fills) == 0
     assert updated_orders[0].state == OrderState.SUBMITTED
 
-    updated_orders, fills = model.process(ts=t1, bars_by_symbol={"BTC": bar}, open_orders=updated_orders)
+    updated_orders, fills = model.process(
+        ts=t1, bars_by_symbol={"BTC": bar}, open_orders=updated_orders
+    )
     assert len(fills) == 1
     fill = fills[0]
     assert fill.price >= 110
@@ -81,11 +85,15 @@ def test_missing_bar_preserves_delay_and_prevents_fill() -> None:
     assert updated_orders[0].metadata["delay_remaining"] == 1
 
     bar = _bar(ts=t1, symbol="ETH")
-    updated_orders, fills = model.process(ts=t1, bars_by_symbol={"ETH": bar}, open_orders=updated_orders)
+    updated_orders, fills = model.process(
+        ts=t1, bars_by_symbol={"ETH": bar}, open_orders=updated_orders
+    )
     assert len(fills) == 0
     assert updated_orders[0].metadata["delay_remaining"] == 0
 
-    updated_orders, fills = model.process(ts=t2, bars_by_symbol={"ETH": bar}, open_orders=updated_orders)
+    updated_orders, fills = model.process(
+        ts=t2, bars_by_symbol={"ETH": bar}, open_orders=updated_orders
+    )
     assert len(fills) == 1
     assert updated_orders[0].state == OrderState.FILLED
 
@@ -103,7 +111,11 @@ def test_limit_order_not_supported() -> None:
     order = _order(ts=t0, symbol="BTC", order_type=OrderType.LIMIT)
 
     try:
-        model.process(ts=t0, bars_by_symbol={"BTC": _bar(ts=t0, symbol="BTC")}, open_orders=[order])
+        model.process(
+            ts=t0,
+            bars_by_symbol={"BTC": _bar(ts=t0, symbol="BTC")},
+            open_orders=[order],
+        )
     except NotImplementedError:
         assert True
     else:
@@ -132,9 +144,19 @@ def test_entry_fill_qty_is_clipped_to_actual_fill_stop_risk_budget() -> None:
             "risk_value_per_price_unit": 1.0,
         },
     )
-    bar = Bar(ts=ts, symbol="BTC", open=105.0, high=110.0, low=104.0, close=106.0, volume=1000.0)
+    bar = Bar(
+        ts=ts,
+        symbol="BTC",
+        open=105.0,
+        high=110.0,
+        low=104.0,
+        close=106.0,
+        volume=1000.0,
+    )
 
-    updated_orders, fills = model.process(ts=ts, bars_by_symbol={"BTC": bar}, open_orders=[order])
+    updated_orders, fills = model.process(
+        ts=ts, bars_by_symbol={"BTC": bar}, open_orders=[order]
+    )
 
     assert len(fills) == 1
     fill = fills[0]
@@ -167,10 +189,61 @@ def test_close_only_fill_is_not_risk_clipped() -> None:
             "stop_price": 100.0,
         },
     )
-    bar = Bar(ts=ts, symbol="BTC", open=105.0, high=110.0, low=90.0, close=106.0, volume=1000.0)
+    bar = Bar(
+        ts=ts,
+        symbol="BTC",
+        open=105.0,
+        high=110.0,
+        low=90.0,
+        close=106.0,
+        volume=1000.0,
+    )
 
     _, fills = model.process(ts=ts, bars_by_symbol={"BTC": bar}, open_orders=[order])
 
     assert len(fills) == 1
     assert fills[0].qty == 100.0
     assert "risk_fill_qty_clipped" not in fills[0].metadata
+
+
+def test_entry_stop_distance_is_anchored_to_actual_delayed_fill() -> None:
+    model = ExecutionModel(
+        fee_model=FeeModel(maker_fee_bps=0.0, taker_fee_bps=0.0),
+        slippage_model=SlippageModel(k=0.0),
+        delay_bars=0,
+    )
+    ts = pd.Timestamp("2024-01-06T00:00:00Z")
+    order = Order(
+        id="order-fill-anchored-stop",
+        ts_submitted=ts,
+        symbol="BTC",
+        side=Side.BUY,
+        qty=100.0,
+        order_type=OrderType.MARKET,
+        limit_price=None,
+        state=OrderState.NEW,
+        metadata={
+            "risk_budget": 500.0,
+            "stop_price": 95.0,
+            "fill_anchored_stop_distance": 5.0,
+            "risk_value_per_price_unit": 1.0,
+        },
+    )
+    bar = Bar(
+        ts=ts,
+        symbol="BTC",
+        open=105.0,
+        high=110.0,
+        low=104.0,
+        close=106.0,
+        volume=1000.0,
+    )
+
+    _, fills = model.process(ts=ts, bars_by_symbol={"BTC": bar}, open_orders=[order])
+
+    assert len(fills) == 1
+    assert fills[0].price == 110.0
+    assert fills[0].qty == 100.0
+    assert fills[0].metadata["entry_stop_price"] == 105.0
+    assert fills[0].metadata["entry_stop_distance"] == 5.0
+    assert fills[0].metadata["stop_anchored_to_actual_fill"] is True
