@@ -351,6 +351,27 @@ def test_representation_uses_complete_five_minute_decision_rows() -> None:
     assert pd.Timestamp(contract.split.train_start) == timestamps[0] + pd.Timedelta(minutes=5)
 
 
+def test_incomplete_five_minute_bucket_cannot_shift_split_boundaries() -> None:
+    timestamps = pd.date_range("2026-01-01T00:00:00Z", periods=240, freq="1min")
+    frame = pd.DataFrame(
+        {
+            "ts": timestamps,
+            "symbol": "BTCUSDT",
+            "close": 100.0,
+            "quote_volume": 1_000_000.0,
+        }
+    )
+    complete, _ = representation(
+        assignment(), frame, "f" * 64,
+        purge_seconds=1800, embargo_seconds=1800, decision_timeframe="5m",
+    )
+    missing, _ = representation(
+        assignment(), frame.drop(index=100), "f" * 64,
+        purge_seconds=1800, embargo_seconds=1800, decision_timeframe="5m",
+    )
+    assert missing.split == complete.split
+
+
 def test_impact_proxy_evaluation_uses_complete_causal_five_minute_bars() -> None:
     import pandas as pd
 

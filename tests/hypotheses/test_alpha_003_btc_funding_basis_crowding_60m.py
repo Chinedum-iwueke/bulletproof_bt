@@ -59,7 +59,7 @@ def test_contract_is_frozen_classic_only_and_admitted() -> None:
     assert contract.materialize_grid() == contract.materialize_grid()
     assert len(contract.materialize_grid()) == 4
     raw = yaml.safe_load(YAML_PATH.read_text())
-    assert raw["version"] == "1.2.0"
+    assert raw["version"] == "1.3.0"
     assert raw["costs"]["delay_bars"] == 1
     assert raw["immutable_contract"]["question"] == QUESTION
     assert raw["evaluation"]["selection_metric"] == "validation_treated_minus_control_mean"
@@ -279,7 +279,7 @@ def test_positive_outcome_requires_supported_disjoint_matched_windows(monkeypatc
     assert result["matched_support"] == 40
     assert result["confidence_interval_95"]["upper"] < 0
     assert result["doubled_cost_treated_minus_control"] < 0
-    assert result["maximum_drawdown"] >= 0
+    assert "maximum_drawdown" not in result
 
 
 def test_future_mutation_cannot_change_prior_completed_decisions() -> None:
@@ -372,6 +372,13 @@ def test_unavailable_funding_percentile_is_invalid_not_a_control() -> None:
         for item in result["decision_records"]
         if item["funding_threshold"] is None
     )
+    required = {
+        "decision_trace", "stop_price", "basis_close_vs_index",
+        "funding_percentile_threshold_value", "target_exit_ts",
+        "target_horizon_minutes", "requested_risk_amount",
+        "risk_utilization_pct", "under_risked_trade",
+    }
+    assert required <= result["decision_records"][0].keys()
 
 
 def test_funding_observed_before_its_source_time_is_not_available() -> None:
@@ -654,3 +661,8 @@ def test_execute_registered_retains_per_variant_truth_and_finalized_bundles(
         "run-bundles-*/bundles/*/artifacts/funding_basis_matched_evaluation.json"
     ))
     assert len(heldout) == 1
+    heldout_evaluation = yaml.safe_load(heldout[0].read_text())
+    assert heldout_evaluation["maximum_drawdown"] >= 0
+    assert heldout_evaluation["maximum_drawdown_authority"] == (
+        "classic_engine_canonical_R"
+    )

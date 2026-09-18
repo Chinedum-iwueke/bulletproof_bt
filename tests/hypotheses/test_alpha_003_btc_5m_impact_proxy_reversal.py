@@ -133,7 +133,7 @@ def test_yaml_grid_and_admission_are_deterministic_and_classic_only() -> None:
     assert len({item["config_hash"] for item in one}) == 8
     assert contract.schema.execution_semantics["required_extra_columns"] == ["quote_volume"]
     raw_contract = yaml.safe_load(YAML_PATH.read_text(encoding="utf-8"))
-    assert raw_contract["version"] == "1.2.0"
+    assert raw_contract["version"] == "1.3.0"
     assert raw_contract["costs"]["delay_bars"] == 1
     assert raw_contract["immutable_contract"]["resampling_policy"] == (
         "left_closed_left_labeled_complete_bars"
@@ -169,7 +169,8 @@ def test_strategy_uses_only_completed_history_and_emits_opposite_direction() -> 
     assert entry.metadata["signal_return_5m"] == pytest.approx(0.10)
     assert entry.metadata["quote_volume_5m"] == pytest.approx(2_000_000.0)
     assert entry.metadata["target_horizon_minutes"] == 30
-    assert pd.Timestamp(entry.metadata["signal_ts"]) == entry.ts
+    assert pd.Timestamp(entry.metadata["signal_ts"]) == entry.ts + pd.Timedelta(minutes=1)
+    assert pd.Timestamp(entry.metadata["signal_emitted_at"]) == entry.ts
     assert entry.metadata["decision_trace"]
     assert entry.metadata["stop_price"] > entry.metadata["entry_reference_price"]
 
@@ -272,6 +273,24 @@ def test_quote_volume_bucket_rejects_a_missing_minute() -> None:
         {"BTCUSDT"},
         {"positions": {}, "htf": {"5m": {"BTCUSDT": _closed(rollover, 110.0)}}},
     )
+    assert signals == []
+
+
+def test_missing_bucket_cannot_become_a_multi_bucket_return() -> None:
+    strategy = Btc5mImpactProxyReversalStrategy(
+        impact_proxy_threshold=0.75, normalization_window=2
+    )
+    assert _run_returns(strategy, [0.001] * 20) == []
+    start = pd.Timestamp("2023-01-01T01:45:00Z")
+    signals = []
+    for minute in range(5):
+        ts = start + pd.Timedelta(minutes=minute)
+        signals.extend(strategy.on_bars(
+            ts,
+            {"BTCUSDT": _bar(ts, quote_volume=400_000.0, close=112.0)},
+            {"BTCUSDT"},
+            {"positions": {}, "htf": {"5m": {}}},
+        ))
     assert signals == []
 
 
