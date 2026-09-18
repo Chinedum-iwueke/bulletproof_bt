@@ -16,6 +16,8 @@ from scripts.run_alpha_research_assignment import (
     engineering_required,
     execute_registered,
     execution_scope,
+    downstream_reuse_manifest,
+    file_digest,
     independent_review_required,
     hypothesis_identity,
     representation,
@@ -85,6 +87,36 @@ def test_commissioning_scope_is_review_contained_and_non_qualifying() -> None:
     scope = execution_scope(value, qualification)
     assert scope["qualification_authority"] is False
     assert scope["execution_class"] == "commissioning"
+    assert scope["commissioning_window"] == {
+        "start": "2023-01-01T00:00:00+00:00",
+        "end": "2023-02-01T00:00:00+00:00",
+    }
+    assert scope["reviewed_window"] == qualification["window"]
+
+
+def test_downstream_manifest_separates_learning_ml_and_rl_authority(tmp_path) -> None:
+    for name in (
+        "decisions.jsonl",
+        "trades.csv",
+        "representation_contract.json",
+        "search_plan.json",
+        "evaluation.json",
+    ):
+        (tmp_path / name).write_text(name, encoding="utf-8")
+    document = downstream_reuse_manifest(
+        tmp_path,
+        assignment=assignment(),
+        representation_digest="2" * 64,
+        search_plan_digest="3" * 64,
+        evaluation_artifact="evaluation.json",
+        variant_index=2,
+        selected_for_holdout=True,
+    )
+    assert document["readiness"]["institutional_learning"]["state"] == "ready"
+    assert document["readiness"]["ml002"]["state"] == "materialization_candidate"
+    assert document["readiness"]["rl001"]["state"] == "not_ready"
+    assert document["authority"] == AUTHORITY
+    assert document["artifacts"]["trades.csv"] == file_digest(tmp_path / "trades.csv")
 
 
 def test_qualification_window_must_equal_independently_reviewed_window() -> None:

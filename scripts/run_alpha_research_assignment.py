@@ -91,6 +91,72 @@ def file_digest(path: Path) -> str:
     return result.hexdigest()
 
 
+def downstream_reuse_manifest(
+    run_dir: Path,
+    *,
+    assignment: dict[str, Any],
+    representation_digest: str,
+    search_plan_digest: str,
+    evaluation_artifact: str,
+    variant_index: int,
+    selected_for_holdout: bool,
+) -> dict[str, Any]:
+    artifact_names = [
+        "decisions.jsonl",
+        "fills.jsonl",
+        "trades.csv",
+        "equity.csv",
+        "performance.json",
+        "representation_contract.json",
+        "representation_leakage_report.json",
+        "search_plan.json",
+        "selection_bias_audit.json",
+        evaluation_artifact,
+        "required_trade_logging_evaluation.json",
+    ]
+    artifacts = {
+        name: file_digest(run_dir / name)
+        for name in artifact_names
+        if (run_dir / name).is_file()
+    }
+    document = {
+        "schema_version": "alpha-downstream-reuse-v1.0.0",
+        "dataset_digest": assignment["dataset_digest"],
+        "question_digest": assignment["question_digest"],
+        "source_commit": assignment["base_ref"],
+        "representation_contract_digest": representation_digest,
+        "search_plan_digest": search_plan_digest,
+        "variant_index": variant_index,
+        "selected_for_holdout": selected_for_holdout,
+        "artifacts": artifacts,
+        "readiness": {
+            "institutional_learning": {
+                "state": "ready",
+                "uses": ["novelty", "failure_memory", "abductive_replenishment"],
+            },
+            "ml002": {
+                "state": "materialization_candidate",
+                "uses": ["causal_features", "labels", "purged_embargoed_splits"],
+                "required_before_training": [
+                    "DISC-003 producer receipt",
+                    "independent materialization rebuild",
+                ],
+            },
+            "rl001": {
+                "state": "not_ready",
+                "reason": (
+                    "Backtests do not supply sealed shadow behavior propensities, "
+                    "action support, or independently rebuilt rewards."
+                ),
+                "required_before_use": ["SHADOW-001 receipt", "RL-001 receipt"],
+            },
+        },
+        "authority": AUTHORITY,
+    }
+    document["record_digest"] = digest(document)
+    return document
+
+
 def hypothesis_identity(question: str) -> str:
     match = _EXPLICIT_HYPOTHESIS.search(question)
     return match.group(1) if match else question.strip()
@@ -804,6 +870,19 @@ def execute_registered(
         (candidate_run / "required_trade_logging_evaluation.json").write_bytes(
             canonical(logging_report) + b"\n"
         )
+    for index, candidate_run in enumerate(run_dirs):
+        reuse = downstream_reuse_manifest(
+            candidate_run,
+            assignment=assignment,
+            representation_digest=rep.digest,
+            search_plan_digest=search.digest,
+            evaluation_artifact=evaluation_artifact_name,
+            variant_index=index,
+            selected_for_holdout=index == selected_index,
+        )
+        (candidate_run / "downstream_reuse_manifest.json").write_bytes(
+            canonical(reuse) + b"\n"
+        )
     truth = validate_experiment_root(experiment)
     write_truth_report(truth, experiment / "summaries")
     if truth.status != "PASS":
@@ -1085,7 +1164,7 @@ def execute_registered(
     else:
         result_document["disposition"] = "commissioning_complete"
         result_document["commissioning_receipt"] = {
-            "schema_version": "alpha-commissioning-receipt-v1.0.0",
+            "schema_version": "alpha-commissioning-receipt-v1.1.0",
             "execution_class": "commissioning",
             "qualification_authority": False,
             "campaign_digest": assignment["campaign_digest"],
@@ -1094,7 +1173,7 @@ def execute_registered(
             "dataset_digest": assignment["dataset_digest"],
             "execution_window_digest": window_digest,
             "window": scope["commissioning_window"],
-            "reviewed_window": scope["reviewed_window"],
+            "qualification_reviewed_window": scope["reviewed_window"],
             "variant_count": len(variants),
             "selected_variant_index": selected_index,
             "bundle_digests": [item["bundle_digest"] for item in bundles],
