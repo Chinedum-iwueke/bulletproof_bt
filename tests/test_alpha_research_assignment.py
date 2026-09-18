@@ -10,6 +10,7 @@ from scripts.run_alpha_research_assignment import (
     execution_scope,
     independent_review_required,
     held_out_evaluation,
+    impact_proxy_evaluation,
     hypothesis_identity,
     record_alpha_memory,
     retain_bundle,
@@ -162,6 +163,67 @@ def test_held_out_evaluation_is_temporal_and_doubles_observed_costs(
     assert report["mean_net_r"] == 0.375
     assert report["double_cost_mean_net_r"] == 0.275
     assert report["adequate_support"] is False
+
+
+def test_impact_proxy_evaluation_uses_complete_causal_five_minute_bars() -> None:
+    import pandas as pd
+
+    rows = []
+    timestamp = pd.Timestamp("2026-01-01T00:00:00Z")
+    close = 100.0
+    # 25 complete bars provide a trailing window plus held-out extremes and controls.
+    for minute in range(125):
+        bucket = minute // 5
+        step = 0.0001
+        if bucket in {12, 18} and minute % 5 == 4:
+            step = 0.02
+        elif bucket in {14, 20} and minute % 5 == 4:
+            step = 0.019
+        close *= 1.0 + step
+        rows.append(
+            {
+                "ts": timestamp + pd.Timedelta(minutes=minute),
+                "symbol": "BTCUSDT",
+                "close": close,
+                "quote_volume": 400_000.0 if bucket in {12, 18} else 2_000_000.0,
+            }
+        )
+    report = impact_proxy_evaluation(
+        pd.DataFrame(rows),
+        test_start="2026-01-01T00:50:00Z",
+        params={
+            "impact_proxy_threshold": 0.8,
+            "normalization_window": 4,
+            "return_shock_control_band": 0.2,
+        },
+    )
+    assert report["schema_version"] == "alpha-impact-proxy-evaluation-v1.0.0"
+    assert report["direction_balance"]["short"] >= 1
+    assert report["matched_return_shock_control"]["extreme_observations"] >= 1
+    assert "record_digest" in report
+
+
+def test_impact_proxy_evaluation_rejects_duplicate_minutes() -> None:
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        {
+            "ts": ["2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"],
+            "symbol": ["BTCUSDT", "BTCUSDT"],
+            "close": [100.0, 100.0],
+            "quote_volume": [1_000_000.0, 1_000_000.0],
+        }
+    )
+    with pytest.raises(BridgeError, match="duplicate minute bars"):
+        impact_proxy_evaluation(
+            frame,
+            test_start="2026-01-01T00:00:00Z",
+            params={
+                "impact_proxy_threshold": 0.8,
+                "normalization_window": 4,
+                "return_shock_control_band": 0.2,
+            },
+        )
 
 
 def test_durable_bundle_and_native_memory_are_idempotent(tmp_path: Path) -> None:

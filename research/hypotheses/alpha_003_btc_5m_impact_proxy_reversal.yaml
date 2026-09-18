@@ -1,0 +1,147 @@
+metadata:
+  hypothesis_id: "ALPHA-003-BTC-IMPACT-PROXY-REVERSAL"
+  title: "BTC liquidity-stress proxy reversal"
+  description: "Does an extreme point-in-time BTCUSDT 5m absolute return per unit quote_volume predict opposite-direction close-to-close return over the next 30m?"
+  research_layer: "ALPHA"
+  hypothesis_family: "impact_proxy_reversal"
+  version: "1.0.0"
+  author: "bulletproof_bt"
+  created_at: "2026-09-18T00:00:00Z"
+hypothesis_id: "ALPHA-003-BTC-IMPACT-PROXY-REVERSAL"
+title: "BTC liquidity-stress proxy reversal"
+description: "Does an extreme point-in-time BTCUSDT 5m absolute return per unit quote_volume predict opposite-direction close-to-close return over the next 30m?"
+research_layer: "ALPHA"
+hypothesis_family: "impact_proxy_reversal"
+version: "1.0.0"
+status: "draft"
+immutable_contract:
+  question: "Does an extreme point-in-time BTCUSDT 5m absolute return per unit quote_volume predict opposite-direction close-to-close return over the next 30m?"
+  question_digest: "4b420fd26d516a1eb4d4109b697c5bebf5a5fcbe810742e06f72aa103a529ff8"
+  dataset_key: "bybit-btcusdt-perpetual-1m-research-panel"
+  dataset_build_id: "fbb81c42-953b-42fb-8fe1-89c75b45e1aa"
+  dataset_digest: "9a211d8818c5ab8ec82ad5a7d38957e63eb387ea83d4b00541922a0eeca4aacb"
+  catalog_id: "d0eb1ad0-98ed-4bce-ad80-649fa3b0b85a"
+  catalog_digest: "edf31ca2812a662f5eaf5a46eeb3a34a504140df9113708d725bcfd855473492"
+  builder_commit: "9870e1993c898f5aae891be5833c8aac90926fd8"
+  venue: "bybit"
+  instrument: "BTCUSDT"
+  source_timeframe: "1m"
+  research_timeframe: "5m"
+  resampling_policy: "right_closed_left_labeled_complete_bars"
+  window: {start: "2023-01-01T00:00:00Z", end: "2024-01-01T00:00:00Z"}
+  evidence_class: "live_exchange_history"
+  required_fields: [ts, open, high, low, close, volume, quote_volume]
+parameter_grid:
+  impact_proxy_threshold: [0.99, 0.995]
+  normalization_window: [288, 2016]
+  signal_direction: ["both"]
+  return_shock_control_band: [0.10, 0.20]
+grid_contract:
+  maximum_parameters: 4
+  maximum_variants: 8
+  frozen_before_outcomes: true
+  stopping_rule: "exhaustive"
+entry:
+  strategy: "btc_5m_impact_proxy_reversal"
+  signal_timeframe: "5m"
+  timeframe: "5m"
+  base_execution_timeframe: "1m"
+  order_timing: "completed_5m_close_submit_next_bar_execution"
+  direction: "opposite_signal_bar_return"
+  no_pyramiding: true
+  disallow_flip: true
+exit:
+  target: "close-to-close return during the 30m immediately following the completed 5m signal bar"
+  time_exit_minutes: 30
+  stop_kind: "completed_5m_atr_multiple"
+  stop_atr_window: 20
+  stop_atr_multiple: 3.0
+  stop_update_policy: "frozen_at_entry"
+  exit_monitoring_timeframe: "1m"
+sizing:
+  mode: "risk_at_stop"
+  r_per_trade: 0.005
+  cap_policy: "allow_clip_with_truth"
+  min_risk_utilization_pct: 0.10
+  report_under_risked_trades: true
+risk:
+  authority: "engine"
+  max_positions: 1
+  max_notional_pct_equity: 0.25
+  max_gross_notional_pct_equity: 0.25
+  max_leverage: 1.0
+  unresolved_stop_policy: "reject_entry"
+  pyramiding: false
+  flips: false
+costs:
+  authority: "engine"
+  taker_fee_bps: 6.0
+  slippage_bps: 2.0
+  spread_bps: 1.0
+  delay_bars: 1
+  robustness_multiplier: 2.0
+data_availability:
+  dataset_kind: "research_panel"
+  quote_volume_role: "required_signal_input"
+  auxiliary_fields_role: "logging_only"
+  ohlcv_only_fallback: "no_decision"
+  missing_quote_volume: "no_decision"
+  liquidity_floor_usd: 1000000.0
+execution_semantics:
+  signal_timeframe: "5m"
+  base_execution_timeframe: "1m"
+  exit_monitoring_timeframe: "1m"
+  base_data_frequency_expected: "1m"
+  strategy_family: "impact_proxy_reversal"
+  family_pattern: "completed_5m_return_per_quote_volume_reversal"
+  signal_bar_policy: "strict_completed_bar_only"
+  stop_model: "fixed_completed_5m_atr"
+  stop_update_policy: "frozen_at_entry"
+  tp_update_policy: "none"
+  hold_time_unit: "wall_clock_minutes_after_signal_close"
+  atr_source_timeframe: "5m"
+  required_extra_columns: ["quote_volume"]
+  risk_accounting: "engine_canonical_R"
+  no_pyramiding: true
+evaluation:
+  required_tiers: ["Tier2B"]
+  metrics: [oos_trade_count, oos_mean_net_r, double_cost_oos_mean_net_r, direction_balance, matched_return_shock_control, maximum_drawdown]
+falsification_criteria:
+  - "Reject if held-out return signed opposite to the signal-bar direction is nonpositive after registered costs."
+  - "Reject if the result is indistinguishable from the preregistered control matched on absolute signal-bar return but not impact-proxy extremity."
+  - "Reject if reversal is confined to one direction without preregistered asymmetric support."
+  - "Reject if held-out trade support is below 50 or doubled-cost mean net R is nonpositive."
+  - "Reject observations whose completed signal-bar quote_volume is below USD 1,000,000."
+expected_failure_modes:
+  - "The displacement reflects informed flow and continues."
+  - "Volatility clustering explains subsequent moves without reversal."
+  - "Broad market movement rather than transient liquidity stress generated the signal."
+  - "The ratio is driven by low quote volume or measurement error."
+logging:
+  schema_version: "1.0"
+  required_fields: [decision_trace, stop_price, signal_return_5m, quote_volume_5m, impact_proxy, impact_proxy_percentile, impact_proxy_threshold_value, normalization_window, counterfactual_return_shock_band, target_exit_ts, target_horizon_minutes, requested_risk_amount, risk_utilization_pct, under_risked_trade]
+runtime_controls:
+  enabled: true
+  max_variants: 8
+  tags: ["alpha-003", "classic-only", "point-in-time", "research-only"]
+truth_contract:
+  version: "1.0"
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  parity_required_for_fast_path: true
+  fast_path_generation: forbidden
+  research_memory_requires_certification: true
+authority:
+  capital: false
+  orders: false
+  production_promotion: false
+  self_approval: false

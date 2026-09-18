@@ -1,0 +1,200 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pandas as pd
+import pytest
+
+from bt.contracts.research_specs_v2 import canonical_hash
+from bt.core.enums import Side
+from bt.core.types import Bar
+from bt.data.resample import HTFBar
+from bt.governance.alpha_strategy_pipeline import (
+    confirm_card,
+    draft_research_card,
+    qualify_card,
+)
+from bt.hypotheses.contract import HypothesisContract
+from bt.strategy.btc_5m_impact_proxy_reversal import (
+    Btc5mImpactProxyReversalStrategy,
+)
+from bt.validation.strategy_admission import validate_hypothesis_admission
+
+
+ROOT = Path(__file__).parents[2]
+QUESTION = (
+    "Does an extreme point-in-time BTCUSDT 5m absolute return per unit "
+    "quote_volume predict opposite-direction close-to-close return over the next 30m?"
+)
+DIGEST = "4b420fd26d516a1eb4d4109b697c5bebf5a5fcbe810742e06f72aa103a529ff8"
+YAML_PATH = ROOT / "research/hypotheses/alpha_003_btc_5m_impact_proxy_reversal.yaml"
+
+
+def _assignment() -> dict:
+    return {
+        "question": QUESTION,
+        "question_digest": DIGEST,
+        "campaign_id": "11111111-1111-4111-8111-111111111111",
+        "dataset_build_id": "fbb81c42-953b-42fb-8fe1-89c75b45e1aa",
+        "dataset_digest": "9a211d8818c5ab8ec82ad5a7d38957e63eb387ea83d4b00541922a0eeca4aacb",
+        "instrument": "BTCUSDT",
+        "timeframe": "1m",
+        "venue": "bybit",
+        "window_start": "2023-01-01T00:00:00Z",
+        "window_end": "2024-01-01T00:00:00Z",
+        "max_variants": 8,
+        "research_context": {"citations": []},
+    }
+
+
+def _bar(ts: pd.Timestamp, *, quote_volume: float | None = 2_000_000.0) -> Bar:
+    extra = {} if quote_volume is None else {"quote_volume": quote_volume}
+    return Bar(ts, "BTCUSDT", 100.0, 101.0, 99.0, 100.0, 1.0, extra)
+
+
+def _closed(ts: pd.Timestamp, close: float, *, complete: bool = True) -> HTFBar:
+    return HTFBar(
+        ts=ts - pd.Timedelta(minutes=5), symbol="BTCUSDT", open=close,
+        high=close + 1.0, low=close - 1.0, close=close, volume=5.0,
+        timeframe="5m", n_bars=5 if complete else 4, expected_bars=5,
+        is_complete=complete,
+    )
+
+
+def _run_returns(strategy, returns: list[float], *, tradeable=True, with_quote=True):
+    outputs = []
+    close = 100.0
+    start = pd.Timestamp("2023-01-01T00:05:00Z")
+    for index, value in enumerate(returns):
+        ts = start + pd.Timedelta(minutes=5 * index)
+        close *= 1.0 + value
+        bar = _bar(ts, quote_volume=2_000_000.0 if with_quote else None)
+        outputs.extend(strategy.on_bars(
+            ts, {"BTCUSDT": bar}, {"BTCUSDT"} if tradeable else set(),
+            {"positions": {}, "htf": {"5m": {"BTCUSDT": _closed(ts, close)}}},
+        ))
+    return outputs
+
+
+def test_exact_native_card_is_discovered_and_compiles_deterministically() -> None:
+    assert canonical_hash({"question": QUESTION}) == DIGEST
+    card = draft_research_card(_assignment(), repository_root=str(ROOT))
+    assert card["research_question"] == QUESTION
+    assert card["claim"] == QUESTION
+    assert card["status"] == "draft"
+    confirmed = confirm_card(card, actor="founder-operator", confirmed_at="2026-09-18T00:00:00Z")
+    first = qualify_card(confirmed, repository_root=str(ROOT))
+    second = qualify_card(confirmed, repository_root=str(ROOT))
+    assert first["qualified"] is True
+    assert first["variant_count"] == 8
+    assert first["artifact_bundle"] == second["artifact_bundle"]
+    assert first["artifact_bundle"]["compile_readiness"]["status"] == "registry_ready"
+    assert first["artifact_bundle"]["run_config"]["strategy"]["name"] == "btc_5m_impact_proxy_reversal"
+    assert first["review"]["gates"]["independent_review_complete"] is False
+    assert first["authority"] == {"capital": False, "orders": False, "promotion": False, "self_approval": False}
+
+
+def test_yaml_grid_and_admission_are_deterministic_and_classic_only() -> None:
+    contract = HypothesisContract.from_yaml(YAML_PATH)
+    one = contract.materialize_grid()
+    two = contract.materialize_grid()
+    assert one == two
+    assert len(one) == 8
+    assert len({item["config_hash"] for item in one}) == 8
+    assert contract.schema.execution_semantics["required_extra_columns"] == ["quote_volume"]
+    report = validate_hypothesis_admission(YAML_PATH)
+    assert report.status == "PASS", report.to_dict()
+    raw = YAML_PATH.read_text(encoding="utf-8")
+    assert "fast_path_generation: forbidden" in raw
+
+
+def test_strategy_uses_only_completed_history_and_emits_opposite_direction() -> None:
+    strategy = Btc5mImpactProxyReversalStrategy(
+        impact_proxy_threshold=0.75, normalization_window=2,
+        signal_direction="both", return_shock_control_band=0.1,
+    )
+    signals = _run_returns(strategy, [0.001] * 20 + [0.10])
+    entries = [item for item in signals if not item.metadata.get("is_exit")]
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.side == Side.SELL
+    assert entry.metadata["signal_return_5m"] == pytest.approx(0.10)
+    assert entry.metadata["quote_volume_5m"] == pytest.approx(2_000_000.0)
+    assert entry.metadata["target_horizon_minutes"] == 30
+    assert entry.metadata["decision_trace"]
+    assert entry.metadata["stop_price"] > entry.metadata["entry_reference_price"]
+
+
+def test_future_mutation_cannot_change_prior_decisions() -> None:
+    prefix = [0.001] * 20 + [0.10]
+    first = _run_returns(Btc5mImpactProxyReversalStrategy(
+        impact_proxy_threshold=0.75, normalization_window=2
+    ), prefix + [0.50])
+    second = _run_returns(Btc5mImpactProxyReversalStrategy(
+        impact_proxy_threshold=0.75, normalization_window=2
+    ), prefix + [-0.50])
+    cutoff = pd.Timestamp("2023-01-01T01:45:00Z")
+    before_first = [(item.ts, item.side, item.metadata) for item in first if item.ts <= cutoff]
+    before_second = [(item.ts, item.side, item.metadata) for item in second if item.ts <= cutoff]
+    assert before_first == before_second
+
+
+def test_repeated_or_incomplete_htf_context_does_not_mutate_signal_history() -> None:
+    strategy = Btc5mImpactProxyReversalStrategy(
+        impact_proxy_threshold=0.75, normalization_window=2
+    )
+    start = pd.Timestamp("2023-01-01T00:00:00Z")
+    close = 100.0
+    latest = None
+    signals = []
+    # The engine exposes one newly closed 5m bar at each bucket rollover and
+    # retains it in context for the four intervening 1m events.
+    for minute in range(111):
+        ts = start + pd.Timedelta(minutes=minute)
+        if minute and minute % 5 == 0:
+            close *= 1.10 if minute == 110 else 1.001
+            latest = _closed(ts, close)
+        context_bar = latest
+        if minute == 109 and latest is not None:
+            context_bar = _closed(ts, close * 100, complete=False)
+        ctx = {"positions": {}, "htf": {"5m": {}}}
+        if context_bar is not None:
+            ctx["htf"]["5m"]["BTCUSDT"] = context_bar
+        signals.extend(strategy.on_bars(
+            ts,
+            {"BTCUSDT": _bar(ts, quote_volume=400_000.0)},
+            {"BTCUSDT"} if minute == 110 else set(),
+            ctx,
+        ))
+    entries = [item for item in signals if not item.metadata.get("is_exit")]
+    assert len(entries) == 1
+    assert entries[0].ts == start + pd.Timedelta(minutes=110)
+    assert entries[0].metadata["quote_volume_5m"] == pytest.approx(2_000_000.0)
+    assert entries[0].metadata["signal_return_5m"] == pytest.approx(0.10)
+
+
+@pytest.mark.parametrize("case", ["missing_quote", "inactive", "invalid_parameter"])
+def test_negative_invalid_and_failed_outcomes_are_retained(case: str) -> None:
+    if case == "invalid_parameter":
+        with pytest.raises(ValueError, match="impact_proxy_threshold"):
+            Btc5mImpactProxyReversalStrategy(impact_proxy_threshold=1.0)
+        return
+    strategy = Btc5mImpactProxyReversalStrategy(
+        impact_proxy_threshold=0.75, normalization_window=2
+    )
+    signals = _run_returns(
+        strategy, [0.001] * 20 + [0.10],
+        tradeable=case != "inactive", with_quote=case != "missing_quote",
+    )
+    assert signals == []
+
+
+def test_card_binding_failure_is_not_silently_remapped(tmp_path: Path) -> None:
+    card = json.loads((ROOT / f"research/hypotheses/cards/{DIGEST}.json").read_text())
+    card["research_question"] = "A different question"
+    target = tmp_path / "research/hypotheses/cards"
+    target.mkdir(parents=True)
+    (target / f"{DIGEST}.json").write_text(json.dumps(card), encoding="utf-8")
+    with pytest.raises(ValueError, match="engineered_card_question_mismatch"):
+        draft_research_card(_assignment(), repository_root=str(tmp_path))

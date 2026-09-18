@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import yaml
 
 from bt.execution.model_registry import declared_classic_bundle
 from bt.experiments.hypothesis_runner import execute_hypothesis_variant
@@ -438,6 +439,135 @@ def weekend_regime_comparison(
     }
 
 
+def complete_five_minute_bars(frame: pd.DataFrame) -> pd.DataFrame:
+    """Build strict left-labeled 5m bars from complete, unique 1m observations."""
+    required = {"ts", "symbol", "close", "quote_volume"}
+    missing = required - set(frame.columns)
+    if missing:
+        raise BridgeError(
+            f"impact-proxy evaluation is missing source fields: {sorted(missing)}"
+        )
+    ordered = frame.loc[:, sorted(required)].copy()
+    ordered["ts"] = pd.to_datetime(ordered["ts"], utc=True, errors="raise")
+    ordered = ordered.sort_values(["symbol", "ts"])
+    if ordered.duplicated(["symbol", "ts"]).any():
+        raise BridgeError("impact-proxy evaluation rejects duplicate minute bars")
+    if (ordered["ts"].dt.second != 0).any() or (
+        ordered["ts"].dt.microsecond != 0
+    ).any():
+        raise BridgeError("impact-proxy evaluation requires minute-aligned source bars")
+    ordered["bucket"] = ordered["ts"].dt.floor("5min")
+    grouped = ordered.groupby(["symbol", "bucket"], sort=True)
+    complete = grouped.filter(
+        lambda sample: len(sample) == 5
+        and sample["ts"].nunique() == 5
+        and (
+            sample["ts"].max() - sample["ts"].min()
+            == pd.Timedelta(minutes=4)
+        )
+    )
+    if complete.empty:
+        return pd.DataFrame(
+            columns=["symbol", "ts", "close", "quote_volume"]
+        )
+    return (
+        complete.groupby(["symbol", "bucket"], sort=True)
+        .agg(close=("close", "last"), quote_volume=("quote_volume", "sum"))
+        .reset_index()
+        .rename(columns={"bucket": "ts"})
+    )
+
+
+def impact_proxy_evaluation(
+    frame: pd.DataFrame,
+    *,
+    test_start: str,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Evaluate the preregistered held-out impact proxy against matched shocks."""
+    bars = complete_five_minute_bars(frame)
+    if bars.empty:
+        raise BridgeError("impact-proxy evaluation has no complete 5m bars")
+    threshold = float(params["impact_proxy_threshold"])
+    window = int(params["normalization_window"])
+    band = float(params["return_shock_control_band"])
+    parts: list[pd.DataFrame] = []
+    for _, sample in bars.groupby("symbol", sort=False):
+        sample = sample.sort_values("ts").copy()
+        sample["signal_return"] = sample["close"].pct_change()
+        sample["impact_proxy"] = (
+            sample["signal_return"].abs() / sample["quote_volume"]
+        )
+        sample["threshold_value"] = sample["impact_proxy"].shift(1).rolling(
+            window=window, min_periods=window
+        ).quantile(threshold)
+        sample["next_30m_return"] = sample["close"].shift(-6) / sample["close"] - 1.0
+        sample["signed_reversal"] = (
+            -sample["signal_return"].apply(
+                lambda value: 1.0 if value > 0 else -1.0
+            )
+            * sample["next_30m_return"]
+        )
+        parts.append(sample)
+    evaluated = pd.concat(parts, ignore_index=True)
+    evaluated = evaluated.loc[
+        (evaluated["ts"] >= pd.Timestamp(test_start))
+        & evaluated["signal_return"].notna()
+        & evaluated["next_30m_return"].notna()
+        & evaluated["threshold_value"].notna()
+        & (evaluated["quote_volume"] >= 1_000_000.0)
+    ].copy()
+    extreme = evaluated.loc[
+        evaluated["impact_proxy"] >= evaluated["threshold_value"]
+    ]
+    controls: list[float] = []
+    for row in extreme.itertuples(index=False):
+        magnitude = abs(float(row.signal_return))
+        low, high = magnitude * (1.0 - band), magnitude * (1.0 + band)
+        candidates = evaluated.loc[
+            (evaluated["symbol"] == row.symbol)
+            & (evaluated["ts"] != row.ts)
+            & (evaluated["impact_proxy"] < evaluated["threshold_value"])
+            & (evaluated["signal_return"].abs().between(low, high))
+            & ((evaluated["signal_return"] > 0) == (row.signal_return > 0))
+        ]
+        if not candidates.empty:
+            distance = (candidates["signal_return"].abs() - magnitude).abs()
+            controls.append(float(candidates.loc[distance.idxmin(), "signed_reversal"]))
+    extreme_reversal = pd.to_numeric(
+        extreme["signed_reversal"], errors="coerce"
+    ).dropna()
+    control_mean = float(pd.Series(controls, dtype=float).mean()) if controls else 0.0
+    extreme_mean = float(extreme_reversal.mean()) if len(extreme_reversal) else 0.0
+    direction = {
+        "long": int((extreme["signal_return"] < 0).sum()),
+        "short": int((extreme["signal_return"] > 0).sum()),
+    }
+    matched = {
+        "extreme_observations": int(len(extreme_reversal)),
+        "matched_control_observations": len(controls),
+        "extreme_mean_signed_30m_return": extreme_mean,
+        "control_mean_signed_30m_return": control_mean,
+        "extreme_minus_control": extreme_mean - control_mean,
+        "outperformed_control": bool(controls and extreme_mean > control_mean),
+    }
+    report = {
+        "schema_version": "alpha-impact-proxy-evaluation-v1.0.0",
+        "measurement": "held-out causal predictive association; not executable PnL",
+        "test_start": pd.Timestamp(test_start).isoformat(),
+        "resampling": "strict complete left-labeled 5m bars from unique 1m rows",
+        "parameters": {
+            "impact_proxy_threshold": threshold,
+            "normalization_window": window,
+            "return_shock_control_band": band,
+        },
+        "direction_balance": direction,
+        "matched_return_shock_control": matched,
+    }
+    report["record_digest"] = digest(report)
+    return report
+
+
 def execute_variant_grid(jobs: list[dict[str, Any]], max_workers: int) -> list[dict[str, Any]]:
     if not 1 <= len(jobs) <= 8 or not 1 <= max_workers <= 8:
         raise BridgeError("Alpha execution requires 1-8 variants and 1-8 worker slots")
@@ -566,9 +696,8 @@ def execute_registered(
         card = qualification["card"]
         if canonical_hash(card) != qualification["card_digest"]:
             raise BridgeError("qualified card digest changed before execution")
-        contract = HypothesisContract.from_dict(
-            qualification["artifact_bundle"]["engine_hypothesis_yaml"]
-        )
+        contract_document = qualification["artifact_bundle"]["engine_hypothesis_yaml"]
+        contract = HypothesisContract.from_dict(contract_document)
         contract_digest = digest(
             qualification["artifact_bundle"]["engine_hypothesis_yaml"]
         )
@@ -585,6 +714,7 @@ def execute_registered(
             + b"\n"
         )
     else:
+        contract_document = yaml.safe_load(source.read_text(encoding="utf-8"))
         registered = HypothesisContract.from_yaml(source)
         grid = {
             name: (values[0],)
@@ -642,8 +772,13 @@ def execute_registered(
         selected.to_parquet(execution_data_path, index=False)
         window_digest = file_digest(execution_data_path)
 
+    lightweight_columns = ["ts", "symbol", "close"]
+    if "quote_volume" in contract.schema.execution_semantics.get(
+        "required_extra_columns", []
+    ):
+        lightweight_columns.append("quote_volume")
     lightweight = pd.read_parquet(
-        execution_data_path, columns=["ts", "symbol", "close"]
+        execution_data_path, columns=lightweight_columns
     )
     code_digest = digest(assignment["base_ref"].encode())
     rep, leakage = representation(assignment, lightweight, code_digest)
@@ -678,11 +813,34 @@ def execute_registered(
     phase = assignment["tier"].lower()
     results = []
     run_dirs = []
+    required_extra_columns = contract.schema.execution_semantics.get(
+        "required_extra_columns", []
+    )
+    execution_overrides: list[str] = []
+    if required_extra_columns:
+        if (
+            not isinstance(required_extra_columns, list)
+            or not all(
+                isinstance(column, str) and column
+                for column in required_extra_columns
+            )
+        ):
+            raise BridgeError("required_extra_columns must be a non-empty string list")
+        data_override_path = output / "required-data-columns.yaml"
+        data_override_path.write_text(
+            yaml.safe_dump(
+                {"data": {"extra_columns": required_extra_columns}},
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        execution_overrides.append(str(data_override_path))
     jobs = [dict(
         contract=contract, spec=spec,
         tier="Tier3" if assignment["tier"] == "Tier3" else "Tier2",
         config_path=str(repository / "configs/engine.yaml"),
         data_path=str(execution_data_path), out_root=str(runs),
+        override_paths=execution_overrides,
         run_slug=f"row_{index:04d}", phase=phase,
     ) for index, spec in enumerate(variants, start=1)]
     for result in execute_variant_grid(jobs, max_workers):
@@ -722,14 +880,31 @@ def execute_registered(
         "search_plan_digest": search.digest,
     }
     selection_audit["record_digest"] = digest(selection_audit)
-    regime_comparison = weekend_regime_comparison(lightweight)
-    regime_comparison["record_digest"] = digest(regime_comparison)
+    is_impact_proxy = (
+        contract.schema.metadata.hypothesis_family == "impact_proxy_reversal"
+    )
+    evaluation_artifact = (
+        impact_proxy_evaluation(
+            lightweight,
+            test_start=rep.split.test_start,
+            params=variants[selected_index]["params"],
+        )
+        if is_impact_proxy
+        else weekend_regime_comparison(lightweight)
+    )
+    if "record_digest" not in evaluation_artifact:
+        evaluation_artifact["record_digest"] = digest(evaluation_artifact)
+    evaluation_artifact_name = (
+        "impact_proxy_evaluation.json"
+        if is_impact_proxy
+        else "weekend_regime_comparison.json"
+    )
     for candidate_run in run_dirs:
         (candidate_run / "selection_bias_audit.json").write_bytes(
             canonical(selection_audit) + b"\n"
         )
-        (candidate_run / "weekend_regime_comparison.json").write_bytes(
-            canonical(regime_comparison) + b"\n"
+        (candidate_run / evaluation_artifact_name).write_bytes(
+            canonical(evaluation_artifact) + b"\n"
         )
     truth = validate_experiment_root(experiment)
     write_truth_report(truth, experiment / "summaries")
@@ -801,6 +976,22 @@ def execute_registered(
             "selection_basis": "validation_mean_net_r",
         }
     )
+    metrics["maximum_drawdown"] = float(result.get("max_drawdown_r", 0.0))
+    if is_impact_proxy:
+        metrics["direction_balance"] = evaluation_artifact["direction_balance"]
+        metrics["matched_return_shock_control"] = evaluation_artifact[
+            "matched_return_shock_control"
+        ]
+    else:
+        metrics["selection_bias_audit"] = selection_audit
+    required_metrics = tuple(
+        contract_document.get("evaluation", {}).get("metrics", ())
+    )
+    missing_metrics = sorted(set(required_metrics) - set(metrics))
+    if missing_metrics:
+        raise BridgeError(
+            f"declared evaluation metrics were not produced: {missing_metrics}"
+        )
     started_at = datetime.fromtimestamp(run_dir.stat().st_mtime, tz=UTC)
     ended_at = datetime.now(UTC)
     independent_review_complete = governed_review_verified(assignment, qualification)
@@ -810,6 +1001,12 @@ def execute_registered(
         and holdout["cost_stress_passed"]
         and independent_review_complete
         and scope["qualification_authority"]
+        and (
+            not is_impact_proxy
+            or evaluation_artifact["matched_return_shock_control"][
+                "outperformed_control"
+            ]
+        )
     )
     failed_gates = [
         name
@@ -824,6 +1021,10 @@ def execute_registered(
         failed_gates.append("independent_specification_review")
     if not scope["qualification_authority"]:
         failed_gates.append("commissioning_run_has_no_qualification_authority")
+    if is_impact_proxy and not evaluation_artifact["matched_return_shock_control"][
+        "outperformed_control"
+    ]:
+        failed_gates.append("matched_return_shock_control")
     gate_report = {
         "truth_certified": True,
         "point_in_time_valid": True,
@@ -854,7 +1055,7 @@ def execute_registered(
         "evidence_digests": [
             *[item["bundle_digest"] for item in bundles],
             selection_audit["record_digest"],
-            regime_comparison["record_digest"],
+            evaluation_artifact["record_digest"],
             truth.to_dict()["report_digest"],
         ]
         if "report_digest" in truth.to_dict()
@@ -947,7 +1148,7 @@ def execute_registered(
             "result_disposition": "accepted" if passed_edge else "rejected",
             "held_out_evaluation": holdout,
             "selection_bias_audit": selection_audit,
-            "weekend_regime_comparison": regime_comparison,
+            "hypothesis_evaluation": evaluation_artifact,
         },
         "memory_receipt": memory,
         "durable_bundle_path": str(retained_bundle),
