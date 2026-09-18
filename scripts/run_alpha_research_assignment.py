@@ -20,9 +20,13 @@ from typing import Any
 import pandas as pd
 import yaml
 
+from bt.data.resample import timeframe_minutes
 from bt.evaluation.alpha_research import (
+    complete_timeframe_bars,
     held_out_trade_evaluation,
     impact_proxy_evaluation,
+    required_trade_logging_evaluation,
+    trade_decision_timestamps,
 )
 from bt.execution.model_registry import declared_classic_bundle
 from bt.experiments.hypothesis_runner import execute_hypothesis_variant
@@ -298,8 +302,24 @@ def representation(
     *,
     purge_seconds: int = 60,
     embargo_seconds: int = 60,
+    decision_timeframe: str = "1m",
 ) -> tuple[RepresentationContract, dict[str, Any]]:
-    decisions = pd.to_datetime(frame["ts"], utc=True)
+    ordered = frame.copy()
+    ordered["ts"] = pd.to_datetime(ordered["ts"], utc=True, errors="raise")
+    ordered = ordered.sort_values(["ts", "symbol"], kind="stable").reset_index(drop=True)
+    if ordered.duplicated(["symbol", "ts"]).any():
+        raise BridgeError("representation rejects duplicate instrument timestamps")
+    # Source rows are left-labeled and become observable after their interval.
+    # Split boundaries use decision opportunities, never entry fills.
+    if decision_timeframe == "1m":
+        decisions = ordered["ts"] + pd.Timedelta(minutes=1)
+    else:
+        ordered = complete_timeframe_bars(ordered, decision_timeframe)
+        if ordered.empty:
+            raise BridgeError("representation has no complete decision rows")
+        decisions = ordered["ts"] + pd.Timedelta(
+            minutes=timeframe_minutes(decision_timeframe)
+        )
     first, last = decisions.iloc[0], decisions.iloc[-1]
     split_one = decisions.iloc[len(decisions) * 6 // 10]
     split_two = decisions.iloc[len(decisions) * 8 // 10]
@@ -311,11 +331,11 @@ def representation(
     )
     if validation_index >= len(decisions) or test_index >= len(decisions):
         raise BridgeError("evaluation window is too short for its purge/embargo contract")
-    audit = frame.assign(
+    audit = ordered.assign(
         decision_at=decisions,
         membership_known_at=first,
         membership_valid_from=first,
-        close_feature=frame["close"],
+        close_feature=ordered["close"],
         observed_at=decisions,
         available_at=decisions,
     )
@@ -369,8 +389,10 @@ def period_evaluation(run_dir: Path, start: str, end: str) -> dict[str, Any]:
         trades = pd.DataFrame()
     if trades.empty:
         return {"trade_count": 0, "mean_net_r": 0.0}
-    entry = pd.to_datetime(trades["entry_ts"], utc=True, errors="coerce")
-    sample = trades.loc[(entry >= pd.Timestamp(start)) & (entry <= pd.Timestamp(end))]
+    decisions = trade_decision_timestamps(trades)
+    sample = trades.loc[
+        (decisions >= pd.Timestamp(start)) & (decisions <= pd.Timestamp(end))
+    ]
     net_column = "r_net" if "r_net" in sample else "r_multiple_net"
     net = pd.to_numeric(sample[net_column], errors="coerce").dropna()
     return {
@@ -638,6 +660,9 @@ def execute_registered(
         code_digest,
         purge_seconds=int(split_contract.get("purge_seconds", 60)),
         embargo_seconds=int(split_contract.get("embargo_seconds", 60)),
+        decision_timeframe=str(
+            contract.schema.execution_semantics.get("signal_timeframe", "1m")
+        ),
     )
     model = declared_classic_bundle(
         profile="tier2",
@@ -756,12 +781,25 @@ def execute_registered(
         if is_impact_proxy
         else "weekend_regime_comparison.json"
     )
+    logging_reports = [required_trade_logging_evaluation(path) for path in run_dirs]
+    failed_logging = [
+        index for index, report in enumerate(logging_reports) if not report["passed"]
+    ]
+    if failed_logging:
+        raise BridgeError(
+            "required trade logging is incomplete for variants: "
+            f"{failed_logging}"
+        )
     for candidate_run in run_dirs:
         (candidate_run / "selection_bias_audit.json").write_bytes(
             canonical(selection_audit) + b"\n"
         )
         (candidate_run / evaluation_artifact_name).write_bytes(
             canonical(evaluation_artifact) + b"\n"
+        )
+    for candidate_run, logging_report in zip(run_dirs, logging_reports, strict=True):
+        (candidate_run / "required_trade_logging_evaluation.json").write_bytes(
+            canonical(logging_report) + b"\n"
         )
     truth = validate_experiment_root(experiment)
     write_truth_report(truth, experiment / "summaries")
@@ -808,6 +846,7 @@ def execute_registered(
     bundle = bundles[selected_index]
     retained_bundle = retained[selected_index]
     holdout = held_out_trade_evaluation(run_dir, rep.split.test_start)
+    logging_report = logging_reports[selected_index]
     manifest = json.loads(
         (retained_bundle / "run_bundle_manifest.json").read_text(encoding="utf-8")
     )
@@ -857,6 +896,7 @@ def execute_registered(
         and holdout["positive_net_edge"]
         and holdout["cost_stress_passed"]
         and independent_review_complete
+        and logging_report["passed"]
         and scope["qualification_authority"]
         and (
             not is_impact_proxy
@@ -876,6 +916,8 @@ def execute_registered(
     ]
     if not independent_review_complete:
         failed_gates.append("independent_specification_review")
+    if not logging_report["passed"]:
+        failed_gates.append("required_trade_logging")
     if not scope["qualification_authority"]:
         failed_gates.append("commissioning_run_has_no_qualification_authority")
     if is_impact_proxy and not evaluation_artifact["matched_return_shock_control"][
@@ -889,6 +931,7 @@ def execute_registered(
         "out_of_sample_evaluated": True,
         "cost_stress_evaluated": True,
         "selection_bias_audited": True,
+        "required_trade_logging_complete": logging_report["passed"],
         "independent_review_complete": independent_review_complete,
         "shadow_eligible": False,
         "production_eligible": False,
@@ -913,6 +956,7 @@ def execute_registered(
             *[item["bundle_digest"] for item in bundles],
             selection_audit["record_digest"],
             evaluation_artifact["record_digest"],
+            logging_report["record_digest"],
             truth.to_dict()["report_digest"],
         ]
         if "report_digest" in truth.to_dict()
@@ -1006,6 +1050,7 @@ def execute_registered(
             "held_out_evaluation": holdout,
             "selection_bias_audit": selection_audit,
             "hypothesis_evaluation": evaluation_artifact,
+            "required_trade_logging_evaluation": logging_report,
         },
         "memory_receipt": memory,
         "durable_bundle_path": str(retained_bundle),

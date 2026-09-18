@@ -7,8 +7,71 @@ from typing import Any
 
 import pandas as pd
 
+from bt.data.resample import timeframe_minutes
 from bt.governance.research_bridge import BridgeError
 from bt.institutional.receipt import digest
+
+
+def empirical_lower_quantile(values: Any, probability: float) -> float:
+    """Return the deterministic lower empirical quantile used by strategy and audit."""
+    ordered = sorted(float(value) for value in values)
+    if not ordered:
+        raise BridgeError("empirical quantile requires at least one observation")
+    if not 0.0 <= float(probability) <= 1.0:
+        raise BridgeError("empirical quantile probability must be in [0, 1]")
+    return ordered[int((len(ordered) - 1) * float(probability))]
+
+
+def trade_decision_timestamps(trades: pd.DataFrame) -> pd.Series:
+    """Resolve the canonical decision timestamp and reject missing membership proof."""
+    column = next(
+        (candidate for candidate in ("identity_ts_signal", "signal_ts") if candidate in trades.columns),
+        None,
+    )
+    if column is None:
+        raise BridgeError(
+            "trade evaluation requires identity_ts_signal or signal_ts; "
+            "entry fill time cannot define decision-row membership"
+        )
+    timestamps = pd.to_datetime(trades[column], utc=True, errors="coerce")
+    if timestamps.isna().any():
+        raise BridgeError("trade evaluation rejects missing or invalid decision timestamps")
+    return timestamps
+
+
+def required_trade_logging_evaluation(run_dir: Path) -> dict[str, Any]:
+    """Prove that every retained trade carries the preregistered risk fields."""
+    trades_path = run_dir / "trades.csv"
+    try:
+        trades = pd.read_csv(trades_path)
+    except pd.errors.EmptyDataError:
+        trades = pd.DataFrame()
+    required = (
+        "identity_ts_signal",
+        "requested_risk_amount",
+        "risk_amount",
+        "risk_utilization_pct",
+        "under_risked_trade",
+    )
+    missing_columns = sorted(set(required) - set(trades.columns))
+    null_fields: dict[str, int] = {}
+    if not trades.empty:
+        for field in required:
+            if field in trades:
+                count = int(trades[field].isna().sum())
+                if count:
+                    null_fields[field] = count
+    passed = not missing_columns and not null_fields
+    report = {
+        "schema_version": "alpha-required-trade-logging-v1.0.0",
+        "trade_count": int(len(trades)),
+        "required_fields": list(required),
+        "missing_columns": missing_columns,
+        "null_fields": null_fields,
+        "passed": passed,
+    }
+    report["record_digest"] = digest(report)
+    return report
 
 
 def held_out_trade_evaluation(run_dir: Path, test_start: str) -> dict[str, Any]:
@@ -28,8 +91,8 @@ def held_out_trade_evaluation(run_dir: Path, test_start: str) -> dict[str, Any]:
             "positive_net_edge": False,
             "cost_stress_passed": False,
         }
-    entry = pd.to_datetime(trades["entry_ts"], utc=True, errors="coerce")
-    sample = trades.loc[entry >= pd.Timestamp(test_start)]
+    decisions = trade_decision_timestamps(trades)
+    sample = trades.loc[decisions >= pd.Timestamp(test_start)]
     net_column = "r_net" if "r_net" in sample else "r_multiple_net"
     cost_column = "cost_drag_r" if "cost_drag_r" in sample else None
     net = pd.to_numeric(sample[net_column], errors="coerce").dropna()
@@ -50,38 +113,48 @@ def held_out_trade_evaluation(run_dir: Path, test_start: str) -> dict[str, Any]:
     }
 
 
-def complete_five_minute_bars(frame: pd.DataFrame) -> pd.DataFrame:
-    """Build strict left-labeled 5m bars from complete, unique 1m observations."""
-    required = {"ts", "symbol", "close", "quote_volume"}
+def complete_timeframe_bars(frame: pd.DataFrame, timeframe: str) -> pd.DataFrame:
+    """Build strict left-labeled bars from complete, unique 1m observations."""
+    required = {"ts", "symbol", "close"}
     missing = required - set(frame.columns)
     if missing:
-        raise BridgeError(
-            f"impact-proxy evaluation is missing source fields: {sorted(missing)}"
-        )
-    ordered = frame.loc[:, sorted(required)].copy()
+        raise BridgeError(f"timeframe reconstruction is missing source fields: {sorted(missing)}")
+    minutes = timeframe_minutes(timeframe)
+    if minutes < 1:
+        raise BridgeError("decision timeframe must be at least one minute")
+    columns = sorted(required | ({"quote_volume"} & set(frame.columns)))
+    ordered = frame.loc[:, columns].copy()
     ordered["ts"] = pd.to_datetime(ordered["ts"], utc=True, errors="raise")
     ordered = ordered.sort_values(["symbol", "ts"])
     if ordered.duplicated(["symbol", "ts"]).any():
-        raise BridgeError("impact-proxy evaluation rejects duplicate minute bars")
+        raise BridgeError("timeframe reconstruction rejects duplicate minute bars")
     if (ordered["ts"].dt.second != 0).any() or (
         ordered["ts"].dt.microsecond != 0
     ).any():
-        raise BridgeError("impact-proxy evaluation requires minute-aligned source bars")
-    ordered["bucket"] = ordered["ts"].dt.floor("5min")
+        raise BridgeError("timeframe reconstruction requires minute-aligned source bars")
+    ordered["bucket"] = ordered["ts"].dt.floor(f"{minutes}min")
     grouped = ordered.groupby(["symbol", "bucket"], sort=True)
     complete = grouped.filter(
-        lambda sample: len(sample) == 5
-        and sample["ts"].nunique() == 5
-        and sample["ts"].max() - sample["ts"].min() == pd.Timedelta(minutes=4)
+        lambda sample: len(sample) == minutes
+        and sample["ts"].nunique() == minutes
+        and sample["ts"].max() - sample["ts"].min() == pd.Timedelta(minutes=minutes - 1)
     )
     if complete.empty:
-        return pd.DataFrame(columns=["symbol", "ts", "close", "quote_volume"])
-    return (
-        complete.groupby(["symbol", "bucket"], sort=True)
-        .agg(close=("close", "last"), quote_volume=("quote_volume", "sum"))
-        .reset_index()
-        .rename(columns={"bucket": "ts"})
-    )
+        optional = [column for column in columns if column not in required]
+        return pd.DataFrame(columns=["symbol", "ts", "close", *optional])
+    aggregation: dict[str, tuple[str, str]] = {"close": ("close", "last")}
+    if "quote_volume" in complete:
+        aggregation["quote_volume"] = ("quote_volume", "sum")
+    return complete.groupby(["symbol", "bucket"], sort=True).agg(
+        **aggregation
+    ).reset_index().rename(columns={"bucket": "ts"})
+
+
+def complete_five_minute_bars(frame: pd.DataFrame) -> pd.DataFrame:
+    """Build strict left-labeled 5m bars with complete quote volume."""
+    if "quote_volume" not in frame:
+        raise BridgeError("impact-proxy evaluation is missing source fields: ['quote_volume']")
+    return complete_timeframe_bars(frame, "5m")
 
 
 def impact_proxy_evaluation(
@@ -106,9 +179,11 @@ def impact_proxy_evaluation(
             sample["impact_proxy"]
             .shift(1)
             .rolling(window=window, min_periods=window)
-            .quantile(threshold)
+            .apply(lambda values: empirical_lower_quantile(values, threshold), raw=True)
         )
-        sample["next_30m_return"] = sample["close"].shift(-6) / sample["close"] - 1.0
+        close_at = sample.set_index("ts")["close"]
+        future_close = (sample["ts"] + pd.Timedelta(minutes=30)).map(close_at)
+        sample["next_30m_return"] = future_close / sample["close"] - 1.0
         sample["signed_reversal"] = (
             -sample["signal_return"].apply(lambda value: 1.0 if value > 0 else -1.0)
             * sample["next_30m_return"]
