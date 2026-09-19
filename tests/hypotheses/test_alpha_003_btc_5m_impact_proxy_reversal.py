@@ -133,7 +133,10 @@ def test_yaml_grid_and_admission_are_deterministic_and_classic_only() -> None:
     assert len({item["config_hash"] for item in one}) == 8
     assert contract.schema.execution_semantics["required_extra_columns"] == ["quote_volume"]
     raw_contract = yaml.safe_load(YAML_PATH.read_text(encoding="utf-8"))
-    assert raw_contract["version"] == "1.4.0"
+    assert raw_contract["version"] == "1.5.0"
+    assert raw_contract["execution_semantics"]["gap_state_policy"] == (
+        "reset_return_normalization_and_atr_state"
+    )
     assert (
         raw_contract["evaluation"]["native_implementation"]["split_binding"][
             "split_denominator"
@@ -298,6 +301,8 @@ def test_missing_bucket_cannot_become_a_multi_bucket_return() -> None:
             {"positions": {}, "htf": {"5m": {}}},
         ))
     assert signals == []
+    assert "BTCUSDT" not in strategy._ratios
+    assert "BTCUSDT" not in strategy._ranges
 
 
 def test_exit_state_begins_only_after_fill_and_lands_on_exact_target() -> None:
