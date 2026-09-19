@@ -181,8 +181,10 @@ class Btc5mImpactProxyReversalStrategy(Strategy):
                     or bucket_start != prior.start + pd.Timedelta(minutes=5)
                 )
             ):
-                # Never turn a gap into a multi-bucket return.
+                # Never carry return, normalization, or ATR state across a gap.
                 self._previous_close.pop(symbol, None)
+                self._ratios.pop(symbol, None)
+                self._ranges.pop(symbol, None)
             completed = self._roll_quote_bucket(bar)
             position = self._position(ctx, symbol)
             if position is None:

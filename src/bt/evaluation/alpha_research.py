@@ -167,6 +167,10 @@ def complete_timeframe_bars(frame: pd.DataFrame, timeframe: str) -> pd.DataFrame
         and sample["ts"].nunique() == minutes
         and sample["ts"].max() - sample["ts"].min() == pd.Timedelta(minutes=minutes - 1)
         and bool(sample[columns].notna().all().all())
+        and (
+            "quote_volume" not in sample
+            or bool((sample["quote_volume"] >= 0.0).all())
+        )
     )
     if complete.empty:
         optional = [column for column in columns if column not in required]
