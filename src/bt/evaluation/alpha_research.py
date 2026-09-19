@@ -206,14 +206,20 @@ def impact_proxy_evaluation(
     parts: list[pd.DataFrame] = []
     for _, sample in bars.groupby("symbol", sort=False):
         sample = sample.sort_values("ts").copy()
-        sample["signal_return"] = sample["close"].pct_change()
+        sample["segment"] = sample["ts"].diff().ne(
+            pd.Timedelta(minutes=5)
+        ).cumsum()
+        segments = sample.groupby("segment", sort=False)
+        sample["signal_return"] = segments["close"].pct_change()
         sample["impact_proxy"] = sample["signal_return"].abs() / sample["quote_volume"]
-        sample["threshold_value"] = (
-            sample["impact_proxy"]
-            .shift(1)
+        sample["threshold_value"] = segments["impact_proxy"].transform(
+            lambda values: values.shift(1)
             .rolling(window=window, min_periods=window)
-            .apply(lambda values: empirical_lower_quantile(values, threshold), raw=True)
+            .apply(
+                lambda prior: empirical_lower_quantile(prior, threshold), raw=True
+            )
         )
+        sample["decision_at"] = sample["ts"] + pd.Timedelta(minutes=5)
         close_at = sample.set_index("ts")["close"]
         future_close = (sample["ts"] + pd.Timedelta(minutes=30)).map(close_at)
         sample["next_30m_return"] = future_close / sample["close"] - 1.0
@@ -224,7 +230,7 @@ def impact_proxy_evaluation(
         parts.append(sample)
     evaluated = pd.concat(parts, ignore_index=True)
     evaluated = evaluated.loc[
-        (evaluated["ts"] >= pd.Timestamp(test_start))
+        (evaluated["decision_at"] >= pd.Timestamp(test_start))
         & evaluated["signal_return"].notna()
         & evaluated["next_30m_return"].notna()
         & evaluated["threshold_value"].notna()
@@ -298,10 +304,13 @@ def impact_proxy_evaluation(
         for item in direction_observations.values()
     )
     report = {
-        "schema_version": "alpha-impact-proxy-evaluation-v1.1.0",
+        "schema_version": "alpha-impact-proxy-evaluation-v1.2.0",
         "measurement": "held-out causal predictive association; not executable PnL",
         "test_start": pd.Timestamp(test_start).isoformat(),
         "resampling": "strict complete left-labeled 5m bars from unique 1m rows",
+        "decision_time": "bucket_start_plus_5m",
+        "gap_policy": "reset_return_normalization_and_atr_state",
+        "evaluated_observations": int(len(evaluated)),
         "parameters": {
             "impact_proxy_threshold": threshold,
             "normalization_window": window,

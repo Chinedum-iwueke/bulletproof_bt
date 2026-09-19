@@ -119,6 +119,8 @@ def test_exact_native_card_is_discovered_and_compiles_deterministically() -> Non
     ] == {
         "path": "src/bt/evaluation/alpha_research.py",
         "function": "impact_proxy_evaluation",
+        "decision_time": "bucket_start_plus_5m",
+        "gap_policy": "reset_return_normalization_and_atr_state",
     }
     assert first["review"]["gates"]["independent_review_complete"] is False
     assert first["authority"] == {"capital": False, "orders": False, "promotion": False, "self_approval": False}
@@ -133,7 +135,7 @@ def test_yaml_grid_and_admission_are_deterministic_and_classic_only() -> None:
     assert len({item["config_hash"] for item in one}) == 8
     assert contract.schema.execution_semantics["required_extra_columns"] == ["quote_volume"]
     raw_contract = yaml.safe_load(YAML_PATH.read_text(encoding="utf-8"))
-    assert raw_contract["version"] == "1.5.0"
+    assert raw_contract["version"] == "1.6.0"
     assert raw_contract["execution_semantics"]["gap_state_policy"] == (
         "reset_return_normalization_and_atr_state"
     )

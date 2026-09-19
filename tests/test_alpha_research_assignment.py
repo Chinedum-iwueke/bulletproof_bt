@@ -410,7 +410,7 @@ def test_impact_proxy_evaluation_uses_complete_causal_five_minute_bars() -> None
             "return_shock_control_band": 0.2,
         },
     )
-    assert report["schema_version"] == "alpha-impact-proxy-evaluation-v1.1.0"
+    assert report["schema_version"] == "alpha-impact-proxy-evaluation-v1.2.0"
     assert report["direction_balance"]["short"] >= 1
     assert report["matched_return_shock_control"]["extreme_observations"] >= 1
     assert report["matched_return_shock_control"]["control_reuse"] is False
@@ -418,6 +418,62 @@ def test_impact_proxy_evaluation_uses_complete_causal_five_minute_bars() -> None
     assert report["direction_balance"]["minimum_per_direction"] == 10
     assert report["direction_balance"]["balanced_positive_reversal"] is False
     assert "record_digest" in report
+
+
+def _impact_rows(bucket_starts: list[pd.Timestamp]) -> pd.DataFrame:
+    rows = []
+    close = 100.0
+    for bucket_start in bucket_starts:
+        for minute in range(5):
+            close *= 1.001
+            rows.append(
+                {
+                    "ts": bucket_start + pd.Timedelta(minutes=minute),
+                    "symbol": "BTCUSDT",
+                    "close": close,
+                    "quote_volume": 2_000_000.0,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def test_impact_proxy_evaluation_resets_state_across_bucket_gaps() -> None:
+    start = pd.Timestamp("2026-01-01T00:00:00Z")
+    bucket_starts = [start + pd.Timedelta(minutes=5 * index) for index in range(12)]
+    bucket_starts += [
+        start + pd.Timedelta(minutes=95 + 5 * index) for index in range(12)
+    ]
+
+    report = impact_proxy_evaluation(
+        _impact_rows(bucket_starts),
+        test_start=start.isoformat(),
+        params={
+            "impact_proxy_threshold": 0.8,
+            "normalization_window": 2,
+            "return_shock_control_band": 0.2,
+        },
+    )
+
+    assert report["evaluated_observations"] == 6
+    assert report["gap_policy"] == "reset_return_normalization_and_atr_state"
+
+
+def test_impact_proxy_evaluation_filters_on_observable_decision_time() -> None:
+    start = pd.Timestamp("2026-01-01T00:00:00Z")
+    bucket_starts = [start + pd.Timedelta(minutes=5 * index) for index in range(12)]
+
+    report = impact_proxy_evaluation(
+        _impact_rows(bucket_starts),
+        test_start=(start + pd.Timedelta(minutes=20)).isoformat(),
+        params={
+            "impact_proxy_threshold": 0.8,
+            "normalization_window": 2,
+            "return_shock_control_band": 0.2,
+        },
+    )
+
+    assert report["evaluated_observations"] == 3
+    assert report["decision_time"] == "bucket_start_plus_5m"
 
 
 def test_impact_proxy_evaluation_rejects_duplicate_minutes() -> None:
