@@ -220,8 +220,9 @@ def impact_proxy_evaluation(
             )
         )
         sample["decision_at"] = sample["ts"] + pd.Timedelta(minutes=5)
-        close_at = sample.set_index("ts")["close"]
-        future_close = (sample["ts"] + pd.Timedelta(minutes=30)).map(close_at)
+        # Six subsequent complete 5m buckets prove both the exact 30-minute
+        # decision horizon and an uninterrupted underlying 1m monitoring path.
+        future_close = segments["close"].shift(-6)
         sample["next_30m_return"] = future_close / sample["close"] - 1.0
         sample["signed_reversal"] = (
             -sample["signal_return"].apply(lambda value: 1.0 if value > 0 else -1.0)
@@ -310,6 +311,7 @@ def impact_proxy_evaluation(
         "resampling": "strict complete left-labeled 5m bars from unique 1m rows",
         "decision_time": "bucket_start_plus_5m",
         "gap_policy": "reset_return_normalization_and_atr_state",
+        "target_path_policy": "six_contiguous_complete_5m_buckets_after_decision",
         "evaluated_observations": int(len(evaluated)),
         "parameters": {
             "impact_proxy_threshold": threshold,

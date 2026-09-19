@@ -441,7 +441,7 @@ def test_impact_proxy_evaluation_resets_state_across_bucket_gaps() -> None:
     start = pd.Timestamp("2026-01-01T00:00:00Z")
     bucket_starts = [start + pd.Timedelta(minutes=5 * index) for index in range(12)]
     bucket_starts += [
-        start + pd.Timedelta(minutes=95 + 5 * index) for index in range(12)
+        start + pd.Timedelta(minutes=65 + 5 * index) for index in range(12)
     ]
 
     report = impact_proxy_evaluation(
@@ -456,6 +456,9 @@ def test_impact_proxy_evaluation_resets_state_across_bucket_gaps() -> None:
 
     assert report["evaluated_observations"] == 6
     assert report["gap_policy"] == "reset_return_normalization_and_atr_state"
+    assert report["target_path_policy"] == (
+        "six_contiguous_complete_5m_buckets_after_decision"
+    )
 
 
 def test_impact_proxy_evaluation_filters_on_observable_decision_time() -> None:
