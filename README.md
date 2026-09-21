@@ -1,161 +1,240 @@
 ## Copyright
 
-Copyright © 2026 Chinedum Iwueke.
+Copyright (c) 2026 Chinedum Iwueke.
 
 # Bulletproof BT
 
-bulletproof_bt is a deterministic, event-driven quantitative research engine designed for institutional-grade strategy validation across crypto, foreign exchange, equities, and basic futures modeling.
+Bulletproof BT is the quantitative engine and market-data laboratory for
+Invariance Research. It performs deterministic, event-driven research,
+backtesting, portfolio and risk computation, shadow replay, and tightly gated
+venue execution.
 
-It is built around a strict invariant:
+Its central invariant is:
 
-> Same data + same configuration = identical outputs.  
-> No lookahead. No interpolation. No silent assumptions.
+> Same admitted data + same reviewed code + same configuration = identical
+> evidence. No lookahead, no interpolation, and no silent assumptions.
 
-bulletproof_bt is a reproducible research system.
+Bulletproof is not the company control plane. Hermes Swarm owns agents,
+approvals, task lifecycles, evidence registration, and operational visibility.
+Bulletproof owns the numerical work and emits immutable producer receipts that
+Hermes can validate and retain without reimplementing the calculation.
 
----
+## Intended Research Loop
 
-## System Philosophy
+Together with Hermes, this repository is intended to support a continuous loop:
 
-bulletproof_bt enforces explicit contracts between:
-- Strategy
-- Risk Engine
-- Execution Model
-- Portfolio
-- Data Feed
-- Benchmark Layer
-- Artifact Outputs
+1. inventory real market data and construct point-in-time eligible universes;
+2. transform admitted 1-minute data into the causal representation required by
+   a predictive question;
+3. compile a falsifiable hypothesis into a native strategy contract;
+4. execute a preregistered, bounded search through the classic engine;
+5. evaluate walk-forward behavior, costs, drawdowns, leakage, selection bias,
+   trade support, and reproducibility;
+6. retain positive, negative, invalid, and failed results with full artifacts;
+7. publish terminal evidence to Bulletproof memory and Hermes;
+8. monitor admitted candidates prospectively before any live capital decision.
 
-Each layer is deterministic, validated, and version-stable.
+The system is designed to discover and falsify micro-alpha around the clock. It
+does not promise alpha, tune indefinitely, or convert a backtest into trading
+authority.
 
-Every run produces a structured artifact bundle suitable for audit, client delivery, or regression locking.
+## Cross-Repository Ownership
 
----
+| Concern | Bulletproof | Hermes Swarm |
+| --- | --- | --- |
+| Market-data lake and panels | Authoritative producer | Catalogs admitted digests and availability |
+| Data representation and resampling | Deterministic implementation | Selects and approves bounded intent |
+| Strategy code and hypothesis YAML | Native implementation | Engineering task, approval, provenance |
+| Backtests, grids, ML/RL evaluation | Authoritative computation | Scheduling, independent review, lifecycle |
+| Portfolio, risk, OMS and venue replay | Authoritative computation | Registry, visibility, approval and audit |
+| Research memory | Native run/result memory | Institutional evidence and cross-agent context |
+| Live orders and capital | Fail-closed runtime only | Separate founder/risk authority and supervision |
 
-## Market Support (V1 Feature Freeze)
+Control-plane fixtures are never quantitative evidence. Bulletproof receipts do
+not grant themselves promotion, shadow, order, or capital authority.
 
-### Crypto (24/7 Markets)
-- Tiered execution profiles (tier1 / tier2 / tier3 / custom)
-- Spread, slippage, and fee modeling
-- Deterministic intrabar pricing
-- Stop-distance based risk normalization
-- Buy & hold benchmark
+## Current Capability
 
----
+### Deterministic research engine
 
-### Foreign Exchange (24x5)
-- Mandatory spread modeling (entry and exit)
-- Commission per lot (configurable)
-- Lot-size rounding (micro / mini / standard)
-- Risk-percentage position sizing
-- Basic leverage and margin modeling
-- Weekend enforcement
-- Flat or baseline-strategy benchmark
+- event-driven, bar-by-bar execution with closed-bar strategy input;
+- strict no-lookahead and causal source-timestamp validation;
+- crypto, FX, equity, and basic futures instrument abstractions;
+- tiered fees, spread, slippage, delay, margin, liquidation, and stop models;
+- risk-normalized sizing and canonical R-multiple accounting;
+- walk-forward and out-of-sample evaluation, cost stress, benchmarks, and
+  selection-bias evidence;
+- schema-versioned run bundles, decisions, fills, trades, metrics, manifests,
+  status, and failure artifacts.
 
----
+### Research-data lake
 
-### Equities (Session-Based)
-- Commission per share or per trade
-- Market hours enforcement
-- Gap-preserving behavior
-- Cash-account modeling (no implicit leverage)
-- Buy & hold or baseline benchmark
+- Binance, Bybit, and OKX perpetual futures adapters;
+- Binance and Bybit spot data support;
+- OHLCV, mark, index, funding, open-interest, and liquidation collection where
+  the venue exposes the source;
+- canonical research panels with backward-as-of joins and preserved source
+  timestamps;
+- stable, volatile, and point-in-time custom universe construction;
+- inventory, coverage, quality, entitlement, lineage, and immutable manifest
+  receipts;
+- no filling or interpolation of missing market bars.
 
----
+The lake's named stable and volatile universes are useful inputs, not permanent
+research boxes. A reviewed experiment may select any point-in-time eligible
+asset or basket across admitted data, provided the selection rule is frozen
+before outcomes are observed.
 
-## Core Design Principles
+### Representation and search
 
-### Determinism
-- Fully reproducible runs
-- Config resolution canonicalization
-- Schema-versioned artifacts
-- No stochastic execution components
+- strict whole-minute resampling from a UTC 1-minute base feed;
+- arbitrary positive `m`, `h`, and `d` durations such as `7m`, `12m`, `2h`, and
+  `2d`;
+- rollover-only emission of complete higher-timeframe buckets;
+- no seconds, fractional durations, calendar months, or strategy-visible
+  incomplete buckets;
+- bounded hypothesis grids and parallel execution with deterministic worker
+  plans, memory limits, heartbeats, diagnostics, and restart-safe queue state;
+- the governed alpha path limits one hypothesis to at most eight preregistered
+  variants; additional compute may run separate approved hypotheses in parallel.
 
----
+### Institutional quantitative producers
 
-### Strict No-Lookahead
-- Strategies receive closed bars only
-- Higher-timeframe resampling enforces strict completeness
-- No future leakage permitted
+Bulletproof owns the computational producers for DATA, discovery, ML, offline
+RL, portfolio, risk, execution, shadow, demo, and venue-telemetry milestones.
+These modules emit digest-bound no-authority receipts for Hermes rather than
+moving analytics into the control plane.
 
----
+ML and RL components are evaluation tools inside the governed research process.
+They do not autonomously train, deploy, or fund a policy without their own data,
+evaluation, calibration, admission, and authority receipts.
 
-### Explicit Cost Modeling
+### Execution path
 
-Execution modeling includes:
-- Spread (entry + exit)
-- Slippage
-- Fees
-- Commissions
-- Margin usage
+- canonical market, order, fill, position, balance, and clock events;
+- idempotent OMS lifecycle and restart reconciliation;
+- simulated, Bybit, and Binance adapter surfaces;
+- paper, shadow, Bybit demo, and live runtime entry points;
+- execution-quality calibration and degradation feedback;
+- deterministic real-time risk, freeze, kill, recovery, and canary controls;
+- canonical venue replay and Mission Control publication through Hermes.
 
-All cost components are surfaced in output artifacts.
+Authenticated Bybit demo drills and canonical venue-replay publication have
+been exercised in the wider system. This is operational evidence, not evidence
+of profitability. Live code remains fail-closed behind candidate admission,
+environment-specific certification, trade-only credentials, deterministic risk,
+short-lived founder approval, and a serialized micro-live canary.
 
----
+## Current Qualification Boundary
 
-### Risk Normalization
+- There is no blanket claim that the strategy catalog contains profitable
+  alpha.
+- Commissioning slices can verify wiring and artifacts but cannot satisfy full
+  scientific qualification.
+- A full candidate must survive its frozen historical window, out-of-sample and
+  cost gates, independent review, and prospective shadow monitoring.
+- Negative and invalid outcomes are first-class retained research results.
+- Fast paths require parity with the classic engine before their evidence can be
+  used.
+- `LIVE-001` is `blocked_before_capital` until its external operational and
+  candidate prerequisites are genuinely current.
+- Venue credentials and research datasets are local operational state and must
+  never enter Git or producer receipts.
 
-Strategies are evaluated using:
-- % equity risk per trade
-- Stop-distance based sizing
-- R-multiple normalization
-- Margin-aware execution constraints
+## Install
 
----
+Bulletproof uses Python 3.11+ and PEP 621 packaging.
 
-## Instrument Abstraction Layer
-
-All markets are modeled via explicit instrument specifications:
-
-```yaml
-instrument:
-  type: forex | equity | crypto | futures
-  symbol: EURUSD
-  tick_size: 0.0001
-  contract_size: 100000
-  pip_value: auto
+```bash
+git clone https://github.com/Chinedum-iwueke/bulletproof_bt.git
+cd bulletproof_bt
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+pytest -q
 ```
 
-This eliminates hardcoded crypto assumptions and ensures execution and risk logic adapt correctly per asset class.
+The distribution name is `bulletproof_bt`; the import module and primary CLI
+are `bt`.
 
----
+```bash
+bt --help
+python scripts/run_backtest.py --help
+```
 
-## Benchmark Framework
+## Common Workflows
 
-Supported benchmark modes:
-- buy_hold
-- flat (no-trade baseline)
-- baseline_strategy (e.g., MA cross)
+Run one classic backtest:
 
-Benchmark artifacts include:
-- benchmark_equity.csv
-- benchmark_metrics.json
-- comparison_summary.json
+```bash
+python scripts/run_backtest.py \
+  --data <PATH> \
+  --config configs/engine.yaml
+```
 
----
+Run an experiment grid:
 
-## Data Contract
+```bash
+python scripts/run_experiment_grid.py \
+  --config configs/engine.yaml \
+  --experiment configs/experiments/h1_volfloor_donchian.yaml \
+  --data <PATH> \
+  --out <OUT_DIR>
+```
 
-Supported input modes:
-- Single-file dataset
-- Dataset directory with manifest (recommended)
+Inspect and validate the native lake:
 
-Validation guarantees:
-- UTC tz-aware timestamps
-- Strict monotonic ordering
-- OHLC consistency checks
-- Duplicate detection
-- Session enforcement (FX/equity)
-- No interpolation of missing bars
+```bash
+python -m bt.research_data.cli refresh-instruments --exchange all
+python -m bt.research_data.cli fetch-status
+python -m bt.research_data.cli validate --all
+```
 
----
+Backfill and build a causal Binance panel:
 
-## Run Artifact Contract
+```bash
+python -m bt.research_data.cli fetch-backfill \
+  --market perp \
+  --exchange binance \
+  --dataset ohlcv \
+  --symbol BTCUSDT \
+  --timeframe 1m \
+  --start 2021-01-01 \
+  --end now
 
-Every run produces:
+python -m bt.research_data.cli build-panel \
+  --exchange binance \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT \
+  --timeframe 1m
+```
+
+Run a parallel grid from canonical panels:
+
+```bash
+python scripts/run_parallel_hypothesis_grid.py \
+  --experiment-root <OUTPUT_ROOT> \
+  --manifest <GRID_MANIFEST> \
+  --config configs/engine.yaml \
+  --local-config configs/local/engine.lab.yaml \
+  --data-root research_data \
+  --data-kind research_panel \
+  --exchange binance \
+  --universe stable \
+  --timeframe 1m \
+  --max-workers 8 \
+  --skip-completed
+```
+
+For governed Hermes work, use
+[`scripts/run_alpha_research_assignment.py`](scripts/run_alpha_research_assignment.py)
+and the capacity queue scripts rather than bypassing the approved assignment.
+
+## Artifact Contract
+
+A normal classic run emits a schema-versioned directory containing, at minimum:
 
 ```text
-run_xxx/
+run_<id>/
   config_used.yaml
   performance.json
   equity.csv
@@ -167,444 +246,62 @@ run_xxx/
   summary.txt
   run_manifest.json
   run_status.json
-  benchmark_* (if enabled)
 ```
 
-Artifacts are stable and schema-versioned.
-
----
-
-## Explicitly Out of Scope (V1)
-
-To preserve rigor and reproducibility, V1 intentionally excludes:
-- Multi-strategy blending
-- Portfolio allocation engines
-- Tick-level simulation
-- Order book modeling
-- Swap/rollover modeling
-- Multi-broker comparison
-- Web dashboards
-
-bulletproof_bt V1 is a single-strategy institutional research OS.
-
----
+Governed research adds the frozen hypothesis and representation contracts,
+truth and leakage reports, search ledger, selection-bias evidence, independent
+review, atomic bundle digest, publication envelope, and memory receipt. Failures
+must preserve enough evidence to diagnose the stage and must not be rewritten as
+successful runs.
 
 ## Project Structure
 
 ```text
-src/bt/
-  core/            # Engine loop, configuration resolution
-  data/            # Dataset loading, validation, resampling
-  research_data/   # Canonical perpetual futures data library
-  research_orchestration/
-                   # Research-data profiles for daemon/grid runs
-  execution/       # Execution profiles, pricing, slippage, spread
-  risk/            # Position sizing, margin, stop handling
-  portfolio/       # Cash, positions, liquidation logic
-  metrics/         # Performance computation, attribution
-  logging/         # Artifact writers, summary, run status
-  benchmark/       # Benchmark modes and comparison layer
-  instruments/     # Instrument abstraction layer (FX/equity/crypto)
-
-configs/
-  engine.yaml      # Stable system defaults
-  packs/           # Market-specific packs (crypto, fx_trad_v1)
-  overrides/       # Strategy experiment overrides
-
-scripts/
-  run_backtest.py
-  run_experiment_grid.py
-  run_parallel_hypothesis_grid.py
-  bootstrap_research_data_*.py
-
-orchestrator/
-  research_daemon.py
-  run_experiment_pipeline.py
-  research_memory.py
-
-research/
-  hypotheses/      # Pre-registered hypothesis contracts
-  verdicts/        # Interpreter verdicts
-  state_findings/  # State discovery outputs
-
-tests/
-  Deterministic regression + contract validation
+src/bt/core/                    Engine and configuration resolution
+src/bt/data/                    Validation and strict resampling
+src/bt/research_data/           Exchange adapters, lake, panels, universes
+src/bt/strategy/                Native strategies and strategy contract
+src/bt/evaluation/              Alpha and held-out evaluation
+src/bt/governance/              Qualification and Hermes research bridge
+src/bt/institutional/           Digest-bound quantitative producers
+src/bt/exec/                    OMS, adapters, runtime, replay, safety
+src/bt/risk/                    Sizing, stops, margin, deterministic risk
+src/bt/portfolio/               Cash, positions, liquidation accounting
+orchestrator/                   Research daemons and durable orchestration
+research/hypotheses/            Preregistered hypothesis YAML contracts
+research/audits/                Retained investigations and admission evidence
+scripts/                        Operator, pilot, grid, capacity, and venue CLIs
+tests/                          Determinism, causality, contract, and regression tests
 ```
 
-Core engine modules remain instrument-agnostic. Market differences are handled through instrument specs and execution adapters.
-
----
-
-## Prerequisites
-
-### System Requirements
-- Python 3.10+
-- Linux, macOS, or WSL recommended
-- 8GB+ RAM (16GB+ recommended for multi-asset research)
-
----
-
-### Required CLI Tools
-
-Recommended:
-- git
-- rg (ripgrep) for repository inspection
-- tree (optional)
-- make (if Makefile commands are used)
-
-## Release Status
-
-The engine is:
-- Instrument-aware
-- Spread-aware
-- Margin-aware
-- Risk-normalized
-- Benchmark-contextualized
-- Deterministic
-- Regression-locked
-
----
-## Install
-
-bulletproof_bt uses modern PEP 621 packaging. All dependencies are defined in pyproject.toml.
-
-```bash
-git clone https://github.com/Chinedum-iwueke/bulletproof_bt.git
-cd bulletproof_bt
-
-python -m venv .venv
-source .venv/bin/activate
-
-pip install -e ".[dev]"
-```
-Run tests to verify installation:
-
-```bash
-pytest -q
-```
-
-## Package Naming (important)
-
-- Distribution/package name (install target): `bulletproof_bt`
-- Runtime import module: `bt`
-
-```python
-import bt
-
-print(bt.__version__)
-# from parsed artifact diagnostics seam
-result = bt.run_analysis_from_parsed_artifact(parsed_artifact, config=None)
-```
-
-## Run a backtest (CLI)
-
-```bash
-python scripts/run_backtest.py --data <PATH> --config configs/engine.yaml
-```
-
-## Run an experiment grid (CLI)
-
-```bash
-python scripts/run_experiment_grid.py --config configs/engine.yaml --experiment configs/experiments/h1_volfloor_donchian.yaml --data <PATH> --out <OUT_DIR>
-```
-
-## Research data workflow
-
-The canonical research library lives under `research_data/` and is built with `bt.research_data`.
-It supports Binance, Bybit, and OKX perpetual futures adapters, stable and volatile universe manifests, causal research panels, validation reports, and forward-collected liquidation events.
+## Documentation
 
 Start with:
 
-```bash
-python -m bt.research_data.cli refresh-instruments --exchange all
-python -m bt.research_data.cli fetch-backfill --exchange binance --dataset ohlcv --symbol BTCUSDT --timeframe 1m --start 2021-01-01 --end now
-python -m bt.research_data.cli build-panel --exchange binance --symbols BTCUSDT,ETHUSDT,SOLUSDT --timeframe 1m
-python -m bt.research_data.cli validate --all
-```
-
-Parallel hypothesis grids and the research daemon can consume those panels directly:
-
-```bash
-python scripts/run_parallel_hypothesis_grid.py \
-  --experiment-root outputs/tier2/l1_h7c_parallel_stable \
-  --manifest outputs/tier2/l1_h7c_parallel_stable/manifests/l1_h7c_high_selectivity_regime_tier2_grid.csv \
-  --config configs/engine.yaml \
-  --local-config configs/local/engine.lab.yaml \
-  --data-root research_data \
-  --data-kind research_panel \
-  --exchange binance \
-  --universe stable \
-  --timeframe 1m \
-  --max-workers 6 \
-  --skip-completed
-```
-
-See [docs/research_data.md](docs/research_data.md), [docs/research_orchestration.md](docs/research_orchestration.md), and [orchestrator/README_daemon.md](orchestrator/README_daemon.md).
-
-### Quick-slice workflow (e.g., 6 months on BTC only)
-
-Use a local overlay with data-scope controls:
-
-```yaml
-data:
-  symbols_subset: ["BTCUSDT"]
-  max_symbols: 1
-  date_range:
-    start: "2023-01-01T00:00:00Z"  # inclusive
-    end: "2023-07-01T00:00:00Z"    # exclusive
-```
-
-Then run:
-
-```bash
-python -u scripts/run_experiment_grid.py   --config configs/engine.yaml   --experiment configs/experiments/h1_volfloor_donchian.yaml   --data <PATH>   --out outputs/grids   --local-config configs/local/engine.volfloor_donchian.yaml
-```
-
-Keep `--local-config` for single-asset / short-window checks, and remove or swap it when running full-universe experiments.
-
-## Overrides (recommended workflow)
-
-- Add one or more overlays with `--override path/to/override.yaml` (flag is repeatable).
-- For local-only edits, use `--local-config configs/local/engine.local.yaml`.
-- Effective merge order is:
-  1. base config (`--config`)
-  2. `configs/fees.yaml`
-  3. `configs/slippage.yaml`
-  4. each `--override` in the order provided
-  5. `--local-config` (if supplied)
-
-
-## Execution profiles
-
-Execution profiles are reusable presets. Overrides are only allowed when `execution.profile: custom`.
-If you use `tier1`, `tier2`, or `tier3` (or omit the profile, which defaults to `tier2`), do not set any of:
-`maker_fee`, `taker_fee`, `slippage_bps`, `delay_bars`, `spread_bps`.
-
-Valid tier preset example (no overrides):
-
-```yaml
-execution:
-  profile: tier2
-```
-
-If you enable spread modeling with `execution.spread_mode: fixed_bps` while using a tier preset,
-`execution.spread_bps` is auto-filled from the tier (`tier1=0.0`, `tier2=1.0`, `tier3=3.0`).
-
-Valid custom example (all override fields required):
-
-```yaml
-execution:
-  profile: custom
-  maker_fee: 0.0
-  taker_fee: 0.001
-  slippage_bps: 2.0
-  delay_bars: 1
-  spread_bps: 1.0
-```
-
-## Stop Contract (Safe vs Strict)
-
-Strategies should provide stop intent on entry signals via either:
-- `signal.stop_price`, or
-- `signal.metadata.stop_spec`
-
-Use the client-safe pack (fallback explicitly enabled):
-
-```bash
-python scripts/run_backtest.py \
-  --data <PATH> \
-  --config configs/engine.yaml \
-  --override configs/examples/safe_client.yaml
-```
-
-Use the research-strict pack (no fallback/proxy sizing):
-
-```bash
-python scripts/run_backtest.py \
-  --data <PATH> \
-  --config configs/engine.yaml \
-  --override configs/examples/strict_research.yaml
-```
-
-Minimal `stop_spec` example in strategy code:
-
-```python
-signal = Signal(
-    ts=ts,
-    symbol=symbol,
-    side=Side.BUY,
-    signal_type="entry",
-    confidence=1.0,
-    metadata={
-        "stop_spec": {"contract_version": 1, "kind": "atr", "atr_multiple": 2.0}
-    },
-)
-```
-
-## Public API
-
-```python
-from bt import run_backtest, run_grid
-
-run_dir = run_backtest(
-    config_path="configs/engine.yaml",
-    data_path="data/curated/sample.csv",
-    out_dir="outputs/runs",
-)
-
-experiment_dir = run_grid(
-    config_path="configs/engine.yaml",
-    experiment_path="configs/experiments/h1_volfloor_donchian.yaml",
-    data_path="data/curated/sample.csv",
-    out_dir="outputs/experiments",
-)
-```
-
-## How to add a strategy
-
-1. Copy `src/bt/strategy/templates/client_strategy_template.py`.
-2. Rename class/file and place your strategy in `src/bt/strategy/`.
-3. Register it with `register_strategy(...)`.
-4. Strategy must emit `Signal` objects only.
-5. `ctx` is read-only (`StrategyContextView`).
-
-### DO NOT
-
-- Do **not** edit `bt/core/engine.py`.
-- Do **not** mutate `ctx`.
-- Do **not** access portfolio/execution internals from a strategy.
-
-
-## Data market modes
-
-Crypto defaults (no market key needed):
-
-```yaml
-data:
-  mode: streaming
-```
-
-FX 24x5 example:
-
-```yaml
-data:
-  market: fx_24x5
-  allow_weekend_bars: false
-```
-
-Equity session example:
-
-```yaml
-data:
-  market: equity_session
-  equity_session:
-    timezone: America/New_York
-    open_time: "09:30"
-    close_time: "16:00"
-    trading_days: [Mon, Tue, Wed, Thu, Fri]
-```
-
-## Streaming indicator library
-
-All indicators are stateful and updated bar-by-bar (`update(bar)`), with explicit warmups (`warmup_bars`) and no lookahead.
-
-### Trend / Moving averages
-- EMA, SMA, WMA, DEMA, TEMA, HMA
-- KAMA, RMA, VWMA, T3
-
-### Momentum / Oscillators
-- RSI, Stochastic, Stoch RSI
-- CCI, ROC, Momentum, Williams %R
-- TSI, Ultimate Oscillator, Fisher Transform
-
-### Volatility / Bands / Channels
-- True Range, ATR
-- Bollinger Bands, Keltner Channel, Donchian Channel
-- Choppiness Index, Ulcer Index, Historical Volatility
-
-### Trend strength / directional movement
-- DMI/ADX, Aroon
-- MACD, PPO, TRIX, Vortex
-
-### Volume / Money flow
-- OBV, CMF, MFI
-- VPT, ADL, Chaikin Oscillator, Force Index
-
-### Range / price-action / stops
-- Parabolic SAR, Supertrend
-- Pivot Points (streaming daily UTC session pivots)
-- Heikin Ashi
-
-### Candle features
-- Body/range/wicks/body ratio
-- Gap, close position in range
-- Rolling z-scores for returns/range/volume
-
-### Usage
-
-```python
-from bt.indicators import make_indicator
-
-ind = make_indicator("rsi", period=14)
-for bar in bars:
-    ind.update(bar)
-    if ind.is_ready:
-        print(ind.value)
-```
-
-## Troubleshooting: Parquet / PyArrow
-
-- Symptom: `AttributeError: module 'pyarrow' has no attribute 'parquet'` when pandas reads/writes parquet.
-- Cause: in some environments `import pyarrow.parquet` works, but `pyarrow.parquet` (`pa.parquet`) is not attached as a module attribute that pandas may expect.
-- Implemented fix: parquet IO now runs a runtime guard `ensure_pyarrow_parquet()` before parquet operations.
-- Quick workaround: upgrade `pyarrow`/`pandas`, or run `import pyarrow.parquet` before parquet IO.
-- In this project, the guard is already applied, so manual import is usually unnecessary.
-
-## Run artifacts
-
-`run_dir/performance.json` includes cost-attribution keys (always present):
-
-- `gross_pnl`
-- `net_pnl`
-- `fee_total`
-- `slippage_total`
-- `spread_total`
-- `fee_drag_pct`
-- `slippage_drag_pct`
-- `spread_drag_pct`
-
-## Project docs
-
-The full documentation set lives in [docs/](docs/). Start with the client contracts and research operations docs below.
-
-### Client contracts
-
-- [docs/dataset_contract.md](docs/dataset_contract.md)
-- [docs/data_market_contract.md](docs/data_market_contract.md)
-- [docs/execution_model_contract.md](docs/execution_model_contract.md)
-- [docs/strategy_contract.md](docs/strategy_contract.md)
-- [docs/portfolio_risk_contract.md](docs/portfolio_risk_contract.md)
-- [docs/error_and_run_status_contract.md](docs/error_and_run_status_contract.md)
-- [docs/output_artifacts_contract.md](docs/output_artifacts_contract.md)
-- [docs/config_layering_contract.md](docs/config_layering_contract.md)
-- [docs/beginner_vs_pro_contract.md](docs/beginner_vs_pro_contract.md)
-
-### Research operations
-
-- [docs/research_data.md](docs/research_data.md)
-- [docs/research_orchestration.md](docs/research_orchestration.md)
-- [docs/hypothesis_contract.md](docs/hypothesis_contract.md)
-- [docs/parallel_grid_runner.md](docs/parallel_grid_runner.md)
-- [orchestrator/README_daemon.md](orchestrator/README_daemon.md)
-- [orchestrator/README_dashboard.md](orchestrator/README_dashboard.md)
-
-## Machine-verifiable implementation baseline
-
-The repository ships a read-only `implementation-baseline-v1` collector. It
-records the Git pin and dirty state, sanitized origin, runtime versions,
-dependency and lock-file state, tracked schema hashes, declared acceptance
-commands, and the controlled claim vocabulary. It does not read environment
-values, ignored files, or the research-data lake.
+- [Core contract](docs/core_contract.md)
+- [Dataset contract](docs/dataset_contract.md)
+- [Research data](docs/research_data.md)
+- [Timeframe resampling](docs/timeframe_resampler.md)
+- [Hypothesis contract](docs/hypothesis_contract.md)
+- [Strategy generation instructions](docs/hypothesis_strategy_generation_prompt_instructions.md)
+- [Backtest truth certification](docs/backtest_truth_certification.md)
+- [Governed research bridge](docs/governed_research_bridge.md)
+- [Parallel grid runner](docs/parallel_grid_runner.md)
+- [Alpha commissioning](docs/alpha_commissioning.md)
+- [Execution contract](docs/exec_contract.md)
+- [Bybit adapter contract](docs/bybit_adapter_contract.md)
+- [Live hardening contract](docs/bybit_live_hardening_contract.md)
+- [LIVE-001 validation](docs/live-001-validation.md)
+
+Historical validation documents describe evidence at a particular commit. They
+do not replace a fresh baseline, run receipt, or production health check.
+
+## Machine-Verifiable Baseline
+
+The read-only `implementation-baseline-v1` collector records the Git pin and
+dirty state, sanitized origin, runtime versions, dependency state, tracked
+schema hashes, declared acceptance commands, and controlled claim vocabulary.
+It does not read credentials, ignored files, or the market-data lake.
 
 ```bash
 python scripts/implementation_baseline.py collect \
@@ -614,8 +311,13 @@ python scripts/implementation_baseline.py validate \
   /tmp/bulletproof-baseline.json
 ```
 
-Collection fails closed on a dirty worktree. `--allow-dirty` is available for
-audits and records the affected tracked/untracked paths instead of claiming a
-release-quality baseline. CI publishes the validated JSON as a 30-day workflow
-artifact. The canonical schema is
-[`schemas/implementation-baseline-v1.schema.json`](schemas/implementation-baseline-v1.schema.json).
+Collection fails closed on a dirty worktree. `--allow-dirty` records the dirty
+paths for audit purposes but does not create a release-quality baseline.
+
+## Security and Trading Safety
+
+Never commit exchange keys, account identifiers, operator tokens, private data,
+or environment files. Demo and live credentials must be separate, trade-only,
+withdrawal-disabled, IP-restricted, root-owned, and mode `0600`. A live runtime
+must start read-only or frozen unless every exact candidate, environment, risk,
+reconciliation, kill, and approval prerequisite is current.
