@@ -14,6 +14,7 @@ from .receipt import ProducerReceipt, build_receipt, digest
 
 REQUIRED_MANIFESTS = ("coverage", "fetch_state", "instruments")
 OPTIONAL_MEMBERSHIPS = ("stable_universe", "volatile_universe_membership")
+MAX_MEMBERSHIP_RECORDS = 50_000
 
 
 def _sha256(path: Path) -> str:
@@ -57,6 +58,95 @@ def _read(path: Path, columns: list[str]) -> list[dict]:
         {key: _json(value) for key, value in row.items()}
         for row in table.to_pylist()
     ]
+
+
+def _membership_records(
+    *,
+    optional: dict[str, Path],
+    manifests: dict[str, dict],
+    venues: tuple[str, ...],
+) -> list[dict]:
+    records: list[dict] = []
+    for name, path in sorted(optional.items()):
+        columns = set(manifests[name]["columns"])
+        if not {"exchange", "symbol"}.issubset(columns):
+            raise ValueError(f"{name} lacks exchange and symbol membership columns")
+        selected = ["exchange", "symbol"]
+        selected.extend(
+            column
+            for column in (
+                "market", "universe", "available", "ts", "first_seen_ts",
+                "created_ts",
+            )
+            if column in columns
+        )
+        summaries: dict[tuple[str, str, str, str], dict] = {}
+        parquet = pq.ParquetFile(path)
+        for batch in parquet.iter_batches(columns=selected, batch_size=65_536):
+            rows = batch.to_pylist()
+            for raw in rows:
+                row = {key: _json(value) for key, value in raw.items()}
+                venue = str(row["exchange"])
+                if venue not in venues:
+                    continue
+                effective_at = (
+                    row.get("ts") or row.get("first_seen_ts") or row.get("created_ts")
+                )
+                if not row.get("symbol") or not effective_at:
+                    raise ValueError(f"{name} contains an incomplete membership record")
+                key = (
+                    str(row.get("market") or "perp"),
+                    venue,
+                    str(row["symbol"]),
+                    str(row.get("universe") or ""),
+                )
+                summary = summaries.setdefault(
+                    key,
+                    {
+                        "effective_from": effective_at,
+                        "effective_to": effective_at,
+                        "observation_count": 0,
+                        "available": False,
+                    },
+                )
+                summary["effective_from"] = min(summary["effective_from"], effective_at)
+                summary["effective_to"] = max(summary["effective_to"], effective_at)
+                summary["observation_count"] += 1
+                summary["available"] = summary["available"] or bool(
+                    row.get("available", True)
+                )
+        for (market, venue, instrument, universe), summary in summaries.items():
+            record = {
+                "source_manifest": name,
+                "source_manifest_digest": manifests[name]["content_digest"],
+                "membership_kind": (
+                    "point_in_time_schedule_summary"
+                    if name == "volatile_universe_membership"
+                    else "static"
+                ),
+                "group": (
+                    "volatile" if name == "volatile_universe_membership" else "stable"
+                ),
+                "source_universe": universe,
+                "market": market,
+                "venue": venue,
+                "instrument": instrument,
+                "effective_from": summary["effective_from"],
+                "effective_to": summary["effective_to"],
+                "observation_count": summary["observation_count"],
+                "available": summary["available"],
+                "execution_eligible": False,
+            }
+            records.append(record)
+            if len(records) > MAX_MEMBERSHIP_RECORDS:
+                raise ValueError("optional lake membership metadata exceeds the bounded catalog")
+    records.sort(
+        key=lambda item: (
+            item["effective_from"], item["group"], item["market"],
+            item["venue"], item["instrument"],
+        )
+    )
+    return records
 
 
 def manifest_catalog_receipt(
@@ -153,8 +243,13 @@ def manifest_catalog_receipt(
             "columns": descriptor["columns"],
             "classification": "optional_research_metadata",
         }
+    membership_records = _membership_records(
+        optional=optional,
+        manifests=manifests,
+        venues=venues,
+    )
     result = {
-        "schema_version": "data002-manifest-catalog-v1.0.0",
+        "schema_version": "data002-manifest-catalog-v1.1.0",
         "manifests": manifests,
         "manifest_count": len(manifests),
         "availability": availability,
@@ -162,6 +257,8 @@ def manifest_catalog_receipt(
         "assets": assets,
         "one_year_coverage_candidates": one_year_coverage_candidates,
         "memberships": memberships,
+        "membership_records": membership_records,
+        "membership_record_count": len(membership_records),
         "venue_scope": list(venues),
         "group_labels_are_optional_metadata": True,
         "execution_eligible": False,
@@ -174,7 +271,7 @@ def manifest_catalog_receipt(
     return build_receipt(
         milestone="DATA-002",
         producer="bt.institutional.lake_manifest.manifest_catalog_receipt",
-        producer_version="1.0.0",
+        producer_version="1.1.0",
         source_commit=source_commit,
         inputs=manifests,
         dataset_digest=digest(manifests),

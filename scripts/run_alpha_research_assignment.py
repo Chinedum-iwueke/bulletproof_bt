@@ -30,6 +30,9 @@ from bt.evaluation.alpha_research import (
 )
 from bt.execution.model_registry import declared_classic_bundle
 from bt.experiments.hypothesis_runner import execute_hypothesis_variant
+from bt.experiments.adaptive_representation import (
+    materialize_adaptive_representation,
+)
 from bt.experiments.representation_contract import (
     EvaluationSplit,
     FieldContract,
@@ -94,6 +97,108 @@ def file_digest(path: Path) -> str:
     return result.hexdigest()
 
 
+def materialize_execution_panel(
+    assignment: dict[str, Any], output: Path
+) -> tuple[Path, str, dict[str, pd.DataFrame]]:
+    """Bind every admitted basket member into one immutable engine panel."""
+    bindings = assignment.get("dataset_bindings") or [
+        {
+            "dataset_build_id": assignment["dataset_build_id"],
+            "dataset_digest": assignment["dataset_digest"],
+            "dataset_path": assignment["dataset_path"],
+            "dataset_key": assignment.get("dataset_key", "legacy-single-panel"),
+            "instrument": assignment["instrument"],
+            "venue": assignment.get("venue"),
+        }
+    ]
+    start = (
+        pd.Timestamp(assignment["window_start"])
+        if assignment.get("window_start")
+        else None
+    )
+    end = (
+        pd.Timestamp(assignment["window_end"])
+        if assignment.get("window_end")
+        else None
+    )
+    frames: list[pd.DataFrame] = []
+    panels: dict[str, pd.DataFrame] = {}
+    for binding in bindings:
+        path = Path(binding["dataset_path"])
+        filters = None
+        if start is not None and end is not None:
+            filters = [
+                ("ts", ">=", start.to_pydatetime()),
+                ("ts", "<", end.to_pydatetime()),
+            ]
+        selected = pd.read_parquet(path, filters=filters)
+        if selected.empty:
+            raise BridgeError(
+                f"immutable execution window contains no rows for {binding['instrument']}"
+            )
+        instrument = binding["instrument"]
+        if "symbol" not in selected:
+            selected["symbol"] = instrument
+        elif set(selected["symbol"].astype(str)) != {instrument}:
+            raise BridgeError("basket panel symbol differs from its admitted binding")
+        panels[instrument] = selected.copy()
+        frames.append(selected)
+    combined = pd.concat(frames, ignore_index=True).sort_values(
+        ["ts", "symbol"], kind="stable"
+    )
+    if combined.duplicated(["ts", "symbol"]).any():
+        raise BridgeError("combined basket contains duplicate symbol timestamps")
+    destination = output / "execution-window.parquet"
+    combined.to_parquet(destination, index=False)
+    aggregate_digest = digest(
+        {
+            "dataset_bindings": [
+                {
+                    "dataset_build_id": item["dataset_build_id"],
+                    "dataset_digest": item["dataset_digest"],
+                    "instrument": item["instrument"],
+                    "venue": item.get("venue"),
+                }
+                for item in bindings
+            ],
+            "window_start": assignment.get("window_start"),
+            "window_end": assignment.get("window_end"),
+            "materialized_file_digest": file_digest(destination),
+        }
+    )
+    return destination, aggregate_digest, panels
+
+
+def attach_adaptive_features(
+    execution_data_path: Path,
+    materialized: Any,
+    *,
+    output: Path,
+    declared_fields: list[str],
+) -> Path:
+    """Expose reviewed adaptive fields to strategies only at causal decision times."""
+    output_fields = materialized.receipt["output_fields"]
+    if declared_fields != output_fields:
+        raise BridgeError(
+            "strategy adaptive_representation_fields differ from the frozen plan"
+        )
+    frame = pd.read_parquet(execution_data_path)
+    overlap = set(output_fields) & set(frame.columns)
+    if overlap:
+        raise BridgeError(f"adaptive fields collide with source data: {sorted(overlap)}")
+    features = materialized.frame[["decision_at", *output_fields]].rename(
+        columns={"decision_at": "ts"}
+    )
+    features["ts"] = pd.to_datetime(features["ts"], utc=True, errors="raise")
+    if features["ts"].duplicated().any():
+        raise BridgeError("adaptive representation has duplicate decision timestamps")
+    frame["ts"] = pd.to_datetime(frame["ts"], utc=True, errors="raise")
+    enriched = frame.merge(features, on="ts", how="left", validate="many_to_one")
+    destination = output / "execution-panel-with-adaptive-features.parquet"
+    enriched.to_parquet(destination, index=False)
+    return destination
+
+
 def _execution_identity(assignment: dict[str, Any]) -> dict[str, Any]:
     return {
         "campaign_digest": assignment["campaign_digest"],
@@ -104,6 +209,8 @@ def _execution_identity(assignment: dict[str, Any]) -> dict[str, Any]:
         "window_start": assignment.get("window_start"),
         "window_end": assignment.get("window_end"),
         "qualification_digest": digest(assignment.get("qualification")),
+        "dataset_bindings_digest": digest(assignment.get("dataset_bindings", [])),
+        "representation_plan_digest": digest(assignment.get("representation_plan")),
     }
 
 
@@ -185,6 +292,7 @@ def downstream_reuse_manifest(
         "performance.json",
         "representation_contract.json",
         "representation_leakage_report.json",
+        "adaptive-representation-receipt.json",
         "search_plan.json",
         "selection_bias_audit.json",
         evaluation_artifact,
@@ -807,23 +915,36 @@ def execute_registered(
     if len(variants) > assignment["max_variants"]:
         raise BridgeError("qualified strategy exceeds the immutable variant budget")
 
-    execution_data_path = Path(assignment["dataset_path"])
-    window_digest = assignment["dataset_digest"]
-    if assignment.get("window_start") and assignment.get("window_end"):
-        start = pd.Timestamp(assignment["window_start"])
-        end = pd.Timestamp(assignment["window_end"])
-        selected = pd.read_parquet(
-            execution_data_path,
-            filters=[
-                ("ts", ">=", start.to_pydatetime()),
-                ("ts", "<", end.to_pydatetime()),
-            ],
+    execution_data_path, window_digest, source_panels = materialize_execution_panel(
+        assignment, output
+    )
+    adaptive_receipt = None
+    if assignment.get("representation_plan") is not None:
+        materialized = materialize_adaptive_representation(
+            assignment["representation_plan"], source_panels
         )
-        if selected.empty:
-            raise BridgeError("immutable execution window contains no admitted rows")
-        execution_data_path = output / "execution-window.parquet"
-        selected.to_parquet(execution_data_path, index=False)
-        window_digest = file_digest(execution_data_path)
+        materialized.frame.to_parquet(
+            output / "adaptive-representation.parquet", index=False
+        )
+        adaptive_receipt = materialized.receipt
+        (output / "adaptive-representation-receipt.json").write_bytes(
+            canonical(adaptive_receipt) + b"\n"
+        )
+        declared_adaptive_fields = contract.schema.execution_semantics.get(
+            "adaptive_representation_fields", []
+        )
+        if not isinstance(declared_adaptive_fields, list) or not all(
+            isinstance(item, str) and item for item in declared_adaptive_fields
+        ):
+            raise BridgeError(
+                "adaptive_representation_fields must be a non-empty string list"
+            )
+        execution_data_path = attach_adaptive_features(
+            execution_data_path,
+            materialized,
+            output=output,
+            declared_fields=declared_adaptive_fields,
+        )
 
     lightweight_columns = ["ts", "symbol", "close"]
     for column in contract.schema.execution_semantics.get(
@@ -863,7 +984,7 @@ def execute_registered(
         family_id=f"alpha002-{assignment['question_digest'][:12]}",
         hypothesis_digest=contract_receipt["content_digest"],
         dataset_snapshot_id=assignment["dataset_build_id"],
-        dataset_digest=assignment["dataset_digest"],
+        dataset_digest=window_digest,
         repository_commit=assignment["base_ref"],
         code_digest=code_digest,
         market_model_bundle_digest=model.digest,
@@ -883,6 +1004,12 @@ def execute_registered(
     required_extra_columns = contract.schema.execution_semantics.get(
         "required_extra_columns", []
     )
+    if adaptive_receipt is not None and required_extra_columns != adaptive_receipt[
+        "output_fields"
+    ]:
+        raise BridgeError(
+            "required_extra_columns must exactly match adaptive representation outputs"
+        )
     execution_overrides: list[str] = []
     if required_extra_columns:
         if (
@@ -933,6 +1060,10 @@ def execute_registered(
             ("search_plan.json", search.document()),
         ):
             (run_dir / name).write_bytes(canonical(document) + b"\n")
+        if adaptive_receipt is not None:
+            (run_dir / "adaptive-representation-receipt.json").write_bytes(
+                canonical(adaptive_receipt) + b"\n"
+            )
         results.append(result)
         run_dirs.append(run_dir)
     trials = search.trials()
@@ -1003,6 +1134,10 @@ def execute_registered(
             ("search_plan.json", search.document()),
         ):
             (heldout_run_dir / name).write_bytes(canonical(document) + b"\n")
+        if adaptive_receipt is not None:
+            (heldout_run_dir / "adaptive-representation-receipt.json").write_bytes(
+                canonical(adaptive_receipt) + b"\n"
+            )
         results[selected_index] = heldout_result
         run_dirs[selected_index] = heldout_run_dir
     selection_audit = {
@@ -1373,6 +1508,11 @@ def execute_registered(
             *evaluation_evidence_digests,
             logging_report["record_digest"],
             truth.to_dict().get("report_digest", digest(truth.to_dict())),
+            *(
+                [adaptive_receipt["receipt_digest"]]
+                if adaptive_receipt is not None
+                else []
+            ),
         ],
     }
     proposal_source = {
@@ -1399,7 +1539,9 @@ def execute_registered(
         "dataset": {
             "dataset_build_id": assignment["dataset_build_id"],
             "dataset_digest": assignment["dataset_digest"],
+            "execution_dataset_digest": window_digest,
             "instrument": assignment["instrument"],
+            "instruments": assignment.get("instruments", [assignment["instrument"]]),
             "timeframe": assignment["timeframe"],
             "rows": len(lightweight),
             "start": pd.to_datetime(lightweight["ts"], utc=True).iloc[0].isoformat(),
@@ -1458,6 +1600,7 @@ def execute_registered(
             "bundle_manifest_digest": manifest["manifest_digest"],
             "market_model_bundle_digest": model.digest,
             "representation_contract_digest": rep.digest,
+            "adaptive_representation_receipt": adaptive_receipt,
             "search_plan_digest": search.digest,
             "result_disposition": "accepted" if passed_edge else "rejected",
             "held_out_evaluation": holdout,
@@ -1479,6 +1622,7 @@ def execute_registered(
         "bundle": bundle,
         "metrics": metrics,
         "publication_envelope": publication_envelope,
+        "adaptive_representation_receipt": adaptive_receipt,
     }
     if scope["qualification_authority"]:
         result_document["alpha_campaign_attempt"] = attempt

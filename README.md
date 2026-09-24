@@ -76,6 +76,9 @@ not grant themselves promotion, shadow, order, or capital authority.
 - canonical research panels with backward-as-of joins and preserved source
   timestamps;
 - stable, volatile, and point-in-time custom universe construction;
+- causal adaptive representation compilation across admitted baskets, including
+  arbitrary whole-minute/hour/day complete bars, returns, train-only fractional
+  differentiation, local scaling, volatility, spreads, ratios, and ranks;
 - inventory, coverage, quality, entitlement, lineage, and immutable manifest
   receipts;
 - no filling or interpolation of missing market bars.
