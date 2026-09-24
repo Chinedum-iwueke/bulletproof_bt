@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 import pandas as pd
 import pytest
 
@@ -13,6 +14,7 @@ from bt.governance.research_bridge import BridgeError
 
 from scripts.run_alpha_research_assignment import (
     AUTHORITY,
+    attach_adaptive_features,
     engineering_required,
     execute_registered,
     execution_scope,
@@ -20,6 +22,7 @@ from scripts.run_alpha_research_assignment import (
     file_digest,
     independent_review_required,
     hypothesis_identity,
+    materialize_execution_panel,
     representation,
     record_alpha_memory,
     retain_bundle,
@@ -64,6 +67,59 @@ def test_explicit_registered_identity_is_only_taken_from_typed_marker() -> None:
     assert hypothesis_identity(prose) == prose
 
 
+def test_adaptive_fields_are_attached_only_at_their_decision_timestamp(tmp_path):
+    source = pd.DataFrame({
+        "ts": pd.to_datetime([
+            "2025-01-01T00:14:00Z",
+            "2025-01-01T00:15:00Z",
+        ]),
+        "symbol": ["BTCUSDT", "BTCUSDT"],
+        "open": [1.0, 1.0],
+        "high": [1.0, 1.0],
+        "low": [1.0, 1.0],
+        "close": [1.0, 1.0],
+        "volume": [1.0, 1.0],
+    })
+    source_path = tmp_path / "source.parquet"
+    source.to_parquet(source_path, index=False)
+    materialized = SimpleNamespace(
+        receipt={"output_fields": ["btc_log_return"]},
+        frame=pd.DataFrame({
+            "decision_at": pd.to_datetime(["2025-01-01T00:15:00Z"]),
+            "btc_log_return": [0.02],
+        }),
+    )
+
+    result_path = attach_adaptive_features(
+        source_path,
+        materialized,
+        output=tmp_path,
+        declared_fields=["btc_log_return"],
+    )
+
+    result = pd.read_parquet(result_path)
+    assert pd.isna(result.loc[0, "btc_log_return"])
+    assert result.loc[1, "btc_log_return"] == pytest.approx(0.02)
+
+
+def test_adaptive_fields_must_match_reviewed_strategy_contract(tmp_path):
+    source_path = tmp_path / "source.parquet"
+    pd.DataFrame({"ts": pd.to_datetime(["2025-01-01T00:00:00Z"])}).to_parquet(
+        source_path, index=False
+    )
+    materialized = SimpleNamespace(
+        receipt={"output_fields": ["expected_field"]},
+        frame=pd.DataFrame(),
+    )
+    with pytest.raises(BridgeError, match="differ from the frozen plan"):
+        attach_adaptive_features(
+            source_path,
+            materialized,
+            output=tmp_path,
+            declared_fields=["other_field"],
+        )
+
+
 def test_unreviewed_qualification_stops_before_compute_or_output_creation(tmp_path):
     value = assignment()
     value["qualification"] = {"qualified": True}
@@ -89,6 +145,50 @@ def test_interrupted_execution_is_preserved_and_completed_retry_is_idempotent(
     result = {"disposition": "native_execution_complete", "value": 7}
     finalize_execution_output(output, value, result)
     assert prepare_execution_output(output, value) == result
+
+
+def test_execution_panel_materializes_every_digest_bound_basket_member(tmp_path) -> None:
+    timestamps = pd.date_range("2025-01-01T00:00:00Z", periods=10, freq="1min")
+    bindings = []
+    for position, instrument in enumerate(("BTCUSDT", "ETHUSDT")):
+        path = tmp_path / f"{instrument}.parquet"
+        pd.DataFrame(
+            {
+                "ts": timestamps,
+                "symbol": instrument,
+                "open": 100.0 + position,
+                "high": 101.0 + position,
+                "low": 99.0 + position,
+                "close": 100.5 + position,
+                "volume": 1000.0,
+            }
+        ).to_parquet(path, index=False)
+        bindings.append(
+            {
+                "dataset_build_id": f"{position + 3}" * 8 + "-3333-4333-8333-333333333333",
+                "dataset_digest": file_digest(path),
+                "dataset_path": str(path),
+                "dataset_key": instrument.lower(),
+                "instrument": instrument,
+                "venue": "bybit",
+            }
+        )
+    value = assignment() | {
+        "dataset_path": str(tmp_path / "BTCUSDT.parquet"),
+        "dataset_key": "btcusdt",
+        "dataset_bindings": bindings,
+        "instruments": ["BTCUSDT", "ETHUSDT"],
+        "window_start": "2025-01-01T00:00:00Z",
+        "window_end": "2025-01-01T00:10:00Z",
+    }
+    output = tmp_path / "output"
+    output.mkdir()
+    path, aggregate_digest, panels = materialize_execution_panel(value, output)
+    combined = pd.read_parquet(path)
+    assert set(combined["symbol"]) == {"BTCUSDT", "ETHUSDT"}
+    assert len(combined) == 20
+    assert set(panels) == {"BTCUSDT", "ETHUSDT"}
+    assert len(aggregate_digest) == 64
 
 
 def test_commissioning_scope_is_review_contained_and_non_qualifying() -> None:

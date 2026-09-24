@@ -90,6 +90,19 @@ def draft_research_card(
     errors = validate_hypothesis_card(card, require_confirmed=False)
     if errors:
         raise ValueError("invalid_engineered_card:" + ",".join(errors))
+    representation_plan = assignment.get("representation_plan")
+    if representation_plan is not None:
+        expected_fields = [
+            item["output_field"] for item in representation_plan["transformations"]
+        ]
+        semantics = card.get("execution_semantics", {})
+        if (
+            semantics.get("adaptive_representation_plan_digest")
+            != canonical_hash(representation_plan)
+            or semantics.get("adaptive_representation_fields") != expected_fields
+            or semantics.get("required_extra_columns") != expected_fields
+        ):
+            raise ValueError("engineered_card_adaptive_representation_mismatch")
     count = parameter_variant_count(card)
     if not 1 <= count <= min(8, assignment.get("max_variants", 8)):
         raise ValueError("engineered_card_parameter_budget_exceeded")

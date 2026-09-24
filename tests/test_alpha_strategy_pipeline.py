@@ -83,6 +83,48 @@ def test_exact_engineered_card_discovery(tmp_path):
     assert draft_research_card(value, repository_root=str(tmp_path)) == card
 
 
+def test_engineered_card_binds_exact_adaptive_representation(tmp_path):
+    value, card, path = engineered_fixture(tmp_path)
+    plan = {
+        "schema_version": "adaptive-representation-plan-v1.0.0",
+        "candidate_key": "eth-momentum",
+        "instruments": ["ETHUSDT"],
+        "basket_members": [{
+            "instrument": "ETHUSDT",
+            "role": "primary",
+            "legacy_groups": ["stable"],
+            "selection_rationale": "ETH is the exact target and predictor instrument.",
+        }],
+        "source_timeframe": "1m",
+        "research_timeframe": "15m",
+        "resampling_policy": "left_closed_left_labeled_complete_bars",
+        "transformations": [{
+            "output_field": "eth_return",
+            "operation": "log_return",
+            "input_fields": ["ETHUSDT__close"],
+            "parameters": {"periods": 1},
+            "fit_policy": "stateless",
+            "rationale": "Returns remove the nonstationary price-level scale.",
+        }],
+        "transformation_rationale": "Use completed 15-minute returns for the horizon.",
+        "rejected_alternatives": ["Raw price levels retain an avoidable scale trend."],
+        "selection_data_boundary": "metadata_predictors_only_no_targets",
+        "outcome_data_consulted": False,
+    }
+    value["representation_plan"] = plan
+    with pytest.raises(ValueError, match="adaptive_representation_mismatch"):
+        draft_research_card(value, repository_root=str(tmp_path))
+
+    fields = ["eth_return"]
+    card["execution_semantics"].update({
+        "adaptive_representation_plan_digest": canonical_hash(plan),
+        "adaptive_representation_fields": fields,
+        "required_extra_columns": fields,
+    })
+    path.write_text(json.dumps(card))
+    assert draft_research_card(value, repository_root=str(tmp_path)) == card
+
+
 @pytest.mark.parametrize("mutation,reason", [
     ("question", "question_mismatch"),
     ("dataset", "dataset_mismatch"),

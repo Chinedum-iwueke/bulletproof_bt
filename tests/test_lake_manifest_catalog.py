@@ -74,7 +74,48 @@ def test_manifest_catalog_is_fast_visibility_not_execution_admission(tmp_path):
     assert receipt.result["execution_eligible"] is False
     assert receipt.result["group_labels_are_optional_metadata"] is True
     assert receipt.result["venue_scope"] == ["binance", "bybit"]
+    assert receipt.result["schema_version"] == "data002-manifest-catalog-v1.1.0"
+    assert receipt.result["membership_record_count"] == 1
+    assert receipt.result["membership_records"] == [{
+        "source_manifest": "stable_universe",
+        "source_manifest_digest": receipt.result["manifests"]["stable_universe"]["content_digest"],
+        "membership_kind": "static",
+        "group": "stable",
+        "source_universe": "stable",
+        "market": "perp",
+        "venue": "bybit",
+        "instrument": "BTCUSDT",
+        "effective_from": "2024-01-01T00:00:00Z",
+        "effective_to": "2024-01-01T00:00:00Z",
+        "observation_count": 1,
+        "available": True,
+        "execution_eligible": False,
+    }]
     assert not any(receipt.authority.values())
+
+
+def test_manifest_catalog_exposes_point_in_time_volatile_membership(tmp_path):
+    write_manifests(tmp_path)
+    path = tmp_path / "manifests/volatile_universe_membership.parquet"
+    pd.DataFrame({
+        "ts": pd.to_datetime(["2025-01-01T00:00:00Z", "2025-02-01T00:00:00Z"]),
+        "exchange": ["binance", "binance"],
+        "symbol": ["ETHUSDT", "SOLUSDT"],
+        "universe": ["volatile_data_1m_canonical"] * 2,
+    }).to_parquet(path, index=False)
+
+    result = manifest_catalog_receipt(
+        data_root=tmp_path, source_commit="a" * 40
+    ).result
+
+    volatile = [item for item in result["membership_records"] if item["group"] == "volatile"]
+    assert [item["instrument"] for item in volatile] == ["ETHUSDT", "SOLUSDT"]
+    assert all(
+        item["membership_kind"] == "point_in_time_schedule_summary"
+        for item in volatile
+    )
+    assert [item["observation_count"] for item in volatile] == [1, 1]
+    assert all(item["execution_eligible"] is False for item in volatile)
 
 
 def test_manifest_catalog_requires_native_core_manifests(tmp_path):

@@ -76,6 +76,9 @@ not grant themselves promotion, shadow, order, or capital authority.
 - canonical research panels with backward-as-of joins and preserved source
   timestamps;
 - stable, volatile, and point-in-time custom universe construction;
+- causal adaptive representation compilation across admitted baskets, including
+  arbitrary whole-minute/hour/day complete bars, returns, train-only fractional
+  differentiation, local scaling, volatility, spreads, ratios, and ranks;
 - inventory, coverage, quality, entitlement, lineage, and immutable manifest
   receipts;
 - no filling or interpolation of missing market bars.
@@ -280,6 +283,13 @@ Start with:
 
 - [Core contract](docs/core_contract.md)
 - [Dataset contract](docs/dataset_contract.md)
+- [Execution model contract](docs/execution_model_contract.md)
+- [Strategy contract](docs/strategy_contract.md)
+- [Portfolio and risk contract](docs/portfolio_risk_contract.md)
+- [Error and run-status contract](docs/error_and_run_status_contract.md)
+- [Output artifacts contract](docs/output_artifacts_contract.md)
+- [Configuration layering contract](docs/config_layering_contract.md)
+- [Beginner and professional modes contract](docs/beginner_vs_pro_contract.md)
 - [Research data](docs/research_data.md)
 - [Timeframe resampling](docs/timeframe_resampler.md)
 - [Hypothesis contract](docs/hypothesis_contract.md)
