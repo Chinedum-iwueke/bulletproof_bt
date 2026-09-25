@@ -23,6 +23,12 @@ immutable_contract:
   research_timeframe: 15m
   minimum_history_observations_1m: 525600
   minimum_history_complete_15m_bars: 35040
+  warmup:
+    observations: 35041
+    timeframe: 15m
+    start: "2024-04-30T23:45:00Z"
+    end: "2025-05-01T00:00:00Z"
+    authority: causal_feature_state_only
   resampling_policy: left_closed_left_labeled_complete_bars
   required_fields: [ts, close, quote_volume]
 representation_plan: &plan
@@ -85,6 +91,8 @@ execution_semantics:
   resampling_interval: left_closed_right_open
   resampling_label: bucket_start
   signal_timeframe: 15m
+  warmup_observations: 35041
+  warmup_timeframe: 15m
   base_execution_timeframe: 1m
   base_data_frequency_expected: 1m
   exit_monitoring_timeframe: 1m

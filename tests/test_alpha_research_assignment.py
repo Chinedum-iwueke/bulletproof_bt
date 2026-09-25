@@ -15,6 +15,7 @@ from bt.governance.research_bridge import BridgeError
 from scripts.run_alpha_research_assignment import (
     AUTHORITY,
     attach_adaptive_features,
+    causal_warmup_receipt,
     engineering_required,
     execute_registered,
     execution_scope,
@@ -189,6 +190,63 @@ def test_execution_panel_materializes_every_digest_bound_basket_member(tmp_path)
     assert len(combined) == 20
     assert set(panels) == {"BTCUSDT", "ETHUSDT"}
     assert len(aggregate_digest) == 64
+
+
+def test_execution_panel_materializes_explicit_causal_warmup(tmp_path) -> None:
+    timestamps = pd.date_range("2024-12-31T23:55:00Z", periods=15, freq="1min")
+    path = tmp_path / "BTCUSDT.parquet"
+    pd.DataFrame(
+        {
+            "ts": timestamps,
+            "symbol": "BTCUSDT",
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.5,
+            "volume": 1000.0,
+        }
+    ).to_parquet(path, index=False)
+    value = assignment() | {
+        "dataset_path": str(path),
+        "window_start": "2025-01-01T00:00:00Z",
+        "window_end": "2025-01-01T00:10:00Z",
+    }
+    output = tmp_path / "output"
+    output.mkdir()
+    destination, _, panels = materialize_execution_panel(
+        value, output, warmup_bars=5, warmup_timeframe="1m"
+    )
+    materialized = pd.read_parquet(destination)
+    assert materialized["ts"].min() == pd.Timestamp("2024-12-31T23:55:00Z")
+    assert len(materialized) == 15
+    assert len(panels["BTCUSDT"]) == 15
+
+
+def test_causal_warmup_receipt_requires_complete_pre_evaluation_decisions() -> None:
+    materialized = SimpleNamespace(
+        frame=pd.DataFrame(
+            {
+                "decision_at": pd.date_range(
+                    "2024-12-31T23:56:00Z", periods=5, freq="1min"
+                )
+            }
+        )
+    )
+    receipt = causal_warmup_receipt(
+        materialized,
+        official_start="2025-01-01T00:00:00Z",
+        warmup_bars=5,
+        warmup_timeframe="1m",
+    )
+    assert receipt["materialized_complete_bars"] == 5
+    assert receipt["orders_permitted_during_warmup"] is False
+    with pytest.raises(BridgeError, match="lacks the declared causal warmup"):
+        causal_warmup_receipt(
+            materialized,
+            official_start="2025-01-01T00:00:00Z",
+            warmup_bars=6,
+            warmup_timeframe="1m",
+        )
 
 
 def test_commissioning_scope_is_review_contained_and_non_qualifying() -> None:

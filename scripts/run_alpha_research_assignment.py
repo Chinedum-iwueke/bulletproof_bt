@@ -102,7 +102,11 @@ def file_digest(path: Path) -> str:
 
 
 def materialize_execution_panel(
-    assignment: dict[str, Any], output: Path
+    assignment: dict[str, Any],
+    output: Path,
+    *,
+    warmup_bars: int = 0,
+    warmup_timeframe: str = "1m",
 ) -> tuple[Path, str, dict[str, pd.DataFrame]]:
     """Bind every admitted basket member into one immutable engine panel."""
     bindings = assignment.get("dataset_bindings") or [
@@ -123,14 +127,19 @@ def materialize_execution_panel(
     end = (
         pd.Timestamp(assignment["window_end"]) if assignment.get("window_end") else None
     )
+    warmup_start = start
+    if start is not None and warmup_bars:
+        warmup_start = start - (
+            pd.Timedelta(minutes=timeframe_minutes(warmup_timeframe)) * warmup_bars
+        )
     frames: list[pd.DataFrame] = []
     panels: dict[str, pd.DataFrame] = {}
     for binding in bindings:
         path = Path(binding["dataset_path"])
         filters = None
-        if start is not None and end is not None:
+        if warmup_start is not None and end is not None:
             filters = [
-                ("ts", ">=", start.to_pydatetime()),
+                ("ts", ">=", warmup_start.to_pydatetime()),
                 ("ts", "<", end.to_pydatetime()),
             ]
         selected = pd.read_parquet(path, filters=filters)
@@ -143,21 +152,7 @@ def materialize_execution_panel(
             selected["symbol"] = instrument
         elif set(selected["symbol"].astype(str)) != {instrument}:
             raise BridgeError("basket panel symbol differs from its admitted binding")
-        panel = selected
-        if (
-            assignment.get("question_digest")
-            == "f504661fcff41ac7ebe0b37a45139baef2718e0307fc7cfbbdfcc87fe2bcbe44"
-            and start is not None
-            and end is not None
-        ):
-            panel = pd.read_parquet(
-                path,
-                filters=[
-                    ("ts", ">=", (start - pd.Timedelta(days=365)).to_pydatetime()),
-                    ("ts", "<", end.to_pydatetime()),
-                ],
-            )
-        panels[instrument] = panel.copy()
+        panels[instrument] = selected.copy()
         frames.append(selected)
     combined = pd.concat(frames, ignore_index=True).sort_values(
         ["ts", "symbol"], kind="stable"
@@ -179,6 +174,9 @@ def materialize_execution_panel(
             ],
             "window_start": assignment.get("window_start"),
             "window_end": assignment.get("window_end"),
+            "warmup_start": warmup_start.isoformat() if warmup_start is not None else None,
+            "warmup_bars": warmup_bars,
+            "warmup_timeframe": warmup_timeframe,
             "materialized_file_digest": file_digest(destination),
         }
     )
@@ -239,6 +237,46 @@ def attach_adaptive_features(
     destination = output / "execution-panel-with-adaptive-features.parquet"
     enriched.to_parquet(destination, index=False)
     return destination
+
+
+def causal_warmup_receipt(
+    materialized: Any,
+    *,
+    official_start: Any,
+    warmup_bars: int,
+    warmup_timeframe: str,
+) -> dict[str, Any]:
+    """Prove enough complete pre-evaluation decisions exist to seed online state."""
+    start = pd.Timestamp(official_start)
+    warmup_rows = int(
+        (
+            pd.to_datetime(
+                materialized.frame["decision_at"], utc=True, errors="raise"
+            )
+            <= start
+        ).sum()
+    )
+    if warmup_rows < warmup_bars:
+        raise BridgeError(
+            "materialized representation lacks the declared causal warmup: "
+            f"{warmup_rows} < {warmup_bars} complete {warmup_timeframe} bars"
+        )
+    receipt = {
+        "schema_version": "alpha-causal-warmup-receipt-v1.0.0",
+        "authority": "causal_feature_state_only",
+        "official_evaluation_start": start.isoformat(),
+        "warmup_start": (
+            start
+            - pd.Timedelta(minutes=timeframe_minutes(warmup_timeframe)) * warmup_bars
+        ).isoformat(),
+        "warmup_timeframe": warmup_timeframe,
+        "required_complete_bars": warmup_bars,
+        "materialized_complete_bars": warmup_rows,
+        "orders_permitted_during_warmup": False,
+        "performance_attribution_during_warmup": False,
+    }
+    receipt["record_digest"] = digest(receipt)
+    return receipt
 
 
 def _execution_identity(assignment: dict[str, Any]) -> dict[str, Any]:
@@ -1070,14 +1108,35 @@ def execute_registered(
     if len(variants) > assignment["max_variants"]:
         raise BridgeError("qualified strategy exceeds the immutable variant budget")
 
+    execution_semantics = contract.schema.execution_semantics
+    warmup_bars = int(execution_semantics.get("warmup_observations", 0))
+    warmup_timeframe = str(
+        execution_semantics.get(
+            "warmup_timeframe",
+            execution_semantics.get("signal_timeframe", "1m"),
+        )
+    )
     execution_data_path, window_digest, source_panels = materialize_execution_panel(
-        assignment, output
+        assignment,
+        output,
+        warmup_bars=warmup_bars,
+        warmup_timeframe=warmup_timeframe,
     )
     adaptive_receipt = None
     if assignment.get("representation_plan") is not None:
         materialized = materialize_adaptive_representation(
             assignment["representation_plan"], source_panels
         )
+        if warmup_bars:
+            warmup_receipt = causal_warmup_receipt(
+                materialized,
+                official_start=assignment["window_start"],
+                warmup_bars=warmup_bars,
+                warmup_timeframe=warmup_timeframe,
+            )
+            (output / "causal-warmup-receipt.json").write_bytes(
+                canonical(warmup_receipt) + b"\n"
+            )
         materialized.frame.to_parquet(
             output / "adaptive-representation.parquet", index=False
         )
@@ -1106,6 +1165,12 @@ def execute_registered(
         if column not in lightweight_columns:
             lightweight_columns.append(column)
     lightweight = pd.read_parquet(execution_data_path, columns=lightweight_columns)
+    if assignment.get("window_start") and assignment.get("window_end"):
+        lightweight_ts = pd.to_datetime(lightweight["ts"], utc=True, errors="raise")
+        lightweight = lightweight.loc[
+            (lightweight_ts >= pd.Timestamp(assignment["window_start"]))
+            & (lightweight_ts < pd.Timestamp(assignment["window_end"]))
+        ].copy()
     code_digest = digest(assignment["base_ref"].encode())
     split_contract = contract_document.get("evaluation", {}).get("split", {})
     rep, leakage = representation(
@@ -1173,6 +1238,29 @@ def execute_registered(
                 "required_extra_columns must preserve ordered adaptive outputs and provenance"
             )
     execution_overrides: list[str] = []
+    if warmup_bars:
+        if not assignment.get("window_start") or not assignment.get("window_end"):
+            raise BridgeError("causal warmup requires an immutable execution window")
+        warmup_start = pd.Timestamp(assignment["window_start"]) - (
+            pd.Timedelta(minutes=timeframe_minutes(warmup_timeframe)) * warmup_bars
+        )
+        warmup_override_path = output / "causal-warmup-window.yaml"
+        warmup_override_path.write_text(
+            yaml.safe_dump(
+                {
+                    "data": {
+                        "date_range": {
+                            "start": assignment["window_start"],
+                            "end": assignment["window_end"],
+                        },
+                        "warmup_start": warmup_start.isoformat(),
+                    }
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        execution_overrides.append(str(warmup_override_path))
     if required_extra_columns:
         if not isinstance(required_extra_columns, list) or not all(
             isinstance(column, str) and column for column in required_extra_columns

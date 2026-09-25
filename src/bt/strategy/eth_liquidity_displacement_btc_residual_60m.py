@@ -214,8 +214,9 @@ def liquidity_displacement_evaluation(
         & (rows["btc_volume"] >= LIQUIDITY_FLOOR)
         & (rows["eth_volume"] >= LIQUIDITY_FLOOR)
     )
-    splits = _split(rows)
-    train = splits["train"].loc[valid.reindex(splits["train"].index, fill_value=False)]
+    decision_rows = rows.loc[valid].reset_index(drop=True)
+    splits = _split(decision_rows)
+    train = splits["train"]
     if len(train) < 3:
         return {
             "schema_version": "eth-liquidity-residual-evaluation-v1.0.0",
@@ -246,7 +247,7 @@ def liquidity_displacement_evaluation(
     direction = str(params["response_direction"])
 
     def evaluate(part: pd.DataFrame) -> dict[str, Any]:
-        part = part.loc[valid.reindex(part.index, fill_value=False)].copy()
+        part = part.copy()
         controls = part.loc[part.displacement.abs() < part.prior_displacement_threshold]
         extremes = part.loc[
             part.displacement.abs() >= part.prior_displacement_threshold
@@ -532,20 +533,26 @@ class EthLiquidityDisplacementBtcResidual60mStrategy(Strategy):
         )
         if btc_return is not None:
             self.btc_returns.append(btc_return)
-        if not volatility_valid or any(
-            values[field] is None
-            for field in OUTPUT_FIELDS
-            if field != "btc_15m_realized_volatility_96"
-        ):
+        displacement_value = values["eth_15m_signed_liquidity_displacement"]
+        if displacement_value is None:
             return []
         history = self.history["BTCUSDT"]
-        displacement = abs(float(values["eth_15m_signed_liquidity_displacement"]))
+        displacement = abs(float(displacement_value))
         threshold = (
             float(pd.Series(history).quantile(self.quantile, interpolation="lower"))
             if len(history) == MIN_HISTORY
             else None
         )
         history.append(displacement)
+        if not volatility_valid or any(
+            values[field] is None
+            for field in OUTPUT_FIELDS
+            if field not in {
+                "btc_15m_realized_volatility_96",
+                "eth_15m_signed_liquidity_displacement",
+            }
+        ):
+            return []
         eligible = bool(
             threshold is not None
             and "BTCUSDT" in tradeable

@@ -29,7 +29,6 @@ from bt.logging.trades import TradesCsvWriter
 from bt.portfolio.portfolio import Portfolio
 from bt.risk.risk_engine import RiskEngine
 from bt.strategy.eth_liquidity_displacement_btc_residual_60m import (
-    MIN_HISTORY,
     OUTPUT_FIELDS,
     PLAN_DIGEST,
     EthLiquidityDisplacementBtcResidual60mStrategy,
@@ -238,6 +237,49 @@ def test_evaluator_fits_train_only_and_retains_all_terminal_outcomes(
     )
 
 
+def test_chronological_split_counts_only_valid_decision_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    panels = _panels()
+    missing_start = panels["BTCUSDT"]["ts"].min() + pd.Timedelta(minutes=120 * 15)
+    missing_end = missing_start + pd.Timedelta(minutes=15)
+    for symbol in panels:
+        timestamps = panels[symbol]["ts"]
+        panels[symbol] = panels[symbol].loc[
+            ~((timestamps >= missing_start) & (timestamps < missing_end))
+        ]
+    observed: list[pd.DataFrame] = []
+    original = strategy_module._split
+
+    def capture(rows: pd.DataFrame) -> dict[str, pd.DataFrame]:
+        observed.append(rows.copy())
+        return original(rows)
+
+    monkeypatch.setattr(strategy_module, "_split", capture)
+    liquidity_displacement_evaluation(
+        panels,
+        params={
+            "eth_displacement_tail_percentile": 0.8,
+            "response_direction": "continuation",
+        },
+        minimum_history=20,
+        minimum_extreme_support=1,
+        minimum_matched_support=1,
+    )
+    assert len(observed) == 1
+    decision_rows = observed[0]
+    assert decision_rows["complete"].all()
+    assert decision_rows["target_complete"].all()
+    assert decision_rows[
+        [
+            "btc_return",
+            "prior_btc_volatility",
+            "displacement",
+            "prior_displacement_threshold",
+        ]
+    ].notna().all().all()
+
+
 def test_grid_is_deterministic_and_opens_test_at_most_once() -> None:
     kwargs = {
         "minimum_history": 20,
@@ -330,12 +372,13 @@ def test_supported_negative_validation_is_not_mislabeled_as_failure() -> None:
     )
 
 
-def _classic_run(frame: pd.DataFrame, output: Path) -> list[dict]:
+def _classic_run(
+    frame: pd.DataFrame, output: Path, *, analysis_start: pd.Timestamp
+) -> list[dict]:
     output.mkdir()
     strategy = EthLiquidityDisplacementBtcResidual60mStrategy(
         eth_displacement_tail_percentile=0.975
     )
-    strategy.history["BTCUSDT"].extend([0.0] * MIN_HISTORY)
     engine = BacktestEngine(
         datafeed=HistoricalDataFeed(frame),
         universe=UniverseEngine(
@@ -356,7 +399,7 @@ def _classic_run(frame: pd.DataFrame, output: Path) -> list[dict]:
         fills_writer=JsonlWriter(output / "fills.jsonl"),
         trades_writer=TradesCsvWriter(output / "trades.csv"),
         equity_path=output / "equity.csv",
-        config={},
+        config={"data": {"analysis_start_ts": analysis_start.isoformat()}},
     )
     engine.run()
     return [
@@ -367,8 +410,9 @@ def _classic_run(frame: pd.DataFrame, output: Path) -> list[dict]:
 
 
 def test_compiler_attachment_and_classic_engine_are_causal_and_deterministic(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(strategy_module, "MIN_HISTORY", 20)
     panels = _panels(240)
     materialized = materialize_adaptive_representation(
         _contract()["representation_plan"], panels
@@ -379,17 +423,14 @@ def test_compiler_attachment_and_classic_engine_are_causal_and_deterministic(
         source, materialized, output=tmp_path, declared_fields=list(OUTPUT_FIELDS)
     )
     attached = pd.read_parquet(attached_path)
-    # The strategy is deliberately pre-warmed with the immutable 35,040-value
-    # prior tail in _classic_run; begin after the synthetic feed's opening
-    # boundary so that warm-up is not (correctly) reset as a missing decision.
-    attached = attached.loc[attached["ts"] != attached["ts"].min()].copy()
     decisions = attached.dropna(subset=["representation_decision_ts"])
     assert (
         pd.to_datetime(decisions["prior_only_volatility_source_end_ts"], utc=True)
         == pd.to_datetime(decisions["ts"], utc=True) - pd.Timedelta(minutes=15)
     ).all()
-    first = _classic_run(attached, tmp_path / "first")
-    second = _classic_run(attached, tmp_path / "second")
+    analysis_start = pd.Timestamp("2025-05-02T06:00:00Z")
+    first = _classic_run(attached, tmp_path / "first", analysis_start=analysis_start)
+    second = _classic_run(attached, tmp_path / "second", analysis_start=analysis_start)
     assert first == second
     entries = [
         row
@@ -398,6 +439,7 @@ def test_compiler_attachment_and_classic_engine_are_causal_and_deterministic(
         == "eth_liquidity_displacement_btc_residual_entry"
     ]
     assert entries
+    assert all(pd.Timestamp(row["ts"]) >= analysis_start for row in first)
     corrupt = attached.copy()
     corrupt.loc[
         corrupt["representation_decision_ts"].notna(),
@@ -405,7 +447,9 @@ def test_compiler_attachment_and_classic_engine_are_causal_and_deterministic(
     ] = corrupt.loc[
         corrupt["representation_decision_ts"].notna(), "representation_decision_ts"
     ]
-    rejected = _classic_run(corrupt, tmp_path / "corrupt")
+    rejected = _classic_run(
+        corrupt, tmp_path / "corrupt", analysis_start=analysis_start
+    )
     assert not [
         row
         for row in rejected
