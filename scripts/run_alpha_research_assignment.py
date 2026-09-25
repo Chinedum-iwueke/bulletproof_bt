@@ -53,6 +53,7 @@ from bt.governance.research_bridge import (
 )
 from bt.governance.alpha_strategy_pipeline import (
     canonical_hash,
+    complete_independent_review,
     confirm_card,
     draft_research_card,
     governed_review_verified,
@@ -63,6 +64,9 @@ from bt.logging.run_bundle import finalize_run_bundle
 from bt.validation.experiment_truth import validate_experiment_root, write_truth_report
 from bt.strategy.btc_funding_basis_crowding_60m import (
     funding_basis_matched_evaluation,
+)
+from bt.strategy.eth_liquidity_displacement_btc_residual_60m import (
+    liquidity_displacement_grid_evaluation,
 )
 
 AUTHORITY = {
@@ -141,7 +145,21 @@ def materialize_execution_panel(
             selected["symbol"] = instrument
         elif set(selected["symbol"].astype(str)) != {instrument}:
             raise BridgeError("basket panel symbol differs from its admitted binding")
-        panels[instrument] = selected.copy()
+        panel = selected
+        if (
+            assignment.get("question_digest")
+            == "f504661fcff41ac7ebe0b37a45139baef2718e0307fc7cfbbdfcc87fe2bcbe44"
+            and start is not None
+            and end is not None
+        ):
+            panel = pd.read_parquet(
+                path,
+                filters=[
+                    ("ts", ">=", (start - pd.Timedelta(days=365)).to_pydatetime()),
+                    ("ts", "<", end.to_pydatetime()),
+                ],
+            )
+        panels[instrument] = panel.copy()
         frames.append(selected)
     combined = pd.concat(frames, ignore_index=True).sort_values(
         ["ts", "symbol"], kind="stable"
@@ -187,6 +205,7 @@ def attach_adaptive_features(
         "representation_plan_digest",
         "representation_output_fields",
         "representation_decision_ts",
+        "prior_only_volatility_source_end_ts",
     }
     overlap = (set(output_fields) | provenance_fields) & set(frame.columns)
     if overlap:
@@ -195,6 +214,15 @@ def attach_adaptive_features(
         columns={"decision_at": "ts"}
     )
     features["ts"] = pd.to_datetime(features["ts"], utc=True, errors="raise")
+    # The frozen ETH->BTC experiment requires a one-completed-bar lag.  Bind
+    # that semantic here instead of relabelling compiler output that includes
+    # the signal bar as "prior-only".
+    prior_volatility = "btc_15m_realized_volatility_96"
+    if prior_volatility in output_fields:
+        features[prior_volatility] = features[prior_volatility].shift(1)
+        features["prior_only_volatility_source_end_ts"] = (
+            features["ts"] - pd.Timedelta(minutes=15)
+        ).map(lambda value: value.isoformat())
     plan_digest = materialized.receipt.get("plan_digest")
     if plan_digest is not None:
         features["representation_plan_digest"] = plan_digest
@@ -861,6 +889,8 @@ def execute_registered(
         )
     if not governed_review_verified(assignment, qualification):
         raise BridgeError("independent specification review is missing or unbound; no compute started")
+    if isinstance(qualification, dict):
+        qualification = complete_independent_review(assignment, qualification)
     scope = execution_scope(assignment, qualification)
     completed = prepare_execution_output(output, assignment)
     if completed is not None:
@@ -1056,15 +1086,19 @@ def execute_registered(
     is_funding_basis = (
         contract.schema.metadata.hypothesis_family == "funding_basis_matched_control"
     )
+    is_liquidity_residual = (
+        contract.schema.metadata.hypothesis_family
+        == "cross_asset_liquidity_transmission"
+    )
     grid_data_path = execution_data_path
-    if is_funding_basis:
+    if is_funding_basis or is_liquidity_residual:
         validation_end = pd.Timestamp(rep.split.validation_end)
         validation_frame = pd.read_parquet(execution_data_path)
         validation_frame = validation_frame[
             pd.to_datetime(validation_frame["ts"], utc=True) <= validation_end
         ]
         if validation_frame.empty:
-            raise BridgeError("funding-basis validation partition contains no rows")
+            raise BridgeError("scientific validation partition contains no rows")
         grid_data_path = output / "validation-window.parquet"
         validation_frame.to_parquet(grid_data_path, index=False)
     jobs = [dict(
@@ -1091,7 +1125,27 @@ def execute_registered(
         results.append(result)
         run_dirs.append(run_dir)
     trials = search.trials()
-    if is_funding_basis:
+    liquidity_grid = None
+    if is_liquidity_residual:
+        liquidity_grid = liquidity_displacement_grid_evaluation(
+            source_panels,
+            parameter_grid=contract.schema.parameter_grid,
+            evaluation_start=assignment["window_start"],
+            evaluation_end=assignment["window_end"],
+        )
+        validation = liquidity_grid["selection_candidates"]
+        for item in validation:
+            item["record_digest"] = digest(item)
+        selected_parameters = liquidity_grid.get("selected_parameters")
+        selected_index = next(
+            (
+                index for index, variant in enumerate(variants)
+                if variant["params"] == selected_parameters
+            ),
+            None,
+        )
+        selection_metric = "validation_directional_effect"
+    elif is_funding_basis:
         validation = [
             funding_basis_matched_evaluation(
                 lightweight, params=variant["params"],
@@ -1136,7 +1190,7 @@ def execute_registered(
             key=lambda item: (validation[item].get("matched_support", 0), -item),
         )
     )
-    if is_funding_basis and selected_index is not None:
+    if (is_funding_basis or is_liquidity_residual) and selected_index is not None:
         heldout_root = runs
         heldout_job = dict(
             contract=contract,
@@ -1180,7 +1234,7 @@ def execute_registered(
     is_impact_proxy = (
         contract.schema.metadata.hypothesis_family == "impact_proxy_reversal"
     )
-    per_variant_evaluations = validation if is_funding_basis else []
+    per_variant_evaluations = validation if (is_funding_basis or is_liquidity_residual) else []
     heldout_evaluation = (
         funding_basis_matched_evaluation(
             lightweight,
@@ -1188,6 +1242,8 @@ def execute_registered(
             params=variants[selected_index]["params"],
         )
         if is_funding_basis and selected_index is not None
+        else liquidity_grid
+        if is_liquidity_residual and selected_index is not None
         else None
     )
     if heldout_evaluation is not None:
@@ -1205,14 +1261,14 @@ def execute_registered(
         )
         heldout_evaluation["record_digest"] = digest(heldout_evaluation)
     unsupported_validation = None
-    if is_funding_basis and selected_index is None:
+    if (is_funding_basis or is_liquidity_residual) and selected_index is None:
         unsupported_outcome = (
             "invalid"
             if all(item["outcome"] == "invalid" for item in validation)
             else "failed"
         )
         unsupported_validation = {
-            "schema_version": "funding-basis-heldout-not-evaluated-v1.0.0",
+            "schema_version": "scientific-heldout-not-evaluated-v1.0.0",
             "question": contract_document["immutable_contract"]["question"],
             "parameters": variants[execution_index]["params"],
             "outcome": unsupported_outcome,
@@ -1238,6 +1294,14 @@ def execute_registered(
             },
             "passed": False,
         }
+        if is_liquidity_residual:
+            unsupported_validation.update({
+                "validation_directional_effect": 0.0,
+                "test_directional_effect": 0.0,
+                "doubled_cost_directional_effect": 0.0,
+                "extreme_support": 0,
+                "maximum_drawdown": 0.0,
+            })
         unsupported_validation["record_digest"] = digest(unsupported_validation)
     evaluation_artifact = (
         impact_proxy_evaluation(
@@ -1247,7 +1311,7 @@ def execute_registered(
         )
         if is_impact_proxy
         else heldout_evaluation or unsupported_validation
-        if is_funding_basis
+        if (is_funding_basis or is_liquidity_residual)
         else weekend_regime_comparison(lightweight)
     )
     if "record_digest" not in evaluation_artifact:
@@ -1255,8 +1319,10 @@ def execute_registered(
     evaluation_artifact_name = (
         "impact_proxy_evaluation.json"
         if is_impact_proxy
-        else "funding_basis_heldout_not_evaluated.json"
-        if is_funding_basis and selected_index is None
+        else "scientific_heldout_not_evaluated.json"
+        if (is_funding_basis or is_liquidity_residual) and selected_index is None
+        else "eth_liquidity_residual_evaluation.json"
+        if is_liquidity_residual
         else "funding_basis_matched_evaluation.json"
         if is_funding_basis
         else "weekend_regime_comparison.json"
@@ -1277,8 +1343,8 @@ def execute_registered(
         (candidate_run / "selection_bias_audit.json").write_bytes(
             canonical(selection_audit) + b"\n"
         )
-        if is_funding_basis:
-            (candidate_run / "funding_basis_validation_evaluation.json").write_bytes(
+        if is_funding_basis or is_liquidity_residual:
+            (candidate_run / "scientific_validation_evaluation.json").write_bytes(
                 canonical(per_variant_evaluations[index]) + b"\n"
             )
             if index == selected_index or (
@@ -1303,8 +1369,8 @@ def execute_registered(
             search_plan_digest=search.digest,
             evaluation_artifact=(
                 evaluation_artifact_name
-                if not is_funding_basis or index == selected_index
-                else "funding_basis_validation_evaluation.json"
+                if not (is_funding_basis or is_liquidity_residual) or index == selected_index
+                else "scientific_validation_evaluation.json"
             ),
             variant_index=index,
             selected_for_holdout=selected_index is not None and index == selected_index,
@@ -1358,7 +1424,7 @@ def execute_registered(
     retained_bundle = retained[execution_index]
     holdout = (
         None
-        if is_funding_basis and selected_index is None
+        if (is_funding_basis or is_liquidity_residual) and selected_index is None
         else held_out_trade_evaluation(run_dir, rep.split.test_start)
     )
     logging_report = logging_reports[execution_index]
@@ -1409,6 +1475,15 @@ def execute_registered(
             if selected_index is not None
             else validation[execution_index]["maximum_drawdown"]
         )
+    elif is_liquidity_residual:
+        metrics.update({
+            key: evaluation_artifact[key]
+            for key in (
+                "validation_directional_effect", "test_directional_effect",
+                "confidence_interval_95", "doubled_cost_directional_effect",
+                "extreme_support", "matched_support", "maximum_drawdown",
+            )
+        })
     else:
         metrics["selection_bias_audit"] = selection_audit
     required_metrics = tuple(
@@ -1423,7 +1498,7 @@ def execute_registered(
     ended_at = datetime.now(UTC)
     independent_review_complete = governed_review_verified(assignment, qualification)
     passed_edge = bool(
-        (is_funding_basis or (
+        ((is_funding_basis or is_liquidity_residual) or (
             holdout is not None
             and
             holdout["adequate_support"]
@@ -1444,9 +1519,9 @@ def execute_registered(
                 ]
             )
         )
-        and (not is_funding_basis or evaluation_artifact["passed"])
+        and (not (is_funding_basis or is_liquidity_residual) or evaluation_artifact["passed"])
     )
-    classic_pnl_gates = () if is_funding_basis else (
+    classic_pnl_gates = () if (is_funding_basis or is_liquidity_residual) else (
         ("oos_trade_support", holdout["adequate_support"]),
         ("positive_oos_net_edge", holdout["positive_net_edge"]),
         ("double_cost_oos_edge", holdout["cost_stress_passed"]),
@@ -1471,25 +1546,30 @@ def execute_registered(
             "balanced_positive_reversal"
         ]:
             failed_gates.append("positive_reversal_in_both_directions")
-    scientific_outcome = evaluation_artifact["outcome"] if is_funding_basis else None
-    if is_funding_basis:
+    scientific_outcome = evaluation_artifact["outcome"] if (is_funding_basis or is_liquidity_residual) else None
+    if is_funding_basis or is_liquidity_residual:
         if scientific_outcome == "invalid":
             failed_gates.append("point_in_time_scientific_sample_invalid")
         elif scientific_outcome == "failed":
             failed_gates.append("matched_control_support_inadequate")
-        elif not evaluation_artifact["passed"]:
+        elif is_funding_basis and not evaluation_artifact["passed"]:
             if evaluation_artifact["confidence_interval_95"]["upper"] >= 0:
                 failed_gates.append("matched_funding_basis_95pct_upper_bound")
             if evaluation_artifact["doubled_cost_treated_minus_control"] >= 0:
                 failed_gates.append("matched_funding_basis_double_cost_stress")
-    scientific_valid = not is_funding_basis or scientific_outcome != "invalid"
-    scientific_supported = not is_funding_basis or scientific_outcome in {"positive", "negative"}
+        elif is_liquidity_residual and not evaluation_artifact["passed"]:
+            if evaluation_artifact["confidence_interval_95"][0] <= 0:
+                failed_gates.append("eth_btc_residual_95pct_lower_bound")
+            if evaluation_artifact["doubled_cost_directional_effect"] <= 0:
+                failed_gates.append("eth_btc_residual_double_cost_stress")
+    scientific_valid = not (is_funding_basis or is_liquidity_residual) or scientific_outcome != "invalid"
+    scientific_supported = not (is_funding_basis or is_liquidity_residual) or scientific_outcome in {"positive", "negative"}
     evaluation_evidence_digests = (
         [
             *[item["record_digest"] for item in per_variant_evaluations],
             evaluation_artifact["record_digest"],
         ]
-        if is_funding_basis
+        if (is_funding_basis or is_liquidity_residual)
         else [evaluation_artifact["record_digest"]]
     )
     gate_report = {
@@ -1516,13 +1596,13 @@ def execute_registered(
         "trial_count": len(variants),
         "outcome": (
             "failed" if not independent_review_complete
-            else scientific_outcome if is_funding_basis
+            else scientific_outcome if (is_funding_basis or is_liquidity_residual)
             else "candidate" if passed_edge else "negative"
         ),
         "failure_stage": (
             "independent_evaluation" if not independent_review_complete
             else "truth_gate"
-            if is_funding_basis and scientific_outcome == "failed"
+            if (is_funding_basis or is_liquidity_residual) and scientific_outcome == "failed"
             else None
         ),
         "gate_report": gate_report,

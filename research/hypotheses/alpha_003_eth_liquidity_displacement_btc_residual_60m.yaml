@@ -1,0 +1,140 @@
+id: &id ALPHA-003-ETH-LIQUIDITY-DISPLACEMENT-BTC-RESIDUAL-60M
+name: &title ETH liquidity-adjusted displacement and subsequent BTC residual return
+description: &question Does an extreme point-in-time ETHUSDT 15m liquidity-adjusted displacement predict a nonzero BTCUSDT residual close-to-close log return over the next 60m, after controlling for the contemporaneously completed BTCUSDT 15m return and prior-only BTCUSDT realized volatility?
+hypothesis_id: *id
+title: *title
+research_layer: ALPHA
+hypothesis_family: cross_asset_liquidity_transmission
+status: draft
+version: "1.0.0"
+immutable_contract:
+  question: *question
+  question_digest: f504661fcff41ac7ebe0b37a45139baef2718e0307fc7cfbbdfcc87fe2bcbe44
+  dataset_bindings:
+    - {instrument: BTCUSDT, dataset_build_id: 25d9958c-71b6-4c2b-949a-3c0433f70f38, dataset_digest: 9a211d8818c5ab8ec82ad5a7d38957e63eb387ea83d4b00541922a0eeca4aacb, producer_receipt_digest: 003d16bef6d53273ab3a190a10a194dfb4a9705a1af7ef5dc3e0d4f92ad89075}
+    - {instrument: ETHUSDT, dataset_build_id: e1abea55-f597-415b-af85-95e6a12b5a3d, dataset_digest: 17c0dc35d32f3e838f43ba116eb8917f01f08594f14ea2a6c104c3905e4a4473, producer_receipt_digest: df5627c591eb40e62debc215845684767828bcc38c1398f565a225de1608caab}
+  admission_id: c08c17a5-e05a-46f5-b6e4-421af2d0b250
+  admission_record_digest: 23c3cb7bce8aad8e406b1779d8d7f9d163c116702615857464a191af34d266c0
+  window: {start: "2025-05-01T00:00:00Z", end: "2026-05-01T00:00:00Z"}
+  tier: Tier2B
+  venue: bybit
+  instruments: [BTCUSDT, ETHUSDT]
+  source_timeframe: 1m
+  research_timeframe: 15m
+  minimum_history_observations_1m: 525600
+  minimum_history_complete_15m_bars: 35040
+  resampling_policy: left_closed_left_labeled_complete_bars
+  required_fields: [ts, close, quote_volume]
+representation_plan: &plan
+  schema_version: adaptive-representation-plan-v1.0.0
+  candidate_key: btc-eth-liquidity-transmission-60m
+  instruments: [BTCUSDT, ETHUSDT]
+  basket_members:
+    - instrument: BTCUSDT
+      legacy_groups: [stable]
+      role: primary
+      selection_rationale: Primary target instrument; Bybit BTCUSDT is content-admitted and supplies the future 60m return, contemporaneous-return control, prior-only volatility control, and its own liquidity gate.
+    - instrument: ETHUSDT
+      legacy_groups: [stable]
+      role: predictor
+      selection_rationale: Smallest causally sufficient cross-asset predictor; Bybit ETHUSDT is catalog-visible with more than 365 days of reported 1m history but requires independent content-bound admission before execution.
+  source_timeframe: 1m
+  research_timeframe: 15m
+  resampling_policy: left_closed_left_labeled_complete_bars
+  transformations:
+    - {fit_policy: stateless, input_fields: [ETHUSDT__close], operation: log_return, output_field: eth_15m_log_return, parameters: {periods: 1}, rationale: "Scale-safe completed-bar ETH innovation; its sign defines continuation-versus-reversal orientation."}
+    - {fit_policy: stateless, input_fields: [BTCUSDT__close], operation: log_return, output_field: btc_15m_log_return, parameters: {periods: 1}, rationale: Decision-time BTC return control and causal input for the volatility control.}
+    - {fit_policy: stateless, input_fields: [ETHUSDT__quote_volume], operation: identity, output_field: eth_15m_quote_volume, parameters: {}, rationale: "Preserves the completed 15m quote-volume sum used both as the ETH liquidity denominator and to enforce the USD 1,000,000 floor."}
+    - {fit_policy: stateless, input_fields: [BTCUSDT__quote_volume], operation: identity, output_field: btc_15m_quote_volume, parameters: {}, rationale: "Preserves the completed 15m BTC quote-volume sum required to enforce the separate USD 1,000,000 liquidity floor."}
+    - {fit_policy: stateless, input_fields: [eth_15m_log_return, eth_15m_quote_volume], operation: ratio, output_field: eth_15m_signed_liquidity_displacement, parameters: {}, rationale: "Causal signed return per unit of contemporaneously completed ETH quote volume; the governed evaluator applies the frozen absolute-value tail test while retaining this sign for orientation."}
+    - {fit_policy: stateless, input_fields: [btc_15m_log_return], operation: realized_volatility, output_field: btc_15m_realized_volatility_96, parameters: {window: 96}, rationale: "Local BTC volatility control over one day of completed 15m returns; evaluator usage is prior-only and excludes the current signal bar."}
+  transformation_rationale: "Challenge accepted only in frozen form: the founder idea's outcome-responsive dynamic selection premise is rejected. BTCUSDT and ETHUSDT are preregistered before outcomes, with 15m bars chosen from the 60m horizon and the hypothesized delayed transmission process. Log returns provide scale-safe innovations. Quote-volume identities preserve the actual USD liquidity measurements needed to require all 15 constituent values to be present and nonnegative and each 15m sum to be at least USD 1,000,000. The signed ETH return-to-quote-volume ratio preserves both displacement magnitude input and orientation. Because the native operation set has no absolute-value or time-series percentile operation, the graph does not silently replace the frozen predictor with a z-score; absolute value and the prior-only 97.5% or 99% percentile are left to the governed evaluator. BTC realized volatility uses 96 completed 15m bars and must be lagged one completed bar by the evaluator so the signal bar is excluded. No targets or outcome metrics were consulted. ETHUSDT remains unadmitted and cannot execute until independently content-admitted."
+  rejected_alternatives:
+    - "Outcome-responsive or dynamically changing baskets: rejected because universe selection must be frozen before target evaluation."
+    - "SOLUSDT as an additional predictor or control: rejected as unnecessary for the smallest causally sufficient basket and as adding admission and multiple-testing burden."
+    - "Binance BTCUSDT and ETHUSDT panels: rejected to avoid cross-venue clock and microstructure differences; the frozen basket uses Bybit only."
+    - "Raw close levels and raw cross-asset price ratios: rejected because differing price scales and persistent levels do not represent the specified short-horizon innovations."
+    - "Simple returns: retained as a robustness alternative but rejected as the primary representation because log returns aggregate consistently across the four-bar 60m horizon."
+    - "Fractional differentiation: rejected because the question concerns short-horizon return innovations rather than persistent price-level memory; no value of d is justified without diagnostics."
+    - "Cross-sectional ranks: rejected because a two-instrument rank would discard displacement magnitude and alter the frozen predictor."
+    - "Rolling z-score as a substitute for the frozen prior-only percentile: rejected because it would change the predictor. The native graph exposes the causal signed ratio; the governed evaluator must apply the preregistered absolute value and prior-only 97.5% or 99% percentile without outcome-based tuning."
+    - "5m bars: rejected as unnecessarily noisy for the specified liquidity-transmission process and would change the frozen candidate timeframe."
+    - "1h bars: rejected because they collapse the predictor and target horizon to the same interval and reduce timing resolution."
+    - "Forward filling, interpolation, partial bars, and cross-gap calculations: rejected; any missing constituent, incomplete bar, or noncontiguous target path produces no observation."
+  selection_data_boundary: metadata_predictors_only_no_targets
+  outcome_data_consulted: false
+parameter_grid:
+  eth_displacement_tail_percentile: [0.975, 0.99]
+  response_direction: [continuation, reversal]
+grid_contract: {maximum_parameters: 2, maximum_variants: 4, frozen_before_outcomes: true, stopping_rule: exhaustive}
+entry:
+  strategy: eth_liquidity_displacement_btc_residual_60m
+  signal_timeframe: 15m
+  timeframe: 15m
+  base_execution_timeframe: 1m
+  order_timing: completed_15m_close_submit_next_bar_execution
+  direction: conditional
+  no_pyramiding: true
+  disallow_flip: true
+exit: {target: BTCUSDT close-to-close log return from t to t+60m, time_exit_minutes: 60, stop_kind: fixed_3pct_from_decision_close, stop_update_policy: frozen_at_entry}
+sizing: {mode: risk_at_stop, r_per_trade: 0.005, cap_policy: allow_clip_with_truth, min_risk_utilization_pct: 0.10, report_under_risked_trades: true}
+risk: {authority: engine, max_positions: 1, max_notional_pct_equity: 0.25, max_gross_notional_pct_equity: 0.25, max_leverage: 1.0, unresolved_stop_policy: reject_entry, pyramiding: false, flips: false}
+costs: {authority: engine, taker_fee_bps: 6.0, slippage_bps: 2.0, spread_bps: 1.0, delay_bars: 1, robustness_multiplier: 2.0}
+data_availability: {dataset_kind: research_panel, auxiliary_fields_role: required_signal_input, ohlcv_only_fallback: no_decision, missing_auxiliary: no_decision, liquidity_floor_usd_per_instrument: 1000000.0}
+execution_semantics:
+  resampling_interval: left_closed_right_open
+  resampling_label: bucket_start
+  signal_timeframe: 15m
+  base_execution_timeframe: 1m
+  base_data_frequency_expected: 1m
+  exit_monitoring_timeframe: 1m
+  signal_bar_policy: strict_completed_bar_only
+  stop_model: fixed_3pct_from_decision_close
+  stop_update_policy: frozen_at_entry
+  tp_update_policy: none
+  hold_time_unit: wall_clock_minutes_after_signal_close
+  atr_source_timeframe: 15m
+  adaptive_representation_plan_digest: a36257fac2a22196ba3770bef321c1972cbdf40167a5176cd53f53153cfee096
+  adaptive_representation_fields: [eth_15m_log_return, btc_15m_log_return, eth_15m_quote_volume, btc_15m_quote_volume, eth_15m_signed_liquidity_displacement, btc_15m_realized_volatility_96]
+  required_extra_columns: [eth_15m_log_return, btc_15m_log_return, eth_15m_quote_volume, btc_15m_quote_volume, eth_15m_signed_liquidity_displacement, btc_15m_realized_volatility_96, representation_plan_digest, representation_output_fields, representation_decision_ts, prior_only_volatility_source_end_ts]
+evaluation:
+  required_tiers: [Tier2B]
+  metrics: [validation_directional_effect, test_directional_effect, confidence_interval_95, doubled_cost_directional_effect, extreme_support, matched_support, maximum_drawdown]
+  split: {method: chronological_decision_row_fraction, train_fraction: 0.60, validation_fraction: 0.20, test_fraction: 0.20, purge_seconds: 3600, embargo_seconds: 3600}
+  residualization: {fit_split: train_only, target: future_btc_60m_log_return, controls: [contemporaneously_completed_btc_15m_log_return, prior_only_btc_realized_volatility_96], intercept: true}
+  matching: {method: deterministic_nearest_neighbor, replacement: false, controls: [contemporaneously_completed_btc_15m_log_return, prior_only_btc_realized_volatility_96]}
+  selection_metric: validation_directional_effect
+  selection_rule: choose_only_the_variant_with_highest_positive_validation_directional_effect_then_evaluate_once_on_test
+  confidence_interval_method: paired_normal_approximation
+  minimum_extreme_support: 50
+  minimum_matched_support: 30
+  outcome_retention: [positive, negative, invalid, failed]
+  native_implementation: {evaluator: {path: src/bt/strategy/eth_liquidity_displacement_btc_residual_60m.py, function: liquidity_displacement_grid_evaluation}, strategy: {path: src/bt/strategy/eth_liquidity_displacement_btc_residual_60m.py, class: EthLiquidityDisplacementBtcResidual60mStrategy}}
+falsification_criteria:
+  - Reject if either instrument lacks at least 365 days of independently content-admitted point-in-time 1m data.
+  - Reject any decision unless all 15 constituent 1m quote_volume observations for both instruments are present, nonnegative, sum to at least USD 1,000,000 per instrument, and form complete contiguous 15m bars.
+  - Reject if the held-out extreme-minus-matched-control mean signed BTCUSDT residual return has a preregistered 95% confidence interval containing zero.
+  - Reject if held-out support is below 50 extreme observations or below 30 one-to-one no-reuse matched controls.
+  - Reject if neither preregistered direction has positive held-out mean signed residual return after registered costs and doubled-cost stress.
+  - Reject if the effect disappears after controlling with decision-time BTCUSDT 15m return and prior-only BTCUSDT realized volatility, or is confined to one outcome-selected universe or threshold.
+expected_failure_modes: [common market shock, volatility clustering, asynchronous prices, erroneous quote volume, informed-flow continuation, temporary inventory reversal]
+logging:
+  schema_version: "1.0"
+  required_fields: [decision_trace, stop_price, eth_15m_signed_liquidity_displacement, btc_15m_log_return, prior_only_btc_realized_volatility_96, prior_only_volatility_source_end_ts, representation_plan_digest, representation_output_fields, representation_decision_ts, target_exit_ts, target_horizon_minutes, requested_risk_amount, risk_utilization_pct, under_risked_trade]
+truth_contract:
+  version: "1.0"
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  parity_required_for_fast_path: true
+  fast_path_generation: forbidden
+  research_memory_requires_certification: true
+authority: {capital: false, orders: false, production_promotion: false, self_approval: false}
