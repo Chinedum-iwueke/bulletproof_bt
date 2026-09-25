@@ -25,6 +25,7 @@ from bt.evaluation.alpha_research import (
     complete_timeframe_bars,
     held_out_trade_evaluation,
     impact_proxy_evaluation,
+    required_observation_logging_evaluation,
     required_trade_logging_evaluation,
     trade_decision_timestamps,
 )
@@ -949,6 +950,13 @@ def execute_registered(
             output / "adaptive-representation.parquet", index=False
         )
         adaptive_receipt = materialized.receipt
+        expected_plan_digest = contract.schema.execution_semantics.get(
+            "adaptive_representation_plan_digest"
+        )
+        if expected_plan_digest != adaptive_receipt.get("plan_digest"):
+            raise BridgeError(
+                "materialized representation digest differs from reviewed strategy contract"
+            )
         (output / "adaptive-representation-receipt.json").write_bytes(
             canonical(adaptive_receipt) + b"\n"
         )
@@ -1203,6 +1211,11 @@ def execute_registered(
                 lightweight, params=variant["params"],
                 start=rep.split.validation_start, end=rep.split.validation_end,
                 enforce_overlap=True,
+                representation_plan_digest=(
+                    adaptive_receipt.get("plan_digest")
+                    if adaptive_receipt is not None
+                    else None
+                ),
             )
             for variant in variants
         ]
@@ -1292,6 +1305,11 @@ def execute_registered(
             start=rep.split.test_start,
             end=rep.split.test_end,
             enforce_overlap=True,
+            representation_plan_digest=(
+                adaptive_receipt.get("plan_digest")
+                if adaptive_receipt is not None
+                else None
+            ),
         )
         if is_cross_sectional
         else impact_proxy_evaluation(
@@ -1318,8 +1336,13 @@ def execute_registered(
         else "weekend_regime_comparison.json"
     )
     logging_reports = (
-        [{"passed": True, "authority": "native_atomic_observation_evaluator"}
-         for _ in run_dirs]
+        [
+            required_observation_logging_evaluation(
+                evaluation_artifact,
+                card["logging_requirements"],
+            )
+            for _ in run_dirs
+        ]
         if is_cross_sectional
         else [
             required_trade_logging_evaluation(path, card["logging_requirements"])

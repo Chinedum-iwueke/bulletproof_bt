@@ -102,6 +102,48 @@ def required_trade_logging_evaluation(
     return report
 
 
+def required_observation_logging_evaluation(
+    evaluation: dict[str, Any],
+    required_fields: list[str] | tuple[str, ...],
+) -> dict[str, Any]:
+    """Validate scientific observation records that intentionally emit no trades."""
+    declared = list(required_fields)
+    if any(not isinstance(field, str) or not field for field in declared):
+        raise BridgeError("required observation logging fields must be non-empty strings")
+    if len(declared) != len(set(declared)):
+        raise BridgeError("required observation logging fields must be unique")
+    records = evaluation.get("observation_records", [])
+    if not isinstance(records, list) or any(not isinstance(item, dict) for item in records):
+        raise BridgeError("observation_records must be a list of objects")
+    missing: dict[str, list[str]] = {}
+    nulls: dict[str, list[str]] = {}
+    invalid: dict[str, list[str]] = {}
+    for index, record in enumerate(records):
+        key = str(index)
+        absent = sorted(set(declared) - set(record))
+        if absent:
+            missing[key] = absent
+        empty = sorted(field for field in declared if field in record and record[field] is None)
+        if empty:
+            nulls[key] = empty
+        trace = record.get("decision_trace")
+        if "decision_trace" in declared and (
+            not isinstance(trace, dict) or not trace
+        ):
+            invalid[key] = ["decision_trace"]
+    report = {
+        "schema_version": "alpha-required-observation-logging-v1.0.0",
+        "observation_count": len(records),
+        "declared_fields": declared,
+        "missing_fields": missing,
+        "null_fields": nulls,
+        "invalid_fields": invalid,
+        "passed": not missing and not nulls and not invalid,
+    }
+    report["record_digest"] = digest(report)
+    return report
+
+
 def held_out_trade_evaluation(run_dir: Path, test_start: str) -> dict[str, Any]:
     """Score only held-out trades and apply a second copy of observed costs."""
     trades_path = run_dir / "trades.csv"

@@ -11,7 +11,7 @@
   "representation_mode": "registered_engine_contract",
   "engine_strategy_name": "bybit_cross_sectional_liquidity_dispersion_reversal",
   "engine_hypothesis_template": "research/hypotheses/alpha_003_bybit_cross_sectional_liquidity_dispersion_reversal.yaml",
-  "engine_hypothesis_template_digest": "5d7d636bd438babda006d31918b622fdaaf840929d1975781a4b00ae8c17bac5",
+  "engine_hypothesis_template_digest": "49f61cab94d3af8e6474e1e59308f7d98a9d15ffd196b50b0a32e8e7223cd736",
   "features": [],
   "gates": [],
   "entry": {"type": "atomic_research_observation", "timing": "completed_5m_boundary"},
@@ -27,7 +27,7 @@
   "data_requirements": ["research_panel"],
   "logging_requirements": ["decision_trace", "decision_ts", "outcome", "reason", "representation_plan_digest", "representation_output_fields", "representation_decision_ts", "dispersion", "liquidity_stress", "winner", "loser", "prior_30m_basket_volatility", "target_exit_ts", "signed_reversal_after_costs"],
   "evaluation": {"tiers": ["Tier2B"], "outcome_retention": ["positive", "negative", "invalid", "failed"], "heldout_bounds": "start_and_end"},
-  "falsification_criteria": ["Reject without 365 contiguous overlapping days", "Reject unless held-out reversal and matched-control CI are positive after costs", "Reject insufficient or directionally unbalanced support", "Reject failure under doubled costs"],
+  "falsification_criteria": ["Reject without 365 contiguous overlapping days", "Reject unless every threshold is fit from prior observations only", "Reject unless controls are below the prior-only median stress and within 25% dispersion and volatility calipers", "Reject unless held-out reversal and matched-control CI are positive after costs", "Reject insufficient or directionally unbalanced support", "Reject failure under doubled costs"],
   "expected_failure_modes": ["Informed continuation", "Bid-ask bounce", "Common volatility shock", "Insufficient overlap or support"],
   "execution_semantics": {
     "strict_utc": true,
@@ -41,6 +41,8 @@
     "signal_timeframe": "5m",
     "base_execution_timeframe": "1m",
     "adaptive_representation_plan_digest": "assignment_bound_exact_plan",
+    "threshold_fit_policy": "rolling_prior_only_up_to_288_completed_opportunities_minimum_20",
+    "liquidity_normal_control_policy": "stress_at_or_below_prior_median_with_25pct_dispersion_and_volatility_calipers",
     "adaptive_representation_fields": ["btcusdt_log_return_5m", "ethusdt_log_return_5m", "solusdt_log_return_5m", "btcusdt_quote_volume_5m", "ethusdt_quote_volume_5m", "solusdt_quote_volume_5m", "btcusdt_volume_5m", "ethusdt_volume_5m", "solusdt_volume_5m"],
     "required_extra_columns": ["btcusdt_log_return_5m", "ethusdt_log_return_5m", "solusdt_log_return_5m", "btcusdt_quote_volume_5m", "ethusdt_quote_volume_5m", "solusdt_quote_volume_5m", "btcusdt_volume_5m", "ethusdt_volume_5m", "solusdt_volume_5m", "representation_plan_digest", "representation_output_fields", "representation_decision_ts", "open_interest", "oi_source_ts"]
   },

@@ -55,6 +55,8 @@ execution_semantics:
   required_extra_columns: [btcusdt_log_return_5m, ethusdt_log_return_5m, solusdt_log_return_5m, btcusdt_quote_volume_5m, ethusdt_quote_volume_5m, solusdt_quote_volume_5m, btcusdt_volume_5m, ethusdt_volume_5m, solusdt_volume_5m, representation_plan_digest, representation_output_fields, representation_decision_ts, open_interest, oi_source_ts]
   adaptive_representation_fields: [btcusdt_log_return_5m, ethusdt_log_return_5m, solusdt_log_return_5m, btcusdt_quote_volume_5m, ethusdt_quote_volume_5m, solusdt_quote_volume_5m, btcusdt_volume_5m, ethusdt_volume_5m, solusdt_volume_5m]
   signal_bar_policy: "complete_left_closed_left_labeled_only"
+  threshold_fit_policy: "rolling_prior_only_up_to_288_completed_opportunities_minimum_20"
+  liquidity_normal_control_policy: "stress_at_or_below_prior_median_with_25pct_dispersion_and_volatility_calipers"
 evaluation:
   required_tiers: ["Tier2B"]
   outcome_retention: [positive, negative, invalid, failed]
@@ -63,6 +65,8 @@ evaluation:
   metrics: [heldout_mean_signed_reversal_after_costs, matched_control_confidence_interval_95, directional_support, doubled_cost_mean_signed_reversal, treated_support]
 falsification_criteria:
   - "Reject if fewer than 365 overlapping days of content-admitted, timestamp-contiguous 1m data exist for all three instruments."
+  - "Reject if dispersion or stress thresholds use the evaluated observation or any later observation."
+  - "Reject controls above the prior-only median stress or outside 25% calipers on dispersion or prior volatility."
   - "Reject every decision unless each basket member has a complete 5m bar with nonnull volume and quote_volume of at least USD 1,000,000."
   - "Reject if held-out mean signed reversal is nonpositive after registered costs."
   - "Reject unless the 95% confidence interval for stressed minus dispersion-and-volatility-matched normal liquidity controls is strictly positive."

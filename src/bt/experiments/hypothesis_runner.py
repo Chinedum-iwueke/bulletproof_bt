@@ -192,6 +192,13 @@ def build_runtime_override(
         "timeframe": signal_timeframe,
         "disallow_flip": bool(entry.get("disallow_flip", True)),
     }
+    representation_digest = (
+        sem.get("adaptive_representation_plan_digest")
+        if isinstance(sem, dict)
+        else None
+    )
+    if isinstance(representation_digest, str) and len(representation_digest) == 64:
+        strategy_payload["adaptive_representation_plan_digest"] = representation_digest
     if strategy_name == "l7_h1_csi_gated_displacement_trend":
         strategy_payload["use_compiled_features"] = False
         strategy_payload["use_compiled_event_kernel"] = False

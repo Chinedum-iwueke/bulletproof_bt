@@ -4,6 +4,7 @@ This is deliberately a research strategy: it never emits independently risked
 legs.  The atomic winner/loser observation is evaluated from the panel and is
 not represented as two classic-engine orders.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -21,9 +22,15 @@ from bt.strategy.base import Strategy
 
 INSTRUMENTS = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
 OUTPUT_FIELDS = (
-    "btcusdt_log_return_5m", "ethusdt_log_return_5m", "solusdt_log_return_5m",
-    "btcusdt_quote_volume_5m", "ethusdt_quote_volume_5m", "solusdt_quote_volume_5m",
-    "btcusdt_volume_5m", "ethusdt_volume_5m", "solusdt_volume_5m",
+    "btcusdt_log_return_5m",
+    "ethusdt_log_return_5m",
+    "solusdt_log_return_5m",
+    "btcusdt_quote_volume_5m",
+    "ethusdt_quote_volume_5m",
+    "solusdt_quote_volume_5m",
+    "btcusdt_volume_5m",
+    "ethusdt_volume_5m",
+    "solusdt_volume_5m",
 )
 QUESTION = (
     "In the preregistered Bybit BTCUSDT, ETHUSDT, and SOLUSDT basket, does the "
@@ -65,9 +72,14 @@ def _mean_ci(values: list[float]) -> dict[str, float]:
 def _invalid(reason: str, params: Mapping[str, Any]) -> dict[str, Any]:
     result = {
         "schema_version": "cross-sectional-reversal-evaluation-v1.0.0",
-        "question": QUESTION, "parameters": dict(params), "outcome": "invalid",
-        "reason": reason, "passed": False, "decision_records": [],
-        "treated_support": 0, "matched_support": 0,
+        "question": QUESTION,
+        "parameters": dict(params),
+        "outcome": "invalid",
+        "reason": reason,
+        "passed": False,
+        "decision_records": [],
+        "treated_support": 0,
+        "matched_support": 0,
     }
     result["record_digest"] = _canonical_hash(result)
     return result
@@ -76,14 +88,16 @@ def _invalid(reason: str, params: Mapping[str, Any]) -> dict[str, Any]:
 def _failed(reason: str, params: Mapping[str, Any]) -> dict[str, Any]:
     result = _invalid(reason, params)
     result["outcome"] = "failed"
-    result["record_digest"] = _canonical_hash({
-        key: value for key, value in result.items() if key != "record_digest"
-    })
+    result["record_digest"] = _canonical_hash(
+        {key: value for key, value in result.items() if key != "record_digest"}
+    )
     return result
 
 
 def verify_contiguous_overlap(
-    frame: pd.DataFrame, *, minimum_days: int = 365,
+    frame: pd.DataFrame,
+    *,
+    minimum_days: int = 365,
 ) -> tuple[bool, str]:
     """Require exact, common, gap-free 1m timestamps for the frozen basket."""
     required = {"ts", "symbol", "close", "volume", "quote_volume"}
@@ -126,16 +140,26 @@ def _complete_5m(frame: pd.DataFrame) -> pd.DataFrame:
             continue
         if part[["close", "volume", "quote_volume"]].isna().any().any():
             continue
-        rows.append({"ts": bucket + pd.Timedelta(minutes=5), "symbol": symbol,
-                     "close": float(part.iloc[-1]["close"]),
-                     "volume": float(part["volume"].sum()),
-                     "quote_volume": float(part["quote_volume"].sum())})
+        rows.append(
+            {
+                "ts": bucket + pd.Timedelta(minutes=5),
+                "symbol": symbol,
+                "close": float(part.iloc[-1]["close"]),
+                "volume": float(part["volume"].sum()),
+                "quote_volume": float(part["quote_volume"].sum()),
+            }
+        )
     return pd.DataFrame(rows)
 
 
 def cross_sectional_reversal_evaluation(
-    frame: pd.DataFrame, *, params: Mapping[str, Any], start: str | None = None,
-    end: str | None = None, enforce_overlap: bool = True,
+    frame: pd.DataFrame,
+    *,
+    params: Mapping[str, Any],
+    start: str | None = None,
+    end: str | None = None,
+    enforce_overlap: bool = True,
+    representation_plan_digest: str | None = None,
 ) -> dict[str, Any]:
     """Evaluate only targets wholly inside ``[start, end]`` and retain failures."""
     if enforce_overlap:
@@ -145,11 +169,20 @@ def cross_sectional_reversal_evaluation(
     bars = _complete_5m(frame)
     if bars.empty:
         return _invalid("no_complete_5m_basket_bars", params)
-    panel = bars.pivot(index="ts", columns="symbol", values=["close", "volume", "quote_volume"])
-    if any((field, symbol) not in panel for field in ("close", "volume", "quote_volume") for symbol in INSTRUMENTS):
+    panel = bars.pivot(
+        index="ts", columns="symbol", values=["close", "volume", "quote_volume"]
+    )
+    if any(
+        (field, symbol) not in panel
+        for field in ("close", "volume", "quote_volume")
+        for symbol in INSTRUMENTS
+    ):
         return _invalid("complete_basket_schema_missing", params)
     numeric = panel[["close", "volume", "quote_volume"]].to_numpy(dtype=float)
-    if not all(math.isfinite(value) for value in numeric.ravel()) or (panel["close"] <= 0).any().any():
+    if (
+        not all(math.isfinite(value) for value in numeric.ravel())
+        or (panel["close"] <= 0).any().any()
+    ):
         return _failed("nonfinite_or_nonpositive_market_value", params)
     window = int(params["quote_volume_rank_window"])
     direction = str(params["direction_specification"])
@@ -160,73 +193,256 @@ def cross_sectional_reversal_evaluation(
     index = list(panel.index)
     for position in range(1, len(index) - 6):
         ts = index[position]
-        if start is not None and ts < pd.Timestamp(start):
-            continue
         target_ts = ts + pd.Timedelta(minutes=30)
         if end is not None and target_ts > pd.Timestamp(end):
             continue
         needed = [ts + pd.Timedelta(minutes=5 * step) for step in range(1, 7)]
         if any(item not in panel.index for item in needed):
-            decisions.append({"decision_ts": ts.isoformat(), "outcome": "invalid", "reason": "noncontiguous_future_30m"})
+            decisions.append(
+                {
+                    "decision_ts": ts.isoformat(),
+                    "outcome": "invalid",
+                    "reason": "noncontiguous_future_30m",
+                }
+            )
             continue
-        prior_ts = index[position - window:position]
+        prior_ts = index[position - window : position]
         if len(prior_ts) != window or any(
             prior_ts[i] - prior_ts[i - 1] != pd.Timedelta(minutes=5)
             for i in range(1, len(prior_ts))
         ):
             continue
         if ts - prior_ts[-1] != pd.Timedelta(minutes=5):
-            decisions.append({"decision_ts": ts.isoformat(), "outcome": "invalid", "reason": "noncontiguous_current_5m_bar"})
+            decisions.append(
+                {
+                    "decision_ts": ts.isoformat(),
+                    "outcome": "invalid",
+                    "reason": "noncontiguous_current_5m_bar",
+                }
+            )
             continue
-        returns = {symbol: math.log(panel.loc[ts, ("close", symbol)] / panel.loc[index[position - 1], ("close", symbol)]) for symbol in INSTRUMENTS}
-        if any(panel.loc[ts, ("quote_volume", symbol)] < 1_000_000 or panel.loc[ts, ("volume", symbol)] < 0 for symbol in INSTRUMENTS):
-            decisions.append({"decision_ts": ts.isoformat(), "outcome": "invalid", "reason": "liquidity_floor_or_volume_failed"})
+        returns = {
+            symbol: math.log(
+                panel.loc[ts, ("close", symbol)]
+                / panel.loc[index[position - 1], ("close", symbol)]
+            )
+            for symbol in INSTRUMENTS
+        }
+        if any(
+            panel.loc[ts, ("quote_volume", symbol)] < 1_000_000
+            or panel.loc[ts, ("volume", symbol)] < 0
+            for symbol in INSTRUMENTS
+        ):
+            decisions.append(
+                {
+                    "decision_ts": ts.isoformat(),
+                    "outcome": "invalid",
+                    "reason": "liquidity_floor_or_volume_failed",
+                }
+            )
             continue
         ranks = []
         for symbol in INSTRUMENTS:
-            history = [float(panel.loc[item, ("quote_volume", symbol)]) for item in prior_ts]
+            history = [
+                float(panel.loc[item, ("quote_volume", symbol)]) for item in prior_ts
+            ]
             ranks.append(_rank(history, float(panel.loc[ts, ("quote_volume", symbol)])))
         dispersion = max(returns.values()) - min(returns.values())
         stress = 1.0 - sum(ranks) / len(ranks)
         winner, loser = max(returns, key=returns.get), min(returns, key=returns.get)
-        prior_vol = sum(abs(math.log(panel.loc[index[position - step], ("close", symbol)] / panel.loc[index[position - step - 1], ("close", symbol)])) for step in range(6) for symbol in INSTRUMENTS) / 18
-        opportunities.append({"ts": ts, "dispersion": dispersion, "stress": stress, "winner": winner, "loser": loser, "winner_direction": "positive" if returns[winner] > 0 else "nonpositive", "prior_vol": prior_vol, "target_ts": target_ts})
+        prior_vol = (
+            sum(
+                abs(
+                    math.log(
+                        panel.loc[index[position - step], ("close", symbol)]
+                        / panel.loc[index[position - step - 1], ("close", symbol)]
+                    )
+                )
+                for step in range(6)
+                for symbol in INSTRUMENTS
+            )
+            / 18
+        )
+        opportunities.append(
+            {
+                "ts": ts,
+                "dispersion": dispersion,
+                "stress": stress,
+                "winner": winner,
+                "loser": loser,
+                "winner_direction": "positive"
+                if returns[winner] > 0
+                else "nonpositive",
+                "prior_vol": prior_vol,
+                "target_ts": target_ts,
+            }
+        )
     if not opportunities:
         return _invalid("no_causal_decision_opportunities", params)
-    dispersion_cut = _quantile([x["dispersion"] for x in opportunities], float(params["dispersion_percentile"]))
-    stress_cut = _quantile([x["stress"] for x in opportunities], float(params["liquidity_stress_percentile"]))
     costs = 0.0018  # two legs: 6 fee + 2 slippage + 1 spread bps each
     treated: list[dict[str, Any]] = []
     controls: list[dict[str, Any]] = []
-    for item in opportunities:
-        win = math.log(panel.loc[item["target_ts"], ("close", item["winner"])] / panel.loc[item["ts"], ("close", item["winner"])])
-        lose = math.log(panel.loc[item["target_ts"], ("close", item["loser"])] / panel.loc[item["ts"], ("close", item["loser"])])
+    threshold_history_minimum = min(20, window)
+    for position, item in enumerate(opportunities):
+        if start is not None and item["ts"] < pd.Timestamp(start):
+            continue
+        prior = opportunities[max(0, position - window) : position]
+        if len(prior) < threshold_history_minimum:
+            continue
+        dispersion_cut = _quantile(
+            [x["dispersion"] for x in prior],
+            float(params["dispersion_percentile"]),
+        )
+        stress_cut = _quantile(
+            [x["stress"] for x in prior],
+            float(params["liquidity_stress_percentile"]),
+        )
+        normal_stress_max = _quantile([x["stress"] for x in prior], 0.5)
+        win = math.log(
+            panel.loc[item["target_ts"], ("close", item["winner"])]
+            / panel.loc[item["ts"], ("close", item["winner"])]
+        )
+        lose = math.log(
+            panel.loc[item["target_ts"], ("close", item["loser"])]
+            / panel.loc[item["ts"], ("close", item["loser"])]
+        )
         gross = win - lose if direction == "symmetric_reversal" else win
         reversal = -gross - (costs if direction == "symmetric_reversal" else costs / 2)
-        record = {**item, "outcome": "negative" if gross < 0 else "positive", "gross_target_return": gross, "signed_reversal_after_costs": reversal}
-        (treated if item["dispersion"] >= dispersion_cut and item["stress"] >= stress_cut else controls).append(record)
-    # One-to-one prior/next-nearest controls, matched on dispersion and prior volatility.
-    used: set[int] = set(); pairs: list[dict[str, Any]] = []
+        is_treated = (
+            item["dispersion"] >= dispersion_cut and item["stress"] >= stress_cut
+        )
+        is_normal_control = item["stress"] <= normal_stress_max
+        record = {
+            **item,
+            "decision_trace": {
+                "dispersion_cut": dispersion_cut,
+                "stress_cut": stress_cut,
+                "normal_stress_max": normal_stress_max,
+                "threshold_fit_policy": "rolling_prior_only",
+            },
+            "decision_ts": item["ts"].isoformat(),
+            "outcome": "negative" if gross < 0 else "positive",
+            "reason": (
+                "treated_liquidity_stress" if is_treated else "liquidity_normal_control"
+            ),
+            "representation_plan_digest": representation_plan_digest or "",
+            "representation_output_fields": json.dumps(
+                list(OUTPUT_FIELDS), separators=(",", ":")
+            ),
+            "representation_decision_ts": item["ts"].isoformat(),
+            "liquidity_stress": item["stress"],
+            "prior_30m_basket_volatility": item["prior_vol"],
+            "target_exit_ts": item["target_ts"].isoformat(),
+            "gross_target_return": gross,
+            "signed_reversal_after_costs": reversal,
+        }
+        if is_treated:
+            treated.append(record)
+        elif is_normal_control:
+            controls.append(record)
+    # One-to-one controls must be liquidity-normal and close on both matching axes.
+    used: set[int] = set()
+    pairs: list[dict[str, Any]] = []
     for event in treated:
-        choices = [(abs(c["dispersion"] - event["dispersion"]) + abs(c["prior_vol"] - event["prior_vol"]), i, c) for i, c in enumerate(controls) if i not in used]
+        dispersion_bound = max(abs(event["dispersion"]) * 0.25, 1e-12)
+        volatility_bound = max(abs(event["prior_vol"]) * 0.25, 1e-12)
+        choices = [
+            (
+                abs(c["dispersion"] - event["dispersion"]) / dispersion_bound
+                + abs(c["prior_vol"] - event["prior_vol"]) / volatility_bound,
+                i,
+                c,
+            )
+            for i, c in enumerate(controls)
+            if i not in used
+            and abs(c["dispersion"] - event["dispersion"]) <= dispersion_bound
+            and abs(c["prior_vol"] - event["prior_vol"]) <= volatility_bound
+        ]
         if not choices:
             continue
-        _, i, control = min(choices, key=lambda value: (value[0], value[1])); used.add(i)
-        pairs.append({"treated_ts": event["ts"].isoformat(), "control_ts": control["ts"].isoformat(), "difference": event["signed_reversal_after_costs"] - control["signed_reversal_after_costs"]})
+        _, i, control = min(choices, key=lambda value: (value[0], value[1]))
+        used.add(i)
+        pairs.append(
+            {
+                "treated_ts": event["ts"].isoformat(),
+                "control_ts": control["ts"].isoformat(),
+                "difference": event["signed_reversal_after_costs"]
+                - control["signed_reversal_after_costs"],
+            }
+        )
     effects = [item["difference"] for item in pairs]
-    directions = {name: sum(1 for item in treated if item["winner_direction"] == name) for name in ("positive", "nonpositive")}
-    mean_reversal = sum(x["signed_reversal_after_costs"] for x in treated) / len(treated) if treated else 0.0
-    double_cost = mean_reversal - (costs if direction == "symmetric_reversal" else costs / 2)
+    directions = {
+        name: sum(1 for item in treated if item["winner_direction"] == name)
+        for name in ("positive", "nonpositive")
+    }
+    mean_reversal = (
+        sum(x["signed_reversal_after_costs"] for x in treated) / len(treated)
+        if treated
+        else 0.0
+    )
+    double_cost = mean_reversal - (
+        costs if direction == "symmetric_reversal" else costs / 2
+    )
     ci = _mean_ci(effects)
     direction_means = {
-        name: (sum(item["signed_reversal_after_costs"] for item in treated if item["winner_direction"] == name) / count if count else 0.0)
+        name: (
+            sum(
+                item["signed_reversal_after_costs"]
+                for item in treated
+                if item["winner_direction"] == name
+            )
+            / count
+            if count
+            else 0.0
+        )
         for name, count in directions.items()
     }
-    symmetric_support = all(value >= 10 for value in directions.values()) and all(value > 0 for value in direction_means.values())
-    passed = len(treated) >= 50 and len(pairs) >= 30 and mean_reversal > 0 and double_cost > 0 and ci["lower"] > 0 and (direction == "winner_only" or symmetric_support)
+    symmetric_support = all(value >= 10 for value in directions.values()) and all(
+        value > 0 for value in direction_means.values()
+    )
+    passed = (
+        len(treated) >= 50
+        and len(pairs) >= 30
+        and mean_reversal > 0
+        and double_cost > 0
+        and ci["lower"] > 0
+        and (direction == "winner_only" or symmetric_support)
+    )
     outcome = "positive" if passed else "negative"
-    serializable = [{**x, "ts": x["ts"].isoformat(), "target_ts": x["target_ts"].isoformat()} for x in treated]
-    result = {"schema_version": "cross-sectional-reversal-evaluation-v1.0.0", "question": QUESTION, "parameters": dict(params), "outcome": outcome, "reason": "all_falsification_gates_passed" if passed else "one_or_more_falsification_gates_failed", "passed": passed, "decision_records": [*decisions, *serializable], "treated_support": len(treated), "matched_support": len(pairs), "pairs": pairs, "mean_signed_reversal_after_costs": mean_reversal, "doubled_cost_mean_signed_reversal": double_cost, "matched_control_confidence_interval_95": ci, "directional_support": directions, "directional_mean_signed_reversal": direction_means, "target_contract": "six_contiguous_complete_5m_bars", "partition_start": start, "partition_end": end}
+    serializable = [
+        {
+            **x,
+            "ts": x["ts"].isoformat(),
+            "target_ts": x["target_ts"].isoformat(),
+        }
+        for x in [*treated, *controls]
+    ]
+    result = {
+        "schema_version": "cross-sectional-reversal-evaluation-v1.0.0",
+        "question": QUESTION,
+        "parameters": dict(params),
+        "outcome": outcome,
+        "reason": "all_falsification_gates_passed"
+        if passed
+        else "one_or_more_falsification_gates_failed",
+        "passed": passed,
+        "decision_records": [*decisions, *serializable],
+        "observation_records": serializable,
+        "threshold_fit_policy": "rolling_prior_only",
+        "control_policy": "prior_median_liquidity_stress_with_25pct_axis_calipers",
+        "treated_support": len(treated),
+        "control_support": len(controls),
+        "matched_support": len(pairs),
+        "pairs": pairs,
+        "mean_signed_reversal_after_costs": mean_reversal,
+        "doubled_cost_mean_signed_reversal": double_cost,
+        "matched_control_confidence_interval_95": ci,
+        "directional_support": directions,
+        "directional_mean_signed_reversal": direction_means,
+        "target_contract": "six_contiguous_complete_5m_bars",
+        "partition_start": start,
+        "partition_end": end,
+    }
     result["record_digest"] = _canonical_hash(result)
     return result
 
@@ -241,29 +457,62 @@ class DecisionRecord:
 @register_strategy("bybit_cross_sectional_liquidity_dispersion_reversal")
 class BybitCrossSectionalLiquidityDispersionReversalStrategy(Strategy):
     """Validate synchronized adaptive payloads; evaluator owns atomic outcomes."""
-    def __init__(self, *, dispersion_percentile: float = .95, liquidity_stress_percentile: float = .8, direction_specification: str = "symmetric_reversal", quote_volume_rank_window: int = 288, adaptive_representation_plan_digest: str = "") -> None:
+
+    def __init__(
+        self,
+        *,
+        dispersion_percentile: float = 0.95,
+        liquidity_stress_percentile: float = 0.8,
+        direction_specification: str = "symmetric_reversal",
+        quote_volume_rank_window: int = 288,
+        adaptive_representation_plan_digest: str = "",
+    ) -> None:
         self.records: list[DecisionRecord] = []
         self.plan_digest = adaptive_representation_plan_digest
 
-    def on_bars(self, ts: pd.Timestamp, bars_by_symbol: dict[str, Bar], tradeable: set[str], ctx: Mapping[str, Any]) -> list[Signal]:
+    def on_bars(
+        self,
+        ts: pd.Timestamp,
+        bars_by_symbol: dict[str, Bar],
+        tradeable: set[str],
+        ctx: Mapping[str, Any],
+    ) -> list[Signal]:
         reason = None
-        if set(bars_by_symbol) != set(INSTRUMENTS): reason = "missing_basket_member"
+        if set(bars_by_symbol) != set(INSTRUMENTS):
+            reason = "missing_basket_member"
         else:
             expected_fields = json.dumps(list(OUTPUT_FIELDS), separators=(",", ":"))
-            received_digest = bars_by_symbol[INSTRUMENTS[0]].extra.get(
-                "representation_plan_digest"
-            )
-            expected_digest = self.plan_digest or received_digest
+            expected_digest = self.plan_digest
             if not isinstance(expected_digest, str) or len(expected_digest) != 64:
                 reason = "representation_plan_digest_missing_or_invalid"
-            for symbol in INSTRUMENTS:
+            for symbol in () if reason else INSTRUMENTS:
                 extra = bars_by_symbol[symbol].extra
-                try: decision_ts = pd.Timestamp(extra["representation_decision_ts"])
-                except Exception: reason = "representation_provenance_missing"; break
-                if decision_ts.tz is None or decision_ts != ts: reason = "representation_decision_timestamp_mismatch"; break
-                if extra.get("representation_plan_digest") != expected_digest: reason = "representation_plan_digest_mismatch"; break
-                if extra.get("representation_output_fields") != expected_fields: reason = "representation_output_fields_mismatch"; break
-                if any(field not in extra or pd.isna(extra[field]) for field in OUTPUT_FIELDS): reason = "representation_value_missing"; break
-        self.records.append(DecisionRecord(pd.Timestamp(ts).isoformat(), "invalid" if reason else "consumed", reason or "causal_adaptive_payload_consumed"))
+                try:
+                    decision_ts = pd.Timestamp(extra["representation_decision_ts"])
+                except Exception:
+                    reason = "representation_provenance_missing"
+                    break
+                if decision_ts.tz is None or decision_ts != ts:
+                    reason = "representation_decision_timestamp_mismatch"
+                    break
+                if extra.get("representation_plan_digest") != expected_digest:
+                    reason = "representation_plan_digest_mismatch"
+                    break
+                if extra.get("representation_output_fields") != expected_fields:
+                    reason = "representation_output_fields_mismatch"
+                    break
+                if any(
+                    field not in extra or pd.isna(extra[field])
+                    for field in OUTPUT_FIELDS
+                ):
+                    reason = "representation_value_missing"
+                    break
+        self.records.append(
+            DecisionRecord(
+                pd.Timestamp(ts).isoformat(),
+                "invalid" if reason else "consumed",
+                reason or "causal_adaptive_payload_consumed",
+            )
+        )
         # Independent classic-engine legs would not be atomic, so no orders are emitted.
         return []
