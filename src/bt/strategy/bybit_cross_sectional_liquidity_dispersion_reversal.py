@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import math
+import random
 from typing import Any, Mapping
 
 import pandas as pd
@@ -58,18 +59,68 @@ def _rank(prior: list[float], value: float) -> float:
     return sum(item <= value for item in prior) / len(prior)
 
 
-def _mean_ci(values: list[float]) -> dict[str, float]:
+def _block_bootstrap_mean_ci(
+    values: list[float], *, block_length: int = 6, resamples: int = 2_000
+) -> dict[str, float]:
+    """Deterministic circular block bootstrap for overlapping 30m targets."""
     if not values:
         return {"lower": 0.0, "upper": 0.0}
     mean = sum(values) / len(values)
     if len(values) == 1:
         return {"lower": mean, "upper": mean}
-    variance = sum((item - mean) ** 2 for item in values) / (len(values) - 1)
-    width = 1.96 * math.sqrt(variance / len(values))
-    return {"lower": mean - width, "upper": mean + width}
+    width = min(block_length, len(values))
+    blocks_needed = math.ceil(len(values) / width)
+    randomizer = random.Random(20260925)
+    means = []
+    for _ in range(resamples):
+        sample: list[float] = []
+        for _ in range(blocks_needed):
+            start = randomizer.randrange(len(values))
+            sample.extend(
+                values[(start + offset) % len(values)] for offset in range(width)
+            )
+        sample = sample[: len(values)]
+        means.append(sum(sample) / len(sample))
+    means.sort()
+    lower = means[int((len(means) - 1) * 0.025)]
+    upper = means[int((len(means) - 1) * 0.975)]
+    return {"lower": lower, "upper": upper}
 
 
-def _invalid(reason: str, params: Mapping[str, Any]) -> dict[str, Any]:
+def _terminal_evidence(
+    *,
+    outcome: str,
+    reason: str,
+    timestamp: str | None,
+    representation_plan_digest: str | None,
+) -> dict[str, Any]:
+    """Retain an explicit non-observation when no scientific row can be scored."""
+    decision_ts = timestamp or "1970-01-01T00:00:00+00:00"
+    return {
+        "record_kind": "terminal_no_observation",
+        "outcome": outcome,
+        "reason": reason,
+        "decision_ts": decision_ts,
+        "decision_trace": {
+            "terminal_outcome": True,
+            "scientific_observation": False,
+            "reason": reason,
+        },
+        "representation_plan_digest": representation_plan_digest or "",
+        "representation_output_fields": json.dumps(
+            list(OUTPUT_FIELDS), separators=(",", ":")
+        ),
+        "representation_decision_ts": decision_ts,
+    }
+
+
+def _invalid(
+    reason: str,
+    params: Mapping[str, Any],
+    *,
+    timestamp: str | None = None,
+    representation_plan_digest: str | None = None,
+) -> dict[str, Any]:
     result = {
         "schema_version": "cross-sectional-reversal-evaluation-v1.0.0",
         "question": QUESTION,
@@ -79,21 +130,44 @@ def _invalid(reason: str, params: Mapping[str, Any]) -> dict[str, Any]:
         "passed": False,
         "decision_records": [],
         "observation_records": [],
+        "terminal_evidence_records": [
+            _terminal_evidence(
+                outcome="invalid",
+                reason=reason,
+                timestamp=timestamp,
+                representation_plan_digest=representation_plan_digest,
+            )
+        ],
         "treated_support": 0,
         "control_support": 0,
         "matched_support": 0,
         "mean_signed_reversal_after_costs": 0.0,
         "doubled_cost_mean_signed_reversal": 0.0,
-        "matched_control_confidence_interval_95": {"lower": 0.0, "upper": 0.0},
+        "matched_control_block_bootstrap_confidence_interval_95": {
+            "lower": 0.0,
+            "upper": 0.0,
+        },
         "directional_support": {"positive": 0, "nonpositive": 0},
     }
     result["record_digest"] = _canonical_hash(result)
     return result
 
 
-def _failed(reason: str, params: Mapping[str, Any]) -> dict[str, Any]:
-    result = _invalid(reason, params)
+def _failed(
+    reason: str,
+    params: Mapping[str, Any],
+    *,
+    timestamp: str | None = None,
+    representation_plan_digest: str | None = None,
+) -> dict[str, Any]:
+    result = _invalid(
+        reason,
+        params,
+        timestamp=timestamp,
+        representation_plan_digest=representation_plan_digest,
+    )
     result["outcome"] = "failed"
+    result["terminal_evidence_records"][0]["outcome"] = "failed"
     result["record_digest"] = _canonical_hash(
         {key: value for key, value in result.items() if key != "record_digest"}
     )
@@ -171,10 +245,20 @@ def cross_sectional_reversal_evaluation(
     if enforce_overlap:
         valid, reason = verify_contiguous_overlap(frame)
         if not valid:
-            return _invalid(reason, params)
+            return _invalid(
+                reason,
+                params,
+                timestamp=start,
+                representation_plan_digest=representation_plan_digest,
+            )
     bars = _complete_5m(frame)
     if bars.empty:
-        return _invalid("no_complete_5m_basket_bars", params)
+        return _invalid(
+            "no_complete_5m_basket_bars",
+            params,
+            timestamp=start,
+            representation_plan_digest=representation_plan_digest,
+        )
     panel = bars.pivot(
         index="ts", columns="symbol", values=["close", "volume", "quote_volume"]
     )
@@ -183,17 +267,32 @@ def cross_sectional_reversal_evaluation(
         for field in ("close", "volume", "quote_volume")
         for symbol in INSTRUMENTS
     ):
-        return _invalid("complete_basket_schema_missing", params)
+        return _invalid(
+            "complete_basket_schema_missing",
+            params,
+            timestamp=start,
+            representation_plan_digest=representation_plan_digest,
+        )
     numeric = panel[["close", "volume", "quote_volume"]].to_numpy(dtype=float)
     if (
         not all(math.isfinite(value) for value in numeric.ravel())
         or (panel["close"] <= 0).any().any()
     ):
-        return _failed("nonfinite_or_nonpositive_market_value", params)
+        return _failed(
+            "nonfinite_or_nonpositive_market_value",
+            params,
+            timestamp=start,
+            representation_plan_digest=representation_plan_digest,
+        )
     window = int(params["quote_volume_rank_window"])
     direction = str(params["direction_specification"])
     if direction not in {"symmetric_reversal", "winner_only"}:
-        return _invalid("unknown_direction_specification", params)
+        return _invalid(
+            "unknown_direction_specification",
+            params,
+            timestamp=start,
+            representation_plan_digest=representation_plan_digest,
+        )
     decisions: list[dict[str, Any]] = []
     opportunities: list[dict[str, Any]] = []
     index = list(panel.index)
@@ -284,7 +383,12 @@ def cross_sectional_reversal_evaluation(
             }
         )
     if not opportunities:
-        return _invalid("no_causal_decision_opportunities", params)
+        return _invalid(
+            "no_causal_decision_opportunities",
+            params,
+            timestamp=start,
+            representation_plan_digest=representation_plan_digest,
+        )
     costs = 0.0018  # two legs: 6 fee + 2 slippage + 1 spread bps each
     treated: list[dict[str, Any]] = []
     controls: list[dict[str, Any]] = []
@@ -389,7 +493,7 @@ def cross_sectional_reversal_evaluation(
     double_cost = mean_reversal - (
         costs if direction == "symmetric_reversal" else costs / 2
     )
-    ci = _mean_ci(effects)
+    ci = _block_bootstrap_mean_ci(effects)
     direction_means = {
         name: (
             sum(
@@ -423,6 +527,18 @@ def cross_sectional_reversal_evaluation(
         }
         for x in [*treated, *controls]
     ]
+    terminal_evidence = (
+        []
+        if serializable
+        else [
+            _terminal_evidence(
+                outcome=outcome,
+                reason="no_treated_or_control_observations_survived_heldout_rules",
+                timestamp=start,
+                representation_plan_digest=representation_plan_digest,
+            )
+        ]
+    )
     result = {
         "schema_version": "cross-sectional-reversal-evaluation-v1.0.0",
         "question": QUESTION,
@@ -434,6 +550,7 @@ def cross_sectional_reversal_evaluation(
         "passed": passed,
         "decision_records": [*decisions, *serializable],
         "observation_records": serializable,
+        "terminal_evidence_records": terminal_evidence,
         "threshold_fit_policy": "rolling_prior_only",
         "control_policy": "prior_median_liquidity_stress_with_25pct_axis_calipers",
         "treated_support": len(treated),
@@ -442,7 +559,14 @@ def cross_sectional_reversal_evaluation(
         "pairs": pairs,
         "mean_signed_reversal_after_costs": mean_reversal,
         "doubled_cost_mean_signed_reversal": double_cost,
-        "matched_control_confidence_interval_95": ci,
+        "matched_control_block_bootstrap_confidence_interval_95": ci,
+        "confidence_interval_method": {
+            "name": "deterministic_circular_block_bootstrap",
+            "block_length_observations": 6,
+            "resamples": 2000,
+            "seed": 20260925,
+            "overlapping_target_minutes": 30,
+        },
         "directional_support": directions,
         "directional_mean_signed_reversal": direction_means,
         "target_contract": "six_contiguous_complete_5m_bars",
@@ -475,6 +599,7 @@ class BybitCrossSectionalLiquidityDispersionReversalStrategy(Strategy):
     ) -> None:
         self.records: list[DecisionRecord] = []
         self.plan_digest = adaptive_representation_plan_digest
+        self.payloads_seen = 0
 
     def on_bars(
         self,
@@ -483,6 +608,14 @@ class BybitCrossSectionalLiquidityDispersionReversalStrategy(Strategy):
         tradeable: set[str],
         ctx: Mapping[str, Any],
     ) -> list[Signal]:
+        provenance_present = any(
+            isinstance(bar.extra, Mapping)
+            and bar.extra.get("representation_decision_ts") not in (None, "")
+            and not pd.isna(bar.extra.get("representation_decision_ts"))
+            for bar in bars_by_symbol.values()
+        )
+        if not provenance_present:
+            return []
         reason = None
         if set(bars_by_symbol) != set(INSTRUMENTS):
             reason = "missing_basket_member"
@@ -511,14 +644,43 @@ class BybitCrossSectionalLiquidityDispersionReversalStrategy(Strategy):
                     field not in extra or pd.isna(extra[field])
                     for field in OUTPUT_FIELDS
                 ):
-                    reason = "representation_value_missing"
+                    reason = (
+                        "representation_feature_warmup"
+                        if self.payloads_seen == 0
+                        else "representation_value_missing"
+                    )
                     break
+        outcome = (
+            "warmup"
+            if reason == "representation_feature_warmup"
+            else "invalid"
+            if reason
+            else "consumed"
+        )
+        self.payloads_seen += 1
         self.records.append(
             DecisionRecord(
                 pd.Timestamp(ts).isoformat(),
-                "invalid" if reason else "consumed",
+                outcome,
                 reason or "causal_adaptive_payload_consumed",
             )
         )
-        # Independent classic-engine legs would not be atomic, so no orders are emitted.
-        return []
+        # This is retained native-path evidence, never an order instruction.
+        return [
+            Signal(
+                ts=ts,
+                symbol="BTCUSDT",
+                side=None,
+                signal_type="cross_sectional_representation_validation",
+                confidence=0.0,
+                metadata={
+                    "state_log_only": True,
+                    "native_payload_outcome": outcome,
+                    "native_payload_reason": reason
+                    or "causal_adaptive_payload_consumed",
+                    "representation_plan_digest": self.plan_digest,
+                    "representation_output_fields": list(OUTPUT_FIELDS),
+                    "representation_decision_ts": pd.Timestamp(ts).isoformat(),
+                },
+            )
+        ]

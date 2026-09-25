@@ -10,7 +10,9 @@ import yaml
 
 from bt.core.types import Bar
 from bt.evaluation.alpha_research import required_observation_logging_evaluation
+from bt.governance.research_bridge import BridgeError
 from bt.hypotheses.contract import HypothesisContract
+from bt.contracts.research_specs_v2 import canonical_hash
 from bt.experiments.hypothesis_runner import build_runtime_override
 from bt.governance.alpha_strategy_pipeline import (
     confirm_card,
@@ -21,6 +23,7 @@ from bt.strategy.bybit_cross_sectional_liquidity_dispersion_reversal import (
     INSTRUMENTS,
     OUTPUT_FIELDS,
     BybitCrossSectionalLiquidityDispersionReversalStrategy,
+    _block_bootstrap_mean_ci,
     cross_sectional_reversal_evaluation,
     verify_contiguous_overlap,
 )
@@ -129,6 +132,99 @@ def _representation_plan() -> dict:
         "selection_data_boundary": "metadata_predictors_only_no_targets",
         "outcome_data_consulted": False,
     }
+
+
+def _bind_governed_review(assignment: dict, qualification: dict) -> dict:
+    producer = {
+        "agent_id": "10000000-0000-4000-8000-000000000001",
+        "package_digest": "e" * 64,
+        "context_group": "producer",
+        "profile_digest": "f" * 64,
+        "machine": "vm1",
+        "provider": "deterministic",
+        "model_family": "none",
+        "runtime": "python",
+    }
+    subject = {
+        "campaign_digest": assignment["campaign_digest"],
+        "question_digest": assignment["question_digest"],
+        "source_commit": assignment["base_ref"],
+        "card_digest": canonical_hash(qualification["card"]),
+        "artifact_bundle_digest": canonical_hash(qualification["artifact_bundle"]),
+        "qualification_task_id": "reviewed-task",
+        "producer_agent_ids": [producer["agent_id"]],
+        "producer_identities": [producer],
+        "qualifier_identity": producer,
+    }
+    assertion = {
+        "schema_version": "evaluation-independence-assertion-v1.0.0",
+        "route_digest": "d" * 64,
+        "subject_digest": canonical_hash(subject),
+        "assignments": [],
+        "producer": producer,
+        "policy": {
+            "required_review_kinds": ["strategy_spec", "causality_leakage"],
+            "max_pairwise_shared_dimensions": 4,
+        },
+    }
+    for index, kind in enumerate(assertion["policy"]["required_review_kinds"]):
+        review = {
+            "subject_digest": canonical_hash(subject),
+            "verdict": "approve",
+            "blockers": [],
+            "checks": ["causality"],
+            "rationale": "Independent specification checks completed.",
+        }
+        assertion["assignments"].append(
+            {
+                "assignment_digest": str(index + 2) * 64,
+                "review_kind": kind,
+                "review_digest": canonical_hash(review),
+                "alpha_strategy_review": review,
+                "correlation_report": {},
+                "evaluator_identity": {
+                    "agent_id": f"{index + 2}0000000-0000-4000-8000-000000000001",
+                    "package_digest": str(index + 3) * 64,
+                    "context_group": f"review-{index}",
+                    "profile_digest": str(index + 5) * 64,
+                    "machine": "vm1",
+                    "provider": "openai",
+                    "model_family": "codex",
+                    "runtime": "codex-cli",
+                },
+            }
+        )
+    qualification["governed_review"] = {
+        "subject": subject,
+        "assertion": assertion,
+        "receipt_digest": canonical_hash(assertion),
+        "route_id": "40000000-0000-4000-8000-000000000001",
+        "verdict": "independence_demonstrated",
+    }
+    qualification["qualified"] = True
+    qualification["review"]["gates"]["independent_review_complete"] = True
+    qualification["review"]["independent_of_drafter"] = True
+    return qualification
+
+
+def _overlap_receipt(assignment: dict, *, admitted_end: str) -> dict:
+    document = {
+        "schema_version": "alpha-basket-overlap-admission-v1.0.0",
+        "authority": "DATA-002/003",
+        "dataset_bindings": [
+            {
+                "instrument": item["instrument"],
+                "dataset_build_id": item["dataset_build_id"],
+                "dataset_digest": item["dataset_digest"],
+            }
+            for item in assignment["dataset_bindings"]
+        ],
+        "instruments": sorted(assignment["instruments"]),
+        "minimum_contiguous_days": 365,
+        "admitted_start": "2025-05-01T00:00:00Z",
+        "admitted_end": admitted_end,
+    }
+    return {**document, "record_digest": assignment_runner.digest(document)}
 
 
 def test_contract_is_exact_bounded_deterministic_and_admitted() -> None:
@@ -253,6 +349,62 @@ def test_thresholds_are_prior_only_and_observation_logging_is_complete() -> None
     assert report["observation_count"] == len(short_records)
 
 
+def test_empty_scientific_logging_fails_and_block_interval_is_deterministic() -> None:
+    required = yaml.safe_load(YAML_PATH.read_text())["logging"]["required_fields"]
+    empty = required_observation_logging_evaluation(
+        {"observation_records": []}, required
+    )
+    assert empty["passed"] is False
+    effects = [0.02, 0.01, -0.01, 0.03, 0.02, -0.005] * 8
+    first = _block_bootstrap_mean_ci(effects)
+    assert first == _block_bootstrap_mean_ci(effects)
+    assert first["lower"] <= sum(effects) / len(effects) <= first["upper"]
+
+
+def test_terminal_no_observation_is_retained_without_claiming_scientific_support() -> None:
+    required = yaml.safe_load(YAML_PATH.read_text())["logging"]["required_fields"]
+    result = cross_sectional_reversal_evaluation(
+        _frame(2),
+        params=_params(),
+        start="2025-01-01T00:00:00Z",
+        enforce_overlap=False,
+        representation_plan_digest="a" * 64,
+    )
+    report = required_observation_logging_evaluation(result, required)
+    assert result["outcome"] == "invalid"
+    assert report["passed"] is True
+    assert report["evidence_mode"] == "terminal_no_observation"
+    assert report["observation_count"] == 0
+    assert report["terminal_evidence_count"] == 1
+    assert report["scientific_observation_logging_complete"] is False
+    assert report["terminal_retention_complete"] is True
+
+
+def test_overlap_admission_receipt_fails_closed_on_mutation() -> None:
+    raw = yaml.safe_load(YAML_PATH.read_text())
+    assignment = {
+        "dataset_bindings": raw["immutable_contract"]["dataset_bindings"],
+        "instruments": list(INSTRUMENTS),
+    }
+    receipt = _overlap_receipt(assignment, admitted_end="2026-05-01T00:00:00Z")
+    assignment_runner.validate_overlap_admission_receipt(
+        receipt,
+        bindings=assignment["dataset_bindings"],
+        instruments=sorted(INSTRUMENTS),
+        window_start="2025-05-01T00:00:00Z",
+        window_end="2025-05-01T10:00:00Z",
+    )
+    corrupted = {**receipt, "minimum_contiguous_days": 1}
+    with pytest.raises(BridgeError, match="invalid or out of scope"):
+        assignment_runner.validate_overlap_admission_receipt(
+            corrupted,
+            bindings=assignment["dataset_bindings"],
+            instruments=sorted(INSTRUMENTS),
+            window_start="2025-05-01T00:00:00Z",
+            window_end="2025-05-01T10:00:00Z",
+        )
+
+
 def _bar(ts: pd.Timestamp, symbol: str, digest: str, decision_ts: pd.Timestamp) -> Bar:
     extra = {field: 1.0 for field in OUTPUT_FIELDS}
     extra.update(
@@ -276,14 +428,17 @@ def test_strategy_validates_every_members_ordered_fields_digest_and_causal_times
         adaptive_representation_plan_digest=digest
     )
     bars = {symbol: _bar(ts, symbol, digest, ts) for symbol in INSTRUMENTS}
-    assert strategy.on_bars(ts, bars, set(INSTRUMENTS), {}) == []
+    signals = strategy.on_bars(ts, bars, set(INSTRUMENTS), {})
+    assert len(signals) == 1
+    assert signals[0].metadata["native_payload_outcome"] == "consumed"
     assert strategy.records[-1].outcome == "consumed"
     bars["SOLUSDT"] = _bar(ts, "SOLUSDT", digest, ts + pd.Timedelta(minutes=5))
-    assert strategy.on_bars(ts, bars, set(INSTRUMENTS), {}) == []
+    signals = strategy.on_bars(ts, bars, set(INSTRUMENTS), {})
+    assert signals[0].metadata["native_payload_outcome"] == "invalid"
     assert strategy.records[-1].outcome == "invalid"
     assert strategy.records[-1].reason == "representation_decision_timestamp_mismatch"
     unbound = BybitCrossSectionalLiquidityDispersionReversalStrategy()
-    assert unbound.on_bars(ts, bars, set(INSTRUMENTS), {}) == []
+    assert len(unbound.on_bars(ts, bars, set(INSTRUMENTS), {})) == 1
     assert unbound.records[-1].reason == "representation_plan_digest_missing_or_invalid"
 
 
@@ -354,23 +509,20 @@ def test_execute_registered_materializes_multi_asset_evidence(
         confirmed_at="2026-09-25T00:00:00Z",
     )
     qualification = qualify_card(card, repository_root=str(ROOT))
-    qualification["qualified"] = True
-    qualification["review"]["gates"]["independent_review_complete"] = True
-    qualification["review"]["independent_of_drafter"] = True
-    assignment["qualification"] = qualification
-    monkeypatch.setattr(assignment_runner, "governed_review_verified", lambda *_: True)
-    monkeypatch.setattr(
-        assignment_runner, "verify_contiguous_overlap", lambda *_: (True, "test")
-    )
-    monkeypatch.setattr(
-        "bt.strategy.bybit_cross_sectional_liquidity_dispersion_reversal.verify_contiguous_overlap",
-        lambda *_: (True, "test"),
+    assignment["qualification"] = _bind_governed_review(assignment, qualification)
+    assignment["execution_class"] = "commissioning"
+    assignment["window_end"] = "2025-05-01T10:00:00Z"
+    assignment["overlap_admission_receipt"] = _overlap_receipt(
+        assignment, admitted_end="2026-05-01T00:00:00Z"
     )
     result = assignment_runner.execute_registered(
         assignment, ROOT, tmp_path / "output", max_workers=1
     )
-    assert result["disposition"] == "native_execution_complete"
-    assert result["alpha_campaign_attempt"]["outcome"] in {
+    assert result["disposition"] == "commissioning_complete"
+    assert result["commissioning_receipt"]["qualification_authority"] is False
+    assert result["publication_envelope"]["trial"]["hypothesis_evaluation"][
+        "outcome"
+    ] in {
         "positive",
         "negative",
         "invalid",
@@ -389,3 +541,23 @@ def test_execute_registered_materializes_multi_asset_evidence(
     )
     assert len(logging) == 8
     assert all(json.loads(path.read_text())["passed"] for path in logging)
+
+    original_attach = assignment_runner.attach_adaptive_features
+
+    def corrupt_attached_payload(*args, **kwargs):
+        path = original_attach(*args, **kwargs)
+        payload = pd.read_parquet(path)
+        field = OUTPUT_FIELDS[0]
+        target = payload[field].first_valid_index()
+        assert target is not None
+        payload.loc[target, field] = float(payload.loc[target, field]) + 0.01
+        payload.to_parquet(path, index=False)
+        return path
+
+    monkeypatch.setattr(
+        assignment_runner, "attach_adaptive_features", corrupt_attached_payload
+    )
+    with pytest.raises(BridgeError, match="value differs from materialization"):
+        assignment_runner.execute_registered(
+            assignment, ROOT, tmp_path / "corrupt-output", max_workers=1
+        )

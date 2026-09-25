@@ -62,7 +62,8 @@ evaluation:
   outcome_retention: [positive, negative, invalid, failed]
   split: {method: chronological_decision_row_fraction, train_fraction: 0.60, validation_fraction: 0.20, test_fraction: 0.20, purge_seconds: 1800, embargo_seconds: 1800}
   native_implementation: {path: "src/bt/strategy/bybit_cross_sectional_liquidity_dispersion_reversal.py", function: "cross_sectional_reversal_evaluation", heldout_bounds: "start_and_end", overlap_gate: "verify_contiguous_overlap"}
-  metrics: [heldout_mean_signed_reversal_after_costs, matched_control_confidence_interval_95, directional_support, doubled_cost_mean_signed_reversal, treated_support]
+  metrics: [heldout_mean_signed_reversal_after_costs, matched_control_block_bootstrap_confidence_interval_95, directional_support, doubled_cost_mean_signed_reversal, treated_support]
+  confidence_interval: {method: deterministic_circular_block_bootstrap, block_length_observations: 6, resamples: 2000, seed: 20260925, overlapping_target_minutes: 30}
 falsification_criteria:
   - "Reject if fewer than 365 overlapping days of content-admitted, timestamp-contiguous 1m data exist for all three instruments."
   - "Reject if dispersion or stress thresholds use the evaluated observation or any later observation."
