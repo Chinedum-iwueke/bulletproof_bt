@@ -108,6 +108,21 @@ def test_complete_rows_enforce_constituents_liquidity_target_and_prior_only_vola
     negative["BTCUSDT"].loc[10, "quote_volume"] = -1
     assert not compile_decision_rows(negative).loc[0, "complete"]
 
+    missing_bucket = {key: value.copy() for key, value in panels.items()}
+    missing_start = panels["BTCUSDT"]["ts"].min() + pd.Timedelta(minutes=75)
+    missing_end = missing_start + pd.Timedelta(minutes=15)
+    for symbol in missing_bucket:
+        timestamps = missing_bucket[symbol]["ts"]
+        missing_bucket[symbol] = missing_bucket[symbol].loc[
+            ~((timestamps >= missing_start) & (timestamps < missing_end))
+        ]
+    gap_rows = compile_decision_rows(missing_bucket)
+    gap_decision = missing_end
+    assert not gap_rows.loc[gap_rows["decision_ts"] == gap_decision, "complete"].item()
+    following = gap_rows.loc[gap_rows["decision_ts"] == gap_decision + pd.Timedelta(minutes=15)].iloc[0]
+    assert pd.isna(following["btc_return"])
+    assert pd.isna(following["eth_return"])
+
 
 def test_evaluator_fits_train_only_and_retains_all_terminal_outcomes(monkeypatch: pytest.MonkeyPatch) -> None:
     panels = _panels()
@@ -122,7 +137,11 @@ def test_evaluator_fits_train_only_and_retains_all_terminal_outcomes(monkeypatch
     positive = liquidity_displacement_evaluation(panels, params=params, minimum_history=20, minimum_extreme_support=1, minimum_matched_support=1)
     assert positive["outcome"] == "positive" and negative["outcome"] == "negative"
     assert positive["residual_coefficients_fit_split"] == "train"
-    assert positive["threshold_fit_split"] == "train"
+    assert positive["threshold_fit_policy"] == "rolling_prior_only"
+    assert positive["registered_round_trip_cost"] == pytest.approx(0.0018)
+    assert positive["doubled_cost_directional_effect"] == pytest.approx(
+        0.01 - 0.0036
+    )
     assert failed["outcome"] == "failed" and invalid["outcome"] == "invalid"
     assert all(item["treated_decision_ts"] != item["control_decision_ts"] for item in positive["pairs"])
 

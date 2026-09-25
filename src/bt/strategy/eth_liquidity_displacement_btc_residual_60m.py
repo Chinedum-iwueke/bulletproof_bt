@@ -64,7 +64,14 @@ def _bars(frame: pd.DataFrame, prefix: str) -> pd.DataFrame:
         raise ValueError(f"{prefix} panel contains duplicate timestamps")
     data["bucket"] = data["ts"].dt.floor("15min")
     rows = []
-    for bucket, part in data.groupby("bucket", sort=True):
+    grouped = {bucket: part for bucket, part in data.groupby("bucket", sort=True)}
+    buckets = (
+        pd.date_range(data["bucket"].min(), data["bucket"].max(), freq="15min")
+        if not data.empty
+        else []
+    )
+    for bucket in buckets:
+        part = grouped.get(bucket, data.iloc[0:0])
         expected = pd.date_range(bucket, periods=15, freq="1min", tz="UTC")
         close = pd.to_numeric(part["close"], errors="coerce")
         volume = pd.to_numeric(part["quote_volume"], errors="coerce")
@@ -167,17 +174,32 @@ def liquidity_displacement_evaluation(
             difference = orientation * (residual - control_residual)
             pairs.append({"treated_decision_ts": item.decision_ts.isoformat(), "control_decision_ts": control.decision_ts.isoformat(), "signed_residual_difference": float(difference)})
         values = [p["signed_residual_difference"] for p in pairs]
-        mean, ci = _ci(values); registered_cost = 0.0009
-        return {"extreme_support": int(len(extremes)), "matched_support": len(pairs), "effect": mean - registered_cost, "confidence_interval_95": [ci[0] - registered_cost, ci[1] - registered_cost], "doubled_cost_effect": mean - 2 * registered_cost, "pairs": pairs}
+        mean, ci = _ci(values)
+        registered_round_trip_cost = 0.0018
+        return {
+            "extreme_support": int(len(extremes)),
+            "matched_support": len(pairs),
+            "effect": mean - registered_round_trip_cost,
+            "confidence_interval_95": [
+                ci[0] - registered_round_trip_cost,
+                ci[1] - registered_round_trip_cost,
+            ],
+            "doubled_cost_effect": mean - 2 * registered_round_trip_cost,
+            "registered_round_trip_cost": registered_round_trip_cost,
+            "pairs": pairs,
+        }
 
     validation = evaluate(splits["validation"])
     heldout = evaluate(splits["test"]) if evaluate_test else {"extreme_support": 0, "matched_support": 0, "effect": 0.0, "confidence_interval_95": [0.0, 0.0], "doubled_cost_effect": 0.0, "pairs": []}
     selected = heldout if evaluate_test else validation
     enough = selected["extreme_support"] >= minimum_extreme_support and selected["matched_support"] >= minimum_matched_support
     outcome = "failed" if not enough else ("positive" if selected["confidence_interval_95"][0] > 0 and selected["doubled_cost_effect"] > 0 else "negative")
-    cumulative = np.cumsum([p["signed_residual_difference"] - 0.0009 for p in selected["pairs"]])
+    cumulative = np.cumsum([
+        p["signed_residual_difference"] - selected["registered_round_trip_cost"]
+        for p in selected["pairs"]
+    ])
     drawdown = float(np.min(cumulative - np.maximum.accumulate(np.r_[0.0, cumulative])[:-1])) if len(cumulative) else 0.0
-    return {"schema_version": "eth-liquidity-residual-evaluation-v1.0.0", "question": QUESTION, "parameters": dict(params), "outcome": outcome, "passed": outcome == "positive", "threshold_fit_split": "train", "residual_coefficients_fit_split": "train", "residual_coefficients": coefficients.tolist(), "extreme_support": selected["extreme_support"], "matched_support": selected["matched_support"], "validation_directional_effect": validation["effect"], "test_directional_effect": heldout["effect"], "confidence_interval_95": selected["confidence_interval_95"], "doubled_cost_directional_effect": selected["doubled_cost_effect"], "maximum_drawdown": drawdown, "pairs": selected["pairs"]}
+    return {"schema_version": "eth-liquidity-residual-evaluation-v1.0.0", "question": QUESTION, "parameters": dict(params), "outcome": outcome, "passed": outcome == "positive", "threshold_fit_policy": "rolling_prior_only", "residual_coefficients_fit_split": "train", "residual_coefficients": coefficients.tolist(), "registered_round_trip_cost": selected["registered_round_trip_cost"], "extreme_support": selected["extreme_support"], "matched_support": selected["matched_support"], "validation_directional_effect": validation["effect"], "test_directional_effect": heldout["effect"], "confidence_interval_95": selected["confidence_interval_95"], "doubled_cost_directional_effect": selected["doubled_cost_effect"], "maximum_drawdown": drawdown, "pairs": selected["pairs"]}
 
 
 def liquidity_displacement_grid_evaluation(panels: Mapping[str, pd.DataFrame], *, parameter_grid: Mapping[str, Sequence[Any]], **kwargs: Any) -> dict[str, Any]:
