@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import platform
 import re
 import shutil
@@ -25,6 +26,7 @@ from bt.evaluation.alpha_research import (
     complete_timeframe_bars,
     held_out_trade_evaluation,
     impact_proxy_evaluation,
+    required_observation_logging_evaluation,
     required_trade_logging_evaluation,
     trade_decision_timestamps,
 )
@@ -64,6 +66,10 @@ from bt.validation.experiment_truth import validate_experiment_root, write_truth
 from bt.strategy.btc_funding_basis_crowding_60m import (
     funding_basis_matched_evaluation,
 )
+from bt.strategy.bybit_cross_sectional_liquidity_dispersion_reversal import (
+    cross_sectional_reversal_evaluation,
+    verify_contiguous_overlap,
+)
 
 AUTHORITY = {
     "capital": False,
@@ -97,6 +103,75 @@ def file_digest(path: Path) -> str:
     return result.hexdigest()
 
 
+def native_representation_acceptance(
+    run_dir: Path, *, expected_digest: str, expected_fields: list[str]
+) -> dict[str, Any]:
+    """Fail closed unless the classic strategy consumed every retained payload."""
+    decisions_path = run_dir / "decisions.jsonl"
+    records = []
+    if decisions_path.is_file():
+        for line in decisions_path.read_text(encoding="utf-8").splitlines():
+            if not line:
+                continue
+            row = json.loads(line)
+            signal = row.get("signal")
+            if not isinstance(signal, dict) or signal.get("signal_type") != (
+                "cross_sectional_representation_validation"
+            ):
+                continue
+            metadata = signal.get("metadata")
+            if not isinstance(metadata, dict):
+                raise BridgeError("native representation decision lacks metadata")
+            records.append(
+                {
+                    "ts": str(row.get("ts")),
+                    "outcome": metadata.get("native_payload_outcome"),
+                    "reason": metadata.get("native_payload_reason"),
+                    "representation_plan_digest": metadata.get(
+                        "representation_plan_digest"
+                    ),
+                    "representation_output_fields": metadata.get(
+                        "representation_output_fields"
+                    ),
+                    "representation_decision_ts": metadata.get(
+                        "representation_decision_ts"
+                    ),
+                }
+            )
+    if not records:
+        raise BridgeError("native strategy retained no representation decisions")
+    rejected = [
+        item
+        for item in records
+        if item["outcome"] not in {"consumed", "warmup"}
+        or item["representation_plan_digest"] != expected_digest
+        or item["representation_output_fields"] != expected_fields
+        or pd.Timestamp(item["representation_decision_ts"])
+        != pd.Timestamp(item["ts"])
+    ]
+    if rejected:
+        raise BridgeError(
+            "native strategy rejected or misbound adaptive representation payloads"
+        )
+    warmups = [index for index, item in enumerate(records) if item["outcome"] == "warmup"]
+    if warmups not in ([], [0]):
+        raise BridgeError("native representation warmup occurred after causal initialization")
+    receipt = {
+        "schema_version": "native-representation-acceptance-v1.0.0",
+        "strategy": "bybit_cross_sectional_liquidity_dispersion_reversal",
+        "representation_plan_digest": expected_digest,
+        "representation_output_fields": expected_fields,
+        "decision_count": len(records),
+        "consumed_count": sum(item["outcome"] == "consumed" for item in records),
+        "warmup_count": sum(item["outcome"] == "warmup" for item in records),
+        "invalid_count": 0,
+        "first_decision_ts": records[0]["representation_decision_ts"],
+        "last_decision_ts": records[-1]["representation_decision_ts"],
+    }
+    receipt["record_digest"] = digest(receipt)
+    return receipt
+
+
 def materialize_execution_panel(
     assignment: dict[str, Any], output: Path
 ) -> tuple[Path, str, dict[str, pd.DataFrame]]:
@@ -117,9 +192,7 @@ def materialize_execution_panel(
         else None
     )
     end = (
-        pd.Timestamp(assignment["window_end"])
-        if assignment.get("window_end")
-        else None
+        pd.Timestamp(assignment["window_end"]) if assignment.get("window_end") else None
     )
     frames: list[pd.DataFrame] = []
     panels: dict[str, pd.DataFrame] = {}
@@ -148,6 +221,20 @@ def materialize_execution_panel(
     )
     if combined.duplicated(["ts", "symbol"]).any():
         raise BridgeError("combined basket contains duplicate symbol timestamps")
+    if set(panels) == {"BTCUSDT", "ETHUSDT", "SOLUSDT"}:
+        overlap_receipt = assignment.get("overlap_admission_receipt")
+        if overlap_receipt is not None:
+            validate_overlap_admission_receipt(
+                overlap_receipt,
+                bindings=bindings,
+                instruments=sorted(panels),
+                window_start=assignment.get("window_start"),
+                window_end=assignment.get("window_end"),
+            )
+        else:
+            admitted, reason = verify_contiguous_overlap(combined)
+            if not admitted:
+                raise BridgeError(f"basket overlap admission failed: {reason}")
     destination = output / "execution-window.parquet"
     combined.to_parquet(destination, index=False)
     aggregate_digest = digest(
@@ -167,6 +254,39 @@ def materialize_execution_panel(
         }
     )
     return destination, aggregate_digest, panels
+
+
+def validate_overlap_admission_receipt(
+    receipt: Any,
+    *,
+    bindings: list[dict[str, Any]],
+    instruments: list[str],
+    window_start: Any,
+    window_end: Any,
+) -> None:
+    """Replay a DATA-002/003 overlap receipt carried by the authenticated assignment."""
+    if not isinstance(receipt, dict):
+        raise BridgeError("basket overlap admission receipt must be an object")
+    document = {key: value for key, value in receipt.items() if key != "record_digest"}
+    expected_bindings = [
+        {
+            "instrument": item["instrument"],
+            "dataset_build_id": item["dataset_build_id"],
+            "dataset_digest": item["dataset_digest"],
+        }
+        for item in bindings
+    ]
+    if (
+        receipt.get("schema_version") != "alpha-basket-overlap-admission-v1.0.0"
+        or receipt.get("authority") != "DATA-002/003"
+        or receipt.get("record_digest") != digest(document)
+        or receipt.get("dataset_bindings") != expected_bindings
+        or receipt.get("instruments") != instruments
+        or int(receipt.get("minimum_contiguous_days", 0)) < 365
+        or pd.Timestamp(receipt.get("admitted_start")) > pd.Timestamp(window_start)
+        or pd.Timestamp(receipt.get("admitted_end")) < pd.Timestamp(window_end)
+    ):
+        raise BridgeError("basket overlap admission receipt is invalid or out of scope")
 
 
 def attach_adaptive_features(
@@ -190,7 +310,9 @@ def attach_adaptive_features(
     }
     overlap = (set(output_fields) | provenance_fields) & set(frame.columns)
     if overlap:
-        raise BridgeError(f"adaptive fields collide with source data: {sorted(overlap)}")
+        raise BridgeError(
+            f"adaptive fields collide with source data: {sorted(overlap)}"
+        )
     features = materialized.frame[["decision_at", *output_fields]].rename(
         columns={"decision_at": "ts"}
     )
@@ -211,6 +333,78 @@ def attach_adaptive_features(
     destination = output / "execution-panel-with-adaptive-features.parquet"
     enriched.to_parquet(destination, index=False)
     return destination
+
+
+def validate_materialized_payload(
+    execution_data_path: Path,
+    materialized: Any,
+    *,
+    instruments: list[str],
+) -> dict[str, Any]:
+    """Bind the exact adaptive values written to the native engine feed."""
+    fields = list(materialized.receipt["output_fields"])
+    plan_digest = str(materialized.receipt["plan_digest"])
+    columns = [
+        "ts",
+        "symbol",
+        *fields,
+        "representation_plan_digest",
+        "representation_output_fields",
+        "representation_decision_ts",
+    ]
+    actual = pd.read_parquet(execution_data_path, columns=columns)
+    actual["ts"] = pd.to_datetime(actual["ts"], utc=True, errors="raise")
+    actual = actual.loc[actual["representation_decision_ts"].notna()].copy()
+    expected = materialized.frame[["decision_at", *fields]].copy()
+    expected["decision_at"] = pd.to_datetime(
+        expected["decision_at"], utc=True, errors="raise"
+    )
+    expected = expected.loc[expected["decision_at"].isin(set(actual["ts"]))]
+    expected_by_ts = expected.set_index("decision_at")
+    if actual.empty or expected_by_ts.empty:
+        raise BridgeError("materialized representation produced no native payload rows")
+    if set(actual["symbol"].astype(str)) != set(instruments):
+        raise BridgeError("native adaptive payload basket differs from reviewed instruments")
+    counts = actual.groupby("ts")["symbol"].nunique()
+    if not counts.eq(len(instruments)).all() or set(actual["ts"]) != set(
+        expected_by_ts.index
+    ):
+        raise BridgeError("native adaptive payload timestamps are incomplete")
+    encoded_fields = json.dumps(fields, separators=(",", ":"))
+    for row in actual.itertuples(index=False):
+        if (
+            row.representation_plan_digest != plan_digest
+            or row.representation_output_fields != encoded_fields
+            or pd.Timestamp(row.representation_decision_ts) != row.ts
+        ):
+            raise BridgeError("native adaptive payload provenance is misbound")
+        reference = expected_by_ts.loc[row.ts]
+        for field in fields:
+            observed = getattr(row, field)
+            wanted = reference[field]
+            if pd.isna(observed) and pd.isna(wanted):
+                continue
+            if pd.isna(observed) or pd.isna(wanted) or not math.isclose(
+                float(observed), float(wanted), rel_tol=1e-12, abs_tol=1e-15
+            ):
+                raise BridgeError(
+                    f"native adaptive payload value differs from materialization: {field}"
+                )
+    receipt = {
+        "schema_version": "materialized-native-payload-validation-v1.0.0",
+        "representation_plan_digest": plan_digest,
+        "representation_output_fields": fields,
+        "decision_count": len(expected_by_ts),
+        "engine_row_count": len(actual),
+        "instruments": instruments,
+        "payload_digest": digest(
+            pd.util.hash_pandas_object(
+                actual.sort_values(["ts", "symbol"], kind="stable"), index=False
+            ).values.tobytes()
+        ),
+    }
+    receipt["record_digest"] = digest(receipt)
+    return receipt
 
 
 def _execution_identity(assignment: dict[str, Any]) -> dict[str, Any]:
@@ -307,6 +501,8 @@ def downstream_reuse_manifest(
         "representation_contract.json",
         "representation_leakage_report.json",
         "adaptive-representation-receipt.json",
+        "native-representation-acceptance.json",
+        "materialized-native-payload-validation.json",
         "search_plan.json",
         "selection_bias_audit.json",
         evaluation_artifact,
@@ -377,9 +573,7 @@ def question_card(assignment: dict[str, Any], *, disposition: str) -> dict[str, 
             "resampling_policy": assignment.get(
                 "resampling_policy", "right_closed_left_labeled_complete_bars"
             ),
-            "instruments": assignment.get(
-                "instruments", [assignment["instrument"]]
-            ),
+            "instruments": assignment.get("instruments", [assignment["instrument"]]),
             "bindings": assignment.get("dataset_bindings", []),
         },
         "research_context": context,
@@ -570,7 +764,9 @@ def representation(
 ) -> tuple[RepresentationContract, dict[str, Any]]:
     ordered = frame.copy()
     ordered["ts"] = pd.to_datetime(ordered["ts"], utc=True, errors="raise")
-    ordered = ordered.sort_values(["ts", "symbol"], kind="stable").reset_index(drop=True)
+    ordered = ordered.sort_values(["ts", "symbol"], kind="stable").reset_index(
+        drop=True
+    )
     if ordered.duplicated(["symbol", "ts"]).any():
         raise BridgeError("representation rejects duplicate instrument timestamps")
     # Source rows are left-labeled and become observable after their interval.
@@ -603,7 +799,9 @@ def representation(
         split_two + pd.Timedelta(seconds=embargo_seconds), side="right"
     )
     if validation_index >= len(decisions) or test_index >= len(decisions):
-        raise BridgeError("evaluation window is too short for its purge/embargo contract")
+        raise BridgeError(
+            "evaluation window is too short for its purge/embargo contract"
+        )
     audit = audit_rows.assign(
         decision_at=audit_decisions,
         membership_known_at=first,
@@ -697,7 +895,8 @@ def select_funding_basis_variant(evaluations: list[dict[str, Any]]) -> int | Non
         supported,
         key=lambda item: (
             evaluations[item]["treated_minus_control_mean"],
-            -evaluations[item]["matched_support"], item,
+            -evaluations[item]["matched_support"],
+            item,
         ),
     )
 
@@ -741,12 +940,16 @@ def weekend_regime_comparison(
     }
 
 
-def execute_variant_grid(jobs: list[dict[str, Any]], max_workers: int) -> list[dict[str, Any]]:
+def execute_variant_grid(
+    jobs: list[dict[str, Any]], max_workers: int
+) -> list[dict[str, Any]]:
     if not 1 <= len(jobs) <= 8 or not 1 <= max_workers <= 8:
         raise BridgeError("Alpha execution requires 1-8 variants and 1-8 worker slots")
     if max_workers == 1:
         return [_execute_variant_job(job) for job in jobs]
-    with ProcessPoolExecutor(max_workers=min(max_workers, len(jobs)), mp_context=get_context("spawn")) as pool:
+    with ProcessPoolExecutor(
+        max_workers=min(max_workers, len(jobs)), mp_context=get_context("spawn")
+    ) as pool:
         return list(pool.map(_execute_variant_job, jobs))
 
 
@@ -806,33 +1009,53 @@ def execution_scope(
     }
 
 
-def independent_review_required(assignment: dict[str, Any], output: Path, reason: str) -> dict[str, Any]:
+def independent_review_required(
+    assignment: dict[str, Any], output: Path, reason: str
+) -> dict[str, Any]:
     output.mkdir(parents=True, exist_ok=True)
     evidence = {
         "schema_version": "alpha-independent-review-failure-v1.0.0",
         "campaign_digest": assignment["campaign_digest"],
         "question_digest": assignment["question_digest"],
         "source_commit": assignment["base_ref"],
-        "reason": reason, "trial_count": 0, "authority": AUTHORITY,
+        "reason": reason,
+        "trial_count": 0,
+        "authority": AUTHORITY,
     }
     path = output / "independent-review-failure.json"
     path.write_bytes(canonical(evidence) + b"\n")
     attempt = base_attempt(
-        assignment, hypothesis_id=f"REVIEW-{assignment['question_digest'][:16]}",
+        assignment,
+        hypothesis_id=f"REVIEW-{assignment['question_digest'][:16]}",
         hypothesis_digest=digest(assignment.get("qualification", {})),
     ) | {
-        "trial_count": 0, "outcome": "failed", "failure_stage": "independent_evaluation",
+        "trial_count": 0,
+        "outcome": "failed",
+        "failure_stage": "independent_evaluation",
         "gate_report": {
-            **{key: False for key in (
-                "truth_certified", "point_in_time_valid", "reproducible", "out_of_sample_evaluated",
-                "cost_stress_evaluated", "selection_bias_audited", "independent_review_complete",
-                "shadow_eligible", "production_eligible", "capital_authority",
-            )},
+            **{
+                key: False
+                for key in (
+                    "truth_certified",
+                    "point_in_time_valid",
+                    "reproducible",
+                    "out_of_sample_evaluated",
+                    "cost_stress_evaluated",
+                    "selection_bias_audited",
+                    "independent_review_complete",
+                    "shadow_eligible",
+                    "production_eligible",
+                    "capital_authority",
+                )
+            },
             "failed_gates": ["independent_specification_review"],
         },
         "evidence_digests": [file_digest(path)],
     }
-    return {"disposition": "independent_review_required", "alpha_campaign_attempt": attempt}
+    return {
+        "disposition": "independent_review_required",
+        "alpha_campaign_attempt": attempt,
+    }
 
 
 def execute_registered(
@@ -860,7 +1083,9 @@ def execute_registered(
             "hypothesis is not registered; bounded engineering generation is required"
         )
     if not governed_review_verified(assignment, qualification):
-        raise BridgeError("independent specification review is missing or unbound; no compute started")
+        raise BridgeError(
+            "independent specification review is missing or unbound; no compute started"
+        )
     scope = execution_scope(assignment, qualification)
     completed = prepare_execution_output(output, assignment)
     if completed is not None:
@@ -933,6 +1158,7 @@ def execute_registered(
         assignment, output
     )
     adaptive_receipt = None
+    materialized_payload_receipt = None
     if assignment.get("representation_plan") is not None:
         materialized = materialize_adaptive_representation(
             assignment["representation_plan"], source_panels
@@ -941,6 +1167,13 @@ def execute_registered(
             output / "adaptive-representation.parquet", index=False
         )
         adaptive_receipt = materialized.receipt
+        expected_plan_digest = contract.schema.execution_semantics.get(
+            "adaptive_representation_plan_digest"
+        )
+        if expected_plan_digest != adaptive_receipt.get("plan_digest"):
+            raise BridgeError(
+                "materialized representation digest differs from reviewed strategy contract"
+            )
         (output / "adaptive-representation-receipt.json").write_bytes(
             canonical(adaptive_receipt) + b"\n"
         )
@@ -959,16 +1192,25 @@ def execute_registered(
             output=output,
             declared_fields=declared_adaptive_fields,
         )
+        materialized_payload_receipt = validate_materialized_payload(
+            execution_data_path,
+            materialized,
+            instruments=list(assignment.get("instruments", [assignment["instrument"]])),
+        )
+        (output / "materialized-native-payload-validation.json").write_bytes(
+            canonical(materialized_payload_receipt) + b"\n"
+        )
 
     lightweight_columns = ["ts", "symbol", "close"]
-    for column in contract.schema.execution_semantics.get(
-        "required_extra_columns", []
+    if (
+        contract.schema.metadata.hypothesis_family
+        == "cross_sectional_liquidity_dispersion_reversal"
     ):
+        lightweight_columns.extend(["volume", "quote_volume"])
+    for column in contract.schema.execution_semantics.get("required_extra_columns", []):
         if column not in lightweight_columns:
             lightweight_columns.append(column)
-    lightweight = pd.read_parquet(
-        execution_data_path, columns=lightweight_columns
-    )
+    lightweight = pd.read_parquet(execution_data_path, columns=lightweight_columns)
     code_digest = digest(assignment["base_ref"].encode())
     split_contract = contract_document.get("evaluation", {}).get("split", {})
     rep, leakage = representation(
@@ -981,9 +1223,7 @@ def execute_registered(
             contract.schema.execution_semantics.get("signal_timeframe", "1m")
         ),
     )
-    execution_delay_bars = int(
-        contract_document.get("costs", {}).get("delay_bars", 1)
-    )
+    execution_delay_bars = int(contract_document.get("costs", {}).get("delay_bars", 1))
     model = declared_classic_bundle(
         profile="tier2",
         parameters={
@@ -1006,7 +1246,9 @@ def execute_registered(
         tiers=("Tier2",),
         seeds=(7,),
         resources={"max_workers": min(max_workers, len(variants))},
-        budget=SearchBudget(len(variants), len(variants), 86400, min(max_workers, len(variants))),
+        budget=SearchBudget(
+            len(variants), len(variants), 86400, min(max_workers, len(variants))
+        ),
         stopping_rule=StoppingRule(kind="exhaustive"),
     )
     experiment = output / "experiment"
@@ -1026,9 +1268,10 @@ def execute_registered(
             "representation_decision_ts",
         ]
         legacy_contract = required_extra_columns == expected_prefix
-        provenance_contract = (
-            required_extra_columns[: len(expected_prefix)] == expected_prefix
-            and all(item in required_extra_columns for item in required_provenance)
+        provenance_contract = required_extra_columns[
+            : len(expected_prefix)
+        ] == expected_prefix and all(
+            item in required_extra_columns for item in required_provenance
         )
         if not (legacy_contract or provenance_contract):
             raise BridgeError(
@@ -1036,12 +1279,8 @@ def execute_registered(
             )
     execution_overrides: list[str] = []
     if required_extra_columns:
-        if (
-            not isinstance(required_extra_columns, list)
-            or not all(
-                isinstance(column, str) and column
-                for column in required_extra_columns
-            )
+        if not isinstance(required_extra_columns, list) or not all(
+            isinstance(column, str) and column for column in required_extra_columns
         ):
             raise BridgeError("required_extra_columns must be a non-empty string list")
         data_override_path = output / "required-data-columns.yaml"
@@ -1056,6 +1295,10 @@ def execute_registered(
     is_funding_basis = (
         contract.schema.metadata.hypothesis_family == "funding_basis_matched_control"
     )
+    is_cross_sectional = (
+        contract.schema.metadata.hypothesis_family
+        == "cross_sectional_liquidity_dispersion_reversal"
+    )
     grid_data_path = execution_data_path
     if is_funding_basis:
         validation_end = pd.Timestamp(rep.split.validation_end)
@@ -1067,14 +1310,20 @@ def execute_registered(
             raise BridgeError("funding-basis validation partition contains no rows")
         grid_data_path = output / "validation-window.parquet"
         validation_frame.to_parquet(grid_data_path, index=False)
-    jobs = [dict(
-        contract=contract, spec=spec,
-        tier="Tier3" if assignment["tier"] == "Tier3" else "Tier2",
-        config_path=str(repository / "configs/engine.yaml"),
-        data_path=str(grid_data_path), out_root=str(runs),
-        override_paths=execution_overrides,
-        run_slug=f"row_{index:04d}", phase=phase,
-    ) for index, spec in enumerate(variants, start=1)]
+    jobs = [
+        dict(
+            contract=contract,
+            spec=spec,
+            tier="Tier3" if assignment["tier"] == "Tier3" else "Tier2",
+            config_path=str(repository / "configs/engine.yaml"),
+            data_path=str(grid_data_path),
+            out_root=str(runs),
+            override_paths=execution_overrides,
+            run_slug=f"row_{index:04d}",
+            phase=phase,
+        )
+        for index, spec in enumerate(variants, start=1)
+    ]
     for result in execute_variant_grid(jobs, max_workers):
         run_dir = Path(result["run_dir"])
         for name, document in (
@@ -1088,13 +1337,29 @@ def execute_registered(
             (run_dir / "adaptive-representation-receipt.json").write_bytes(
                 canonical(adaptive_receipt) + b"\n"
             )
+        if materialized_payload_receipt is not None:
+            (run_dir / "materialized-native-payload-validation.json").write_bytes(
+                canonical(materialized_payload_receipt) + b"\n"
+            )
+        if is_cross_sectional:
+            if adaptive_receipt is None:
+                raise BridgeError("cross-sectional execution lacks representation receipt")
+            acceptance = native_representation_acceptance(
+                run_dir,
+                expected_digest=str(adaptive_receipt["plan_digest"]),
+                expected_fields=list(adaptive_receipt["output_fields"]),
+            )
+            (run_dir / "native-representation-acceptance.json").write_bytes(
+                canonical(acceptance) + b"\n"
+            )
         results.append(result)
         run_dirs.append(run_dir)
     trials = search.trials()
     if is_funding_basis:
         validation = [
             funding_basis_matched_evaluation(
-                lightweight, params=variant["params"],
+                lightweight,
+                params=variant["params"],
                 start=rep.split.validation_start,
                 end=rep.split.validation_end,
             )
@@ -1108,15 +1373,15 @@ def execute_registered(
             )
             item["evaluation_partition"] = "validation"
             item["maximum_drawdown"] = partition["maximum_drawdown"]
-            item["maximum_drawdown_authority"] = (
-                "classic_engine_trade_log_partition_R"
-            )
+            item["maximum_drawdown_authority"] = "classic_engine_trade_log_partition_R"
             item["record_digest"] = digest(item)
         selected_index = select_funding_basis_variant(validation)
         selection_metric = "validation_treated_minus_control_mean"
     else:
         validation = [
-            period_evaluation(path, rep.split.validation_start, rep.split.validation_end)
+            period_evaluation(
+                path, rep.split.validation_start, rep.split.validation_end
+            )
             for path in run_dirs
         ]
         selected_index = max(
@@ -1180,11 +1445,55 @@ def execute_registered(
     is_impact_proxy = (
         contract.schema.metadata.hypothesis_family == "impact_proxy_reversal"
     )
-    per_variant_evaluations = validation if is_funding_basis else []
+    if is_cross_sectional:
+        validation = [
+            cross_sectional_reversal_evaluation(
+                lightweight,
+                params=variant["params"],
+                start=rep.split.validation_start,
+                end=rep.split.validation_end,
+                enforce_overlap=assignment.get("overlap_admission_receipt") is None,
+                representation_plan_digest=(
+                    adaptive_receipt.get("plan_digest")
+                    if adaptive_receipt is not None
+                    else None
+                ),
+            )
+            for variant in variants
+        ]
+        selected_index = max(
+            range(len(validation)),
+            key=lambda item: (
+                validation[item].get("passed", False),
+                validation[item].get("mean_signed_reversal_after_costs", float("-inf")),
+                validation[item].get("treated_support", 0),
+                -item,
+            ),
+        )
+        execution_index = selected_index
+        selection_metric = "validation_mean_signed_reversal_after_costs"
+        selection_audit.update(
+            {
+                "selection_metric": selection_metric,
+                "selected_variant_index": selected_index,
+                "validation_results": validation,
+            }
+        )
+        selection_audit["record_digest"] = digest(
+            {
+                key: value
+                for key, value in selection_audit.items()
+                if key != "record_digest"
+            }
+        )
+    per_variant_evaluations = (
+        validation if (is_funding_basis or is_cross_sectional) else []
+    )
     heldout_evaluation = (
         funding_basis_matched_evaluation(
             lightweight,
             start=rep.split.test_start,
+            end=rep.split.test_end,
             params=variants[selected_index]["params"],
         )
         if is_funding_basis and selected_index is not None
@@ -1197,9 +1506,7 @@ def execute_registered(
             rep.split.test_end,
         )
         heldout_evaluation["evaluation_partition"] = "test"
-        heldout_evaluation["maximum_drawdown"] = heldout_partition[
-            "maximum_drawdown"
-        ]
+        heldout_evaluation["maximum_drawdown"] = heldout_partition["maximum_drawdown"]
         heldout_evaluation["maximum_drawdown_authority"] = (
             "classic_engine_trade_log_partition_R"
         )
@@ -1240,7 +1547,20 @@ def execute_registered(
         }
         unsupported_validation["record_digest"] = digest(unsupported_validation)
     evaluation_artifact = (
-        impact_proxy_evaluation(
+        cross_sectional_reversal_evaluation(
+            lightweight,
+            params=variants[execution_index]["params"],
+            start=rep.split.test_start,
+            end=rep.split.test_end,
+            enforce_overlap=assignment.get("overlap_admission_receipt") is None,
+            representation_plan_digest=(
+                adaptive_receipt.get("plan_digest")
+                if adaptive_receipt is not None
+                else None
+            ),
+        )
+        if is_cross_sectional
+        else impact_proxy_evaluation(
             lightweight,
             test_start=rep.split.test_start,
             params=variants[execution_index]["params"],
@@ -1253,7 +1573,9 @@ def execute_registered(
     if "record_digest" not in evaluation_artifact:
         evaluation_artifact["record_digest"] = digest(evaluation_artifact)
     evaluation_artifact_name = (
-        "impact_proxy_evaluation.json"
+        "cross_sectional_reversal_evaluation.json"
+        if is_cross_sectional
+        else "impact_proxy_evaluation.json"
         if is_impact_proxy
         else "funding_basis_heldout_not_evaluated.json"
         if is_funding_basis and selected_index is None
@@ -1261,17 +1583,26 @@ def execute_registered(
         if is_funding_basis
         else "weekend_regime_comparison.json"
     )
-    logging_reports = [
-        required_trade_logging_evaluation(path, card["logging_requirements"])
-        for path in run_dirs
-    ]
+    logging_reports = (
+        [
+            required_observation_logging_evaluation(
+                evaluation_artifact,
+                card["logging_requirements"],
+            )
+            for _ in run_dirs
+        ]
+        if is_cross_sectional
+        else [
+            required_trade_logging_evaluation(path, card["logging_requirements"])
+            for path in run_dirs
+        ]
+    )
     failed_logging = [
         index for index, report in enumerate(logging_reports) if not report["passed"]
     ]
     if failed_logging:
         raise BridgeError(
-            "required trade logging is incomplete for variants: "
-            f"{failed_logging}"
+            f"required trade logging is incomplete for variants: {failed_logging}"
         )
     for index, candidate_run in enumerate(run_dirs):
         (candidate_run / "selection_bias_audit.json").write_bytes(
@@ -1358,7 +1689,7 @@ def execute_registered(
     retained_bundle = retained[execution_index]
     holdout = (
         None
-        if is_funding_basis and selected_index is None
+        if is_cross_sectional or (is_funding_basis and selected_index is None)
         else held_out_trade_evaluation(run_dir, rep.split.test_start)
     )
     logging_report = logging_reports[execution_index]
@@ -1377,18 +1708,22 @@ def execute_registered(
         for key, value in result.items()
         if isinstance(value, (int, float, bool))
     }
-    metrics.update({
-        "declared_variant_count": len(variants),
-        "selected_variant_index": selected_index,
-        "execution_artifact_index": execution_index,
-        "selection_basis": selection_metric,
-    })
+    metrics.update(
+        {
+            "declared_variant_count": len(variants),
+            "selected_variant_index": selected_index,
+            "execution_artifact_index": execution_index,
+            "selection_basis": selection_metric,
+        }
+    )
     if holdout is not None:
-        metrics.update({
-            "oos_trade_count": holdout["trade_count"],
-            "oos_mean_net_r": holdout["mean_net_r"],
-            "double_cost_oos_mean_net_r": holdout["double_cost_mean_net_r"],
-        })
+        metrics.update(
+            {
+                "oos_trade_count": holdout["trade_count"],
+                "oos_mean_net_r": holdout["mean_net_r"],
+                "double_cost_oos_mean_net_r": holdout["double_cost_mean_net_r"],
+            }
+        )
     metrics["maximum_drawdown"] = float(result.get("max_drawdown_r", 0.0))
     if is_impact_proxy:
         metrics["direction_balance"] = evaluation_artifact["direction_balance"]
@@ -1396,24 +1731,44 @@ def execute_registered(
             "matched_return_shock_control"
         ]
     elif is_funding_basis:
-        metrics.update({
-            key: evaluation_artifact[key]
-            for key in (
-                "matched_support", "treated_support", "control_support",
-                "treated_minus_control_mean", "confidence_interval_95",
-                "doubled_cost_treated_minus_control",
-            )
-        })
+        metrics.update(
+            {
+                key: evaluation_artifact[key]
+                for key in (
+                    "matched_support",
+                    "treated_support",
+                    "control_support",
+                    "treated_minus_control_mean",
+                    "confidence_interval_95",
+                    "doubled_cost_treated_minus_control",
+                )
+            }
+        )
         metrics["maximum_drawdown"] = (
             evaluation_artifact["maximum_drawdown"]
             if selected_index is not None
             else validation[execution_index]["maximum_drawdown"]
         )
+    elif is_cross_sectional:
+        metrics.update(
+            {
+                "heldout_mean_signed_reversal_after_costs": evaluation_artifact[
+                    "mean_signed_reversal_after_costs"
+                ],
+                "matched_control_block_bootstrap_confidence_interval_95": evaluation_artifact[
+                    "matched_control_block_bootstrap_confidence_interval_95"
+                ],
+                "directional_support": evaluation_artifact["directional_support"],
+                "doubled_cost_mean_signed_reversal": evaluation_artifact[
+                    "doubled_cost_mean_signed_reversal"
+                ],
+                "treated_support": evaluation_artifact["treated_support"],
+                "selection_bias_audit": selection_audit,
+            }
+        )
     else:
         metrics["selection_bias_audit"] = selection_audit
-    required_metrics = tuple(
-        contract_document.get("evaluation", {}).get("metrics", ())
-    )
+    required_metrics = tuple(contract_document.get("evaluation", {}).get("metrics", ()))
     missing_metrics = sorted(set(required_metrics) - set(metrics))
     if missing_metrics:
         raise BridgeError(
@@ -1423,13 +1778,15 @@ def execute_registered(
     ended_at = datetime.now(UTC)
     independent_review_complete = governed_review_verified(assignment, qualification)
     passed_edge = bool(
-        (is_funding_basis or (
-            holdout is not None
-            and
-            holdout["adequate_support"]
-            and holdout["positive_net_edge"]
-            and holdout["cost_stress_passed"]
-        ))
+        (
+            (is_funding_basis or is_cross_sectional)
+            or (
+                holdout is not None
+                and holdout["adequate_support"]
+                and holdout["positive_net_edge"]
+                and holdout["cost_stress_passed"]
+            )
+        )
         and independent_review_complete
         and logging_report["passed"]
         and scope["qualification_authority"]
@@ -1444,18 +1801,21 @@ def execute_registered(
                 ]
             )
         )
-        and (not is_funding_basis or evaluation_artifact["passed"])
+        and (
+            not (is_funding_basis or is_cross_sectional)
+            or evaluation_artifact["passed"]
+        )
     )
-    classic_pnl_gates = () if is_funding_basis else (
-        ("oos_trade_support", holdout["adequate_support"]),
-        ("positive_oos_net_edge", holdout["positive_net_edge"]),
-        ("double_cost_oos_edge", holdout["cost_stress_passed"]),
+    classic_pnl_gates = (
+        ()
+        if (is_funding_basis or is_cross_sectional)
+        else (
+            ("oos_trade_support", holdout["adequate_support"]),
+            ("positive_oos_net_edge", holdout["positive_net_edge"]),
+            ("double_cost_oos_edge", holdout["cost_stress_passed"]),
+        )
     )
-    failed_gates = [
-        name
-        for name, passed in classic_pnl_gates
-        if not passed
-    ]
+    failed_gates = [name for name, passed in classic_pnl_gates if not passed]
     if not independent_review_complete:
         failed_gates.append("independent_specification_review")
     if not logging_report["passed"]:
@@ -1467,29 +1827,59 @@ def execute_registered(
             "statistically_outperformed_control"
         ]:
             failed_gates.append("matched_return_shock_control_95pct_lower_bound")
-        if not evaluation_artifact["direction_balance"][
-            "balanced_positive_reversal"
-        ]:
+        if not evaluation_artifact["direction_balance"]["balanced_positive_reversal"]:
             failed_gates.append("positive_reversal_in_both_directions")
-    scientific_outcome = evaluation_artifact["outcome"] if is_funding_basis else None
-    if is_funding_basis:
+    scientific_outcome = (
+        evaluation_artifact["outcome"]
+        if (is_funding_basis or is_cross_sectional)
+        else None
+    )
+    if is_funding_basis or is_cross_sectional:
         if scientific_outcome == "invalid":
             failed_gates.append("point_in_time_scientific_sample_invalid")
         elif scientific_outcome == "failed":
             failed_gates.append("matched_control_support_inadequate")
-        elif not evaluation_artifact["passed"]:
+        elif is_funding_basis and not evaluation_artifact["passed"]:
             if evaluation_artifact["confidence_interval_95"]["upper"] >= 0:
                 failed_gates.append("matched_funding_basis_95pct_upper_bound")
             if evaluation_artifact["doubled_cost_treated_minus_control"] >= 0:
                 failed_gates.append("matched_funding_basis_double_cost_stress")
-    scientific_valid = not is_funding_basis or scientific_outcome != "invalid"
-    scientific_supported = not is_funding_basis or scientific_outcome in {"positive", "negative"}
+        elif is_cross_sectional and not evaluation_artifact["passed"]:
+            if (
+                evaluation_artifact[
+                    "matched_control_block_bootstrap_confidence_interval_95"
+                ]["lower"]
+                <= 0
+            ):
+                failed_gates.append("matched_control_95pct_lower_bound")
+            if evaluation_artifact["doubled_cost_mean_signed_reversal"] <= 0:
+                failed_gates.append("cross_sectional_double_cost_stress")
+    scientific_observations_complete = (
+        not is_cross_sectional
+        or logging_report.get("scientific_observation_logging_complete") is True
+    )
+    if is_cross_sectional and not scientific_observations_complete:
+        failed_gates.append("scientific_observation_support_absent")
+    scientific_valid = (
+        not (is_funding_basis or is_cross_sectional)
+        or (
+            scientific_outcome != "invalid"
+            and scientific_observations_complete
+        )
+    )
+    scientific_supported = (
+        not (is_funding_basis or is_cross_sectional)
+        or (
+            scientific_outcome in {"positive", "negative"}
+            and scientific_observations_complete
+        )
+    )
     evaluation_evidence_digests = (
         [
             *[item["record_digest"] for item in per_variant_evaluations],
             evaluation_artifact["record_digest"],
         ]
-        if is_funding_basis
+        if (is_funding_basis or is_cross_sectional)
         else [evaluation_artifact["record_digest"]]
     )
     gate_report = {
@@ -1515,14 +1905,20 @@ def execute_registered(
     ) | {
         "trial_count": len(variants),
         "outcome": (
-            "failed" if not independent_review_complete
-            else scientific_outcome if is_funding_basis
-            else "candidate" if passed_edge else "negative"
+            "failed"
+            if not independent_review_complete
+            else scientific_outcome
+            if (is_funding_basis or is_cross_sectional)
+            else "candidate"
+            if passed_edge
+            else "negative"
         ),
         "failure_stage": (
-            "independent_evaluation" if not independent_review_complete
+            "independent_evaluation"
+            if not independent_review_complete
             else "truth_gate"
-            if is_funding_basis and scientific_outcome == "failed"
+            if (is_funding_basis or is_cross_sectional)
+            and scientific_outcome == "failed"
             else None
         ),
         "gate_report": gate_report,
@@ -1747,7 +2143,9 @@ def main() -> int:
         }
     else:
         try:
-            result = execute_registered(assignment, repository, args.output, max_workers=args.max_workers)
+            result = execute_registered(
+                assignment, repository, args.output, max_workers=args.max_workers
+            )
         except BridgeError as exc:
             if "independent specification review" in str(exc):
                 result = independent_review_required(assignment, args.output, str(exc))

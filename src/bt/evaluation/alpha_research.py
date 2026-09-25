@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
+import re
 from typing import Any
 
 import pandas as pd
@@ -97,6 +99,104 @@ def required_trade_logging_evaluation(
         "null_fields": null_fields,
         "invalid_fields": invalid_fields,
         "passed": passed,
+    }
+    report["record_digest"] = digest(report)
+    return report
+
+
+def required_observation_logging_evaluation(
+    evaluation: dict[str, Any],
+    required_fields: list[str] | tuple[str, ...],
+) -> dict[str, Any]:
+    """Validate scientific observation records that intentionally emit no trades."""
+    declared = list(required_fields)
+    if any(not isinstance(field, str) or not field for field in declared):
+        raise BridgeError("required observation logging fields must be non-empty strings")
+    if len(declared) != len(set(declared)):
+        raise BridgeError("required observation logging fields must be unique")
+    records = evaluation.get("observation_records", [])
+    if not isinstance(records, list) or any(not isinstance(item, dict) for item in records):
+        raise BridgeError("observation_records must be a list of objects")
+    missing: dict[str, list[str]] = {}
+    nulls: dict[str, list[str]] = {}
+    invalid: dict[str, list[str]] = {}
+    for index, record in enumerate(records):
+        key = str(index)
+        absent = sorted(set(declared) - set(record))
+        if absent:
+            missing[key] = absent
+        empty = sorted(field for field in declared if field in record and record[field] is None)
+        if empty:
+            nulls[key] = empty
+        trace = record.get("decision_trace")
+        if "decision_trace" in declared and (
+            not isinstance(trace, dict) or not trace
+        ):
+            invalid[key] = ["decision_trace"]
+    terminal = evaluation.get("terminal_evidence_records", [])
+    if not isinstance(terminal, list) or any(
+        not isinstance(item, dict) for item in terminal
+    ):
+        raise BridgeError("terminal_evidence_records must be a list of objects")
+    terminal_errors: list[str] = []
+    if terminal:
+        if records:
+            terminal_errors.append("terminal_evidence_with_scientific_observations")
+        if len(terminal) != 1:
+            terminal_errors.append("terminal_evidence_count_must_equal_one")
+        record = terminal[0]
+        if record.get("record_kind") != "terminal_no_observation":
+            terminal_errors.append("invalid_terminal_record_kind")
+        if record.get("outcome") != evaluation.get("outcome") or record.get(
+            "outcome"
+        ) not in {"negative", "invalid", "failed"}:
+            terminal_errors.append("terminal_outcome_mismatch")
+        if not isinstance(record.get("reason"), str) or not record["reason"]:
+            terminal_errors.append("terminal_reason_missing")
+        trace = record.get("decision_trace")
+        if not isinstance(trace, dict) or trace.get("scientific_observation") is not False:
+            terminal_errors.append("terminal_decision_trace_invalid")
+        plan_digest = record.get("representation_plan_digest")
+        if not isinstance(plan_digest, str) or re.fullmatch(
+            r"[0-9a-f]{64}", plan_digest
+        ) is None:
+            terminal_errors.append("terminal_representation_digest_invalid")
+        try:
+            fields = json.loads(record["representation_output_fields"])
+        except (KeyError, TypeError, ValueError):
+            fields = None
+        if not isinstance(fields, list) or not fields or any(
+            not isinstance(field, str) or not field for field in fields
+        ):
+            terminal_errors.append("terminal_representation_fields_invalid")
+        for name in ("decision_ts", "representation_decision_ts"):
+            try:
+                timestamp = pd.Timestamp(record[name])
+            except (KeyError, TypeError, ValueError):
+                timestamp = pd.NaT
+            if pd.isna(timestamp) or timestamp.tzinfo is None:
+                terminal_errors.append(f"terminal_{name}_invalid")
+    terminal_mode = not records and bool(terminal) and not terminal_errors
+    observation_mode = bool(records) and not missing and not nulls and not invalid
+    report = {
+        "schema_version": "alpha-required-observation-logging-v1.1.0",
+        "observation_count": len(records),
+        "terminal_evidence_count": len(terminal),
+        "evidence_mode": (
+            "scientific_observations"
+            if observation_mode
+            else "terminal_no_observation"
+            if terminal_mode
+            else "incomplete"
+        ),
+        "declared_fields": declared,
+        "missing_fields": missing,
+        "null_fields": nulls,
+        "invalid_fields": invalid,
+        "terminal_errors": terminal_errors,
+        "scientific_observation_logging_complete": observation_mode,
+        "terminal_retention_complete": terminal_mode,
+        "passed": observation_mode or terminal_mode,
     }
     report["record_digest"] = digest(report)
     return report

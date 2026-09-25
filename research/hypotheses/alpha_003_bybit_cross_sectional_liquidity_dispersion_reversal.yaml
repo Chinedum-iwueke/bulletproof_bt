@@ -1,0 +1,95 @@
+metadata:
+  hypothesis_id: "ALPHA-003-BYBIT-CROSS-SECTIONAL-LIQUIDITY-DISPERSION-REVERSAL"
+  title: "Cross-sectional liquidity-stress and dispersion reversal"
+  description: &question "In the preregistered Bybit BTCUSDT, ETHUSDT, and SOLUSDT basket, does the point-in-time interaction of high completed-5m cross-sectional return dispersion and prior-only quote-volume liquidity stress predict a negative winner-minus-loser relative return over the next contiguous 30m after registered costs?"
+  research_layer: "ALPHA"
+  hypothesis_family: "cross_sectional_liquidity_dispersion_reversal"
+  version: "1.0.0"
+hypothesis_id: "ALPHA-003-BYBIT-CROSS-SECTIONAL-LIQUIDITY-DISPERSION-REVERSAL"
+title: "Cross-sectional liquidity-stress and dispersion reversal"
+description: *question
+research_layer: "ALPHA"
+hypothesis_family: "cross_sectional_liquidity_dispersion_reversal"
+version: "1.0.0"
+status: "draft"
+immutable_contract:
+  question: *question
+  question_digest: "b0ea787bddb0e593439e84fbe9c533eb69ca2bbe99e0448986bd26c39fb0e690"
+  venue: "bybit"
+  instruments: ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+  source_timeframe: "1m"
+  research_timeframe: "5m"
+  resampling_policy: "left_closed_left_labeled_complete_bars"
+  window: {start: "2025-05-01T00:00:00Z", end: "2026-05-01T00:00:00Z"}
+  tier: "Tier2B"
+  minimum_contiguous_overlap_days: 365
+  dataset_bindings:
+    - {instrument: "BTCUSDT", dataset_build_id: "25d9958c-71b6-4c2b-949a-3c0433f70f38", dataset_digest: "9a211d8818c5ab8ec82ad5a7d38957e63eb387ea83d4b00541922a0eeca4aacb", catalog_digest: "4f007cc5c0a77dfc3a338508b49a849e7fd953c66f33d2cf5c6af67dee594141"}
+    - {instrument: "ETHUSDT", dataset_build_id: "e1abea55-f597-415b-af85-95e6a12b5a3d", dataset_digest: "17c0dc35d32f3e838f43ba116eb8917f01f08594f14ea2a6c104c3905e4a4473", catalog_digest: "debec183dbaead71f96286920a805998c61c5141fe93499efcfb41e72249e031"}
+    - {instrument: "SOLUSDT", dataset_build_id: "233b1bf0-cde2-4eff-a58e-0ff57b7ade1f", dataset_digest: "3921896b9b2be24b0834766a2945e54e89d1223ce5480c83a2a6757b9eaf9a41", catalog_digest: "b69af601f8e2c8c76f2692f7186f99069c3ea821975483f4dd4eb0f60ac3c290"}
+  required_fields: [ts, open, high, low, close, volume, quote_volume]
+parameter_grid:
+  dispersion_percentile: [0.95, 0.99]
+  liquidity_stress_percentile: [0.80, 0.90]
+  direction_specification: ["symmetric_reversal", "winner_only"]
+  quote_volume_rank_window: [288]
+grid_contract: {maximum_parameters: 4, maximum_variants: 8, frozen_before_outcomes: true, stopping_rule: exhaustive}
+entry:
+  strategy: "bybit_cross_sectional_liquidity_dispersion_reversal"
+  signal_timeframe: "5m"
+  atomicity: "research_observation_only_no_independent_order_legs"
+exit: {target: "six contiguous future complete 5m bars", time_exit_minutes: 30}
+sizing: {mode: "fixed_notional_pct_equity", notional_pct_equity: 0.05}
+risk: {authority: "engine", max_positions: 0, pyramiding: false, flips: false}
+costs: {authority: "registered_evaluator", taker_fee_bps: 6.0, slippage_bps: 2.0, spread_bps: 1.0, round_trip_two_leg_bps: 18.0, robustness_multiplier: 2.0}
+execution_semantics:
+  signal_timeframe: "5m"
+  base_execution_timeframe: "1m"
+  base_data_frequency_expected: "1m"
+  exit_monitoring_timeframe: "1m"
+  stop_model: "not_applicable_research_observation"
+  stop_update_policy: "none"
+  tp_update_policy: "none"
+  hold_time_unit: "six_contiguous_complete_5m_bars"
+  atr_source_timeframe: "5m"
+  required_extra_columns: [btcusdt_log_return_5m, ethusdt_log_return_5m, solusdt_log_return_5m, btcusdt_quote_volume_5m, ethusdt_quote_volume_5m, solusdt_quote_volume_5m, btcusdt_volume_5m, ethusdt_volume_5m, solusdt_volume_5m, representation_plan_digest, representation_output_fields, representation_decision_ts]
+  adaptive_representation_fields: [btcusdt_log_return_5m, ethusdt_log_return_5m, solusdt_log_return_5m, btcusdt_quote_volume_5m, ethusdt_quote_volume_5m, solusdt_quote_volume_5m, btcusdt_volume_5m, ethusdt_volume_5m, solusdt_volume_5m]
+  signal_bar_policy: "complete_left_closed_left_labeled_only"
+  threshold_fit_policy: "rolling_prior_only_up_to_288_completed_opportunities_minimum_20"
+  liquidity_normal_control_policy: "stress_at_or_below_prior_median_with_25pct_dispersion_and_volatility_calipers"
+evaluation:
+  required_tiers: ["Tier2B"]
+  outcome_retention: [positive, negative, invalid, failed]
+  split: {method: chronological_decision_row_fraction, train_fraction: 0.60, validation_fraction: 0.20, test_fraction: 0.20, purge_seconds: 1800, embargo_seconds: 1800}
+  native_implementation: {path: "src/bt/strategy/bybit_cross_sectional_liquidity_dispersion_reversal.py", function: "cross_sectional_reversal_evaluation", heldout_bounds: "start_and_end", overlap_gate: "verify_contiguous_overlap"}
+  metrics: [heldout_mean_signed_reversal_after_costs, matched_control_block_bootstrap_confidence_interval_95, directional_support, doubled_cost_mean_signed_reversal, treated_support]
+  confidence_interval: {method: deterministic_circular_block_bootstrap, block_length_observations: 6, resamples: 2000, seed: 20260925, overlapping_target_minutes: 30}
+falsification_criteria:
+  - "Reject if fewer than 365 overlapping days of content-admitted, timestamp-contiguous 1m data exist for all three instruments."
+  - "Reject if dispersion or stress thresholds use the evaluated observation or any later observation."
+  - "Reject controls above the prior-only median stress or outside 25% calipers on dispersion or prior volatility."
+  - "Reject every decision unless each basket member has a complete 5m bar with nonnull volume and quote_volume of at least USD 1,000,000."
+  - "Reject if held-out mean signed reversal is nonpositive after registered costs."
+  - "Reject unless the 95% confidence interval for stressed minus dispersion-and-volatility-matched normal liquidity controls is strictly positive."
+  - "Reject if support is below 50, directional support fails for symmetric reversal, or doubled costs make reversal nonpositive."
+logging:
+  schema_version: "1.0"
+  required_fields: [decision_trace, decision_ts, outcome, reason, representation_plan_digest, representation_output_fields, representation_decision_ts, dispersion, liquidity_stress, winner, loser, prior_30m_basket_volatility, target_exit_ts, signed_reversal_after_costs]
+runtime_controls: {enabled: true, max_variants: 8, tags: [alpha-003, classic-only, point-in-time, research-only]}
+truth_contract:
+  version: "1.0"
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  parity_required_for_fast_path: true
+  fast_path_generation: forbidden
+  research_memory_requires_certification: true
+authority: {capital: false, orders: false, production_promotion: false, self_approval: false}
