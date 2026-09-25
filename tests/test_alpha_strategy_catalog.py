@@ -44,3 +44,21 @@ def test_catalog_exposes_only_native_registered_contracts_without_authority():
     )
     assert smoke["bounded_weekly_reuse_eligible"] is False
     assert "non_research_fixture" in smoke["reuse_blockers"]
+
+    cross_sectional = next(
+        item
+        for item in result["capabilities"]
+        if item["hypothesis_id"]
+        == "ALPHA-003-BYBIT-CROSS-SECTIONAL-LIQUIDITY-DISPERSION-REVERSAL"
+    )
+    assert cross_sectional["input_mode"] == "aligned_basket"
+    assert cross_sectional["maximum_instruments"] == 3
+
+    cross_asset = next(
+        item
+        for item in result["capabilities"]
+        if item["hypothesis_id"]
+        == "ALPHA-003-ETH-LIQUIDITY-DISPLACEMENT-BTC-RESIDUAL-60M"
+    )
+    assert cross_asset["input_mode"] == "aligned_basket"
+    assert cross_asset["maximum_instruments"] == 2

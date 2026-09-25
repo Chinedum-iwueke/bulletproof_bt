@@ -69,6 +69,15 @@ def build_strategy_capability_catalog(
             *([] if not fixture_only else ["non_research_fixture"]),
         ]
         research_contract = _research_contract(raw)
+        immutable_contract = raw.get("immutable_contract", {})
+        declared_instruments = immutable_contract.get("instruments")
+        if not isinstance(declared_instruments, list) or not declared_instruments:
+            declared_instruments = raw.get("representation_plan", {}).get("instruments")
+        instrument_count = (
+            len(declared_instruments)
+            if isinstance(declared_instruments, list) and declared_instruments
+            else 1
+        )
         capabilities.append(
             {
                 "hypothesis_id": contract.schema.metadata.hypothesis_id,
@@ -76,8 +85,10 @@ def build_strategy_capability_catalog(
                 "description": contract.schema.metadata.description,
                 "hypothesis_family": contract.schema.metadata.hypothesis_family,
                 "strategy": strategy,
-                "input_mode": "single_instrument",
-                "maximum_instruments": 1,
+                "input_mode": (
+                    "aligned_basket" if instrument_count > 1 else "single_instrument"
+                ),
+                "maximum_instruments": instrument_count,
                 "signal_timeframes": sorted(
                     {
                         str(values)
