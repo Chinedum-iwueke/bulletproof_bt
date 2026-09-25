@@ -1854,12 +1854,26 @@ def execute_registered(
                 failed_gates.append("matched_control_95pct_lower_bound")
             if evaluation_artifact["doubled_cost_mean_signed_reversal"] <= 0:
                 failed_gates.append("cross_sectional_double_cost_stress")
-    scientific_valid = (
-        not (is_funding_basis or is_cross_sectional) or scientific_outcome != "invalid"
+    scientific_observations_complete = (
+        not is_cross_sectional
+        or logging_report.get("scientific_observation_logging_complete") is True
     )
-    scientific_supported = not (
-        is_funding_basis or is_cross_sectional
-    ) or scientific_outcome in {"positive", "negative"}
+    if is_cross_sectional and not scientific_observations_complete:
+        failed_gates.append("scientific_observation_support_absent")
+    scientific_valid = (
+        not (is_funding_basis or is_cross_sectional)
+        or (
+            scientific_outcome != "invalid"
+            and scientific_observations_complete
+        )
+    )
+    scientific_supported = (
+        not (is_funding_basis or is_cross_sectional)
+        or (
+            scientific_outcome in {"positive", "negative"}
+            and scientific_observations_complete
+        )
+    )
     evaluation_evidence_digests = (
         [
             *[item["record_digest"] for item in per_variant_evaluations],

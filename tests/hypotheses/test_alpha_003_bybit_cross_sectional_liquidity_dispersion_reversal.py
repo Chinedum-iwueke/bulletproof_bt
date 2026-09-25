@@ -520,6 +520,13 @@ def test_execute_registered_materializes_multi_asset_evidence(
     )
     assert result["disposition"] == "commissioning_complete"
     assert result["commissioning_receipt"]["qualification_authority"] is False
+    terminal_gate = result["commissioning_receipt"]["gate_report"]
+    assert terminal_gate["truth_certified"] is False
+    assert terminal_gate["point_in_time_valid"] is False
+    assert terminal_gate["out_of_sample_evaluated"] is False
+    assert terminal_gate["cost_stress_evaluated"] is False
+    assert "scientific_observation_support_absent" in terminal_gate["failed_gates"]
+    assert result["publication_envelope"]["trial"]["result_disposition"] == "rejected"
     assert result["publication_envelope"]["trial"]["hypothesis_evaluation"][
         "outcome"
     ] in {
