@@ -227,25 +227,38 @@ def test_causal_warmup_receipt_requires_complete_pre_evaluation_decisions() -> N
         frame=pd.DataFrame(
             {
                 "decision_at": pd.date_range(
-                    "2024-12-31T23:56:00Z", periods=5, freq="1min"
-                )
+                    "2024-12-31T23:54:00Z", periods=7, freq="1min"
+                ),
+                "displacement": [None, 1, 1, 1, 1, 1, 2],
+                "volatility": [None, None, None, None, None, None, 0.1],
             }
         )
     )
     receipt = causal_warmup_receipt(
         materialized,
         official_start="2025-01-01T00:00:00Z",
-        warmup_bars=5,
+        source_warmup_bars=7,
         warmup_timeframe="1m",
+        required_prior_observations=5,
+        required_prior_fields=["displacement"],
+        official_required_fields=["displacement", "volatility"],
     )
-    assert receipt["materialized_complete_bars"] == 5
+    assert receipt["usable_prior_observations"] == 5
+    assert receipt["admitted_prior_first"] == "2024-12-31T23:55:00+00:00"
+    assert receipt["admitted_prior_last"] == "2024-12-31T23:59:00+00:00"
+    assert receipt["official_decision_at"] == "2025-01-01T00:00:00+00:00"
     assert receipt["orders_permitted_during_warmup"] is False
+    broken = SimpleNamespace(frame=materialized.frame.copy())
+    broken.frame.loc[3, "displacement"] = None
     with pytest.raises(BridgeError, match="lacks the declared causal warmup"):
         causal_warmup_receipt(
-            materialized,
+            broken,
             official_start="2025-01-01T00:00:00Z",
-            warmup_bars=6,
+            source_warmup_bars=7,
             warmup_timeframe="1m",
+            required_prior_observations=5,
+            required_prior_fields=["displacement"],
+            official_required_fields=["displacement", "volatility"],
         )
 
 

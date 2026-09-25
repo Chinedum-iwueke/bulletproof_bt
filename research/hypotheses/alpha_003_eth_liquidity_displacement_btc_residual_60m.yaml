@@ -24,9 +24,10 @@ immutable_contract:
   minimum_history_observations_1m: 525600
   minimum_history_complete_15m_bars: 35040
   warmup:
-    observations: 35041
+    source_observations: 35042
+    required_prior_observations: 35040
     timeframe: 15m
-    start: "2024-04-30T23:45:00Z"
+    start: "2024-04-30T23:30:00Z"
     end: "2025-05-01T00:00:00Z"
     authority: causal_feature_state_only
   resampling_policy: left_closed_left_labeled_complete_bars
@@ -91,8 +92,11 @@ execution_semantics:
   resampling_interval: left_closed_right_open
   resampling_label: bucket_start
   signal_timeframe: 15m
-  warmup_observations: 35041
+  warmup_observations: 35042
   warmup_timeframe: 15m
+  warmup_required_prior_observations: 35040
+  warmup_required_prior_fields: [eth_15m_signed_liquidity_displacement]
+  warmup_official_required_fields: [eth_15m_log_return, btc_15m_log_return, eth_15m_quote_volume, btc_15m_quote_volume, eth_15m_signed_liquidity_displacement, btc_15m_realized_volatility_96]
   base_execution_timeframe: 1m
   base_data_frequency_expected: 1m
   exit_monitoring_timeframe: 1m

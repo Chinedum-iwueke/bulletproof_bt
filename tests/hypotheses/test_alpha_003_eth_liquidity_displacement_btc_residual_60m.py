@@ -11,6 +11,7 @@ import pytest
 
 from bt.contracts.research_specs_v2 import canonical_hash
 from bt.core.engine import BacktestEngine
+from bt.core.types import Bar
 from bt.data.feed import HistoricalDataFeed
 from bt.execution.execution_model import ExecutionModel
 from bt.execution.fees import FeeModel
@@ -407,6 +408,58 @@ def _classic_run(
         for line in (output / "decisions.jsonl").read_text().splitlines()
         if line
     ]
+
+
+def test_official_boundary_has_exact_prior_history_and_can_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(strategy_module, "MIN_HISTORY", 20)
+    official_start = pd.Timestamp("2025-05-01T00:00:00Z")
+    strategy = EthLiquidityDisplacementBtcResidual60mStrategy(
+        eth_displacement_tail_percentile=0.975
+    )
+
+    def bar(
+        ts: pd.Timestamp, *, displacement: float | None, official: bool = False
+    ) -> Bar:
+        extra = {
+            "representation_plan_digest": PLAN_DIGEST,
+            "representation_output_fields": json.dumps(
+                list(OUTPUT_FIELDS), separators=(",", ":")
+            ),
+            "representation_decision_ts": ts.isoformat(),
+            "prior_only_volatility_source_end_ts": (
+                ts - pd.Timedelta(minutes=15)
+            ).isoformat(),
+            "eth_15m_log_return": 0.02 if official else 0.001,
+            "btc_15m_log_return": 0.0,
+            "eth_15m_quote_volume": 2_000_000.0,
+            "btc_15m_quote_volume": 2_000_000.0,
+            "eth_15m_signed_liquidity_displacement": displacement,
+            "btc_15m_realized_volatility_96": 0.0 if official else None,
+        }
+        return Bar(ts, "BTCUSDT", 100, 101, 99, 100, 1_000, extra)
+
+    for index in range(97):
+        ts = official_start - pd.Timedelta(minutes=15 * (97 - index))
+        signals = strategy.on_bars(
+            ts,
+            {"BTCUSDT": bar(ts, displacement=None if index == 0 else 0.001)},
+            {"BTCUSDT"},
+            {"positions": {}},
+        )
+        assert signals == []
+    assert len(strategy.history["BTCUSDT"]) == 20
+    assert strategy.last["BTCUSDT"] == official_start - pd.Timedelta(minutes=15)
+    official = strategy.on_bars(
+        official_start,
+        {"BTCUSDT": bar(official_start, displacement=0.01, official=True)},
+        {"BTCUSDT"},
+        {"positions": {}},
+    )
+    assert len(official) == 1
+    assert official[0].ts == official_start
+    assert official[0].signal_type == "eth_liquidity_displacement_btc_residual_entry"
 
 
 def test_compiler_attachment_and_classic_engine_are_causal_and_deterministic(

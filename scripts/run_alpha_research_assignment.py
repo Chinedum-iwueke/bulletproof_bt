@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import platform
 import re
 import shutil
@@ -243,23 +244,66 @@ def causal_warmup_receipt(
     materialized: Any,
     *,
     official_start: Any,
-    warmup_bars: int,
+    source_warmup_bars: int,
     warmup_timeframe: str,
+    required_prior_observations: int,
+    required_prior_fields: list[str],
+    official_required_fields: list[str],
 ) -> dict[str, Any]:
-    """Prove enough complete pre-evaluation decisions exist to seed online state."""
+    """Prove exact usable prior state and the first official decision boundary."""
     start = pd.Timestamp(official_start)
-    warmup_rows = int(
-        (
-            pd.to_datetime(
-                materialized.frame["decision_at"], utc=True, errors="raise"
-            )
-            <= start
-        ).sum()
+    interval = pd.Timedelta(minutes=timeframe_minutes(warmup_timeframe))
+    frame = materialized.frame.copy()
+    decision_at = pd.to_datetime(frame["decision_at"], utc=True, errors="raise")
+    required_fields = list(
+        dict.fromkeys([*required_prior_fields, *official_required_fields])
     )
-    if warmup_rows < warmup_bars:
+    if (
+        source_warmup_bars <= 0
+        or required_prior_observations <= 0
+        or not required_prior_fields
+        or not official_required_fields
+        or any(not isinstance(field, str) or not field for field in required_fields)
+        or len(required_prior_fields) != len(set(required_prior_fields))
+        or len(official_required_fields) != len(set(official_required_fields))
+    ):
+        raise BridgeError("causal warmup field and observation contract is invalid")
+    missing_fields = sorted(set(required_fields) - set(frame.columns))
+    if missing_fields:
+        raise BridgeError(f"causal warmup fields are missing: {missing_fields}")
+
+    def finite_rows(rows: pd.DataFrame, fields: list[str]) -> pd.Series:
+        numeric = rows[fields].apply(pd.to_numeric, errors="coerce")
+        return numeric.notna().all(axis=1) & numeric.map(math.isfinite).all(axis=1)
+
+    prior = frame.loc[decision_at < start].copy()
+    prior["decision_at"] = decision_at.loc[prior.index]
+    usable_prior = prior.loc[finite_rows(prior, required_prior_fields)].sort_values(
+        "decision_at", kind="stable"
+    )
+    if len(usable_prior) < required_prior_observations:
         raise BridgeError(
             "materialized representation lacks the declared causal warmup: "
-            f"{warmup_rows} < {warmup_bars} complete {warmup_timeframe} bars"
+            f"{len(usable_prior)} < {required_prior_observations} usable prior "
+            f"{warmup_timeframe} observations"
+        )
+    admitted_prior = usable_prior.tail(required_prior_observations)
+    expected_prior = pd.date_range(
+        start=start - interval * required_prior_observations,
+        periods=required_prior_observations,
+        freq=interval,
+        tz="UTC",
+    )
+    if list(admitted_prior["decision_at"]) != list(expected_prior):
+        raise BridgeError(
+            "materialized causal warmup is not contiguous through the official boundary"
+        )
+    official = frame.loc[decision_at == start]
+    if len(official) != 1 or not finite_rows(
+        official, official_required_fields
+    ).all():
+        raise BridgeError(
+            "official-start representation is missing, duplicated, or incomplete"
         )
     receipt = {
         "schema_version": "alpha-causal-warmup-receipt-v1.0.0",
@@ -267,11 +311,17 @@ def causal_warmup_receipt(
         "official_evaluation_start": start.isoformat(),
         "warmup_start": (
             start
-            - pd.Timedelta(minutes=timeframe_minutes(warmup_timeframe)) * warmup_bars
+            - interval * source_warmup_bars
         ).isoformat(),
         "warmup_timeframe": warmup_timeframe,
-        "required_complete_bars": warmup_bars,
-        "materialized_complete_bars": warmup_rows,
+        "requested_source_bars": source_warmup_bars,
+        "required_prior_observations": required_prior_observations,
+        "required_prior_fields": required_prior_fields,
+        "usable_prior_observations": len(usable_prior),
+        "admitted_prior_first": admitted_prior["decision_at"].iloc[0].isoformat(),
+        "admitted_prior_last": admitted_prior["decision_at"].iloc[-1].isoformat(),
+        "official_required_fields": official_required_fields,
+        "official_decision_at": start.isoformat(),
         "orders_permitted_during_warmup": False,
         "performance_attribution_during_warmup": False,
     }
@@ -1131,8 +1181,17 @@ def execute_registered(
             warmup_receipt = causal_warmup_receipt(
                 materialized,
                 official_start=assignment["window_start"],
-                warmup_bars=warmup_bars,
+                source_warmup_bars=warmup_bars,
                 warmup_timeframe=warmup_timeframe,
+                required_prior_observations=int(
+                    execution_semantics.get("warmup_required_prior_observations", 0)
+                ),
+                required_prior_fields=list(
+                    execution_semantics.get("warmup_required_prior_fields", [])
+                ),
+                official_required_fields=list(
+                    execution_semantics.get("warmup_official_required_fields", [])
+                ),
             )
             (output / "causal-warmup-receipt.json").write_bytes(
                 canonical(warmup_receipt) + b"\n"
