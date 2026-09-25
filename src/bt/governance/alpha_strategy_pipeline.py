@@ -92,6 +92,13 @@ def draft_research_card(
         raise ValueError("invalid_engineered_card:" + ",".join(errors))
     representation_plan = assignment.get("representation_plan")
     if representation_plan is not None:
+        card = deepcopy(card)
+        if card.get("execution_semantics", {}).get(
+            "adaptive_representation_plan_digest"
+        ) == "assignment_bound_exact_plan":
+            card["execution_semantics"][
+                "adaptive_representation_plan_digest"
+            ] = canonical_hash(representation_plan)
         expected_fields = [
             item["output_field"] for item in representation_plan["transformations"]
         ]

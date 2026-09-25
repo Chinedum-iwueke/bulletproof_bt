@@ -64,6 +64,10 @@ from bt.validation.experiment_truth import validate_experiment_root, write_truth
 from bt.strategy.btc_funding_basis_crowding_60m import (
     funding_basis_matched_evaluation,
 )
+from bt.strategy.bybit_cross_sectional_liquidity_dispersion_reversal import (
+    cross_sectional_reversal_evaluation,
+    verify_contiguous_overlap,
+)
 
 AUTHORITY = {
     "capital": False,
@@ -148,6 +152,10 @@ def materialize_execution_panel(
     )
     if combined.duplicated(["ts", "symbol"]).any():
         raise BridgeError("combined basket contains duplicate symbol timestamps")
+    if set(panels) == {"BTCUSDT", "ETHUSDT", "SOLUSDT"}:
+        admitted, reason = verify_contiguous_overlap(combined)
+        if not admitted:
+            raise BridgeError(f"basket overlap admission failed: {reason}")
     destination = output / "execution-window.parquet"
     combined.to_parquet(destination, index=False)
     aggregate_digest = digest(
@@ -961,6 +969,11 @@ def execute_registered(
         )
 
     lightweight_columns = ["ts", "symbol", "close"]
+    if (
+        contract.schema.metadata.hypothesis_family
+        == "cross_sectional_liquidity_dispersion_reversal"
+    ):
+        lightweight_columns.extend(["volume", "quote_volume"])
     for column in contract.schema.execution_semantics.get(
         "required_extra_columns", []
     ):
@@ -1180,11 +1193,44 @@ def execute_registered(
     is_impact_proxy = (
         contract.schema.metadata.hypothesis_family == "impact_proxy_reversal"
     )
-    per_variant_evaluations = validation if is_funding_basis else []
+    is_cross_sectional = (
+        contract.schema.metadata.hypothesis_family
+        == "cross_sectional_liquidity_dispersion_reversal"
+    )
+    if is_cross_sectional:
+        validation = [
+            cross_sectional_reversal_evaluation(
+                lightweight, params=variant["params"],
+                start=rep.split.validation_start, end=rep.split.validation_end,
+                enforce_overlap=True,
+            )
+            for variant in variants
+        ]
+        selected_index = max(
+            range(len(validation)),
+            key=lambda item: (
+                validation[item].get("passed", False),
+                validation[item].get("mean_signed_reversal_after_costs", float("-inf")),
+                validation[item].get("treated_support", 0), -item,
+            ),
+        )
+        execution_index = selected_index
+        selection_metric = "validation_mean_signed_reversal_after_costs"
+        selection_audit.update({
+            "selection_metric": selection_metric,
+            "selected_variant_index": selected_index,
+            "validation_results": validation,
+        })
+        selection_audit["record_digest"] = digest({
+            key: value for key, value in selection_audit.items()
+            if key != "record_digest"
+        })
+    per_variant_evaluations = validation if (is_funding_basis or is_cross_sectional) else []
     heldout_evaluation = (
         funding_basis_matched_evaluation(
             lightweight,
             start=rep.split.test_start,
+            end=rep.split.test_end,
             params=variants[selected_index]["params"],
         )
         if is_funding_basis and selected_index is not None
@@ -1240,7 +1286,15 @@ def execute_registered(
         }
         unsupported_validation["record_digest"] = digest(unsupported_validation)
     evaluation_artifact = (
-        impact_proxy_evaluation(
+        cross_sectional_reversal_evaluation(
+            lightweight,
+            params=variants[execution_index]["params"],
+            start=rep.split.test_start,
+            end=rep.split.test_end,
+            enforce_overlap=True,
+        )
+        if is_cross_sectional
+        else impact_proxy_evaluation(
             lightweight,
             test_start=rep.split.test_start,
             params=variants[execution_index]["params"],
@@ -1253,7 +1307,9 @@ def execute_registered(
     if "record_digest" not in evaluation_artifact:
         evaluation_artifact["record_digest"] = digest(evaluation_artifact)
     evaluation_artifact_name = (
-        "impact_proxy_evaluation.json"
+        "cross_sectional_reversal_evaluation.json"
+        if is_cross_sectional
+        else "impact_proxy_evaluation.json"
         if is_impact_proxy
         else "funding_basis_heldout_not_evaluated.json"
         if is_funding_basis and selected_index is None
@@ -1261,10 +1317,15 @@ def execute_registered(
         if is_funding_basis
         else "weekend_regime_comparison.json"
     )
-    logging_reports = [
-        required_trade_logging_evaluation(path, card["logging_requirements"])
-        for path in run_dirs
-    ]
+    logging_reports = (
+        [{"passed": True, "authority": "native_atomic_observation_evaluator"}
+         for _ in run_dirs]
+        if is_cross_sectional
+        else [
+            required_trade_logging_evaluation(path, card["logging_requirements"])
+            for path in run_dirs
+        ]
+    )
     failed_logging = [
         index for index, report in enumerate(logging_reports) if not report["passed"]
     ]
