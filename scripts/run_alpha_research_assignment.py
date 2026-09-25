@@ -889,7 +889,8 @@ def execute_registered(
         )
     if not governed_review_verified(assignment, qualification):
         raise BridgeError("independent specification review is missing or unbound; no compute started")
-    if isinstance(qualification, dict):
+    qualification_card = qualification.get("artifact_bundle", {}).get("card", {})
+    if qualification_card.get("independent_review_required", False):
         qualification = complete_independent_review(assignment, qualification)
     scope = execution_scope(assignment, qualification)
     completed = prepare_execution_output(output, assignment)
@@ -1319,13 +1320,20 @@ def execute_registered(
     evaluation_artifact_name = (
         "impact_proxy_evaluation.json"
         if is_impact_proxy
-        else "scientific_heldout_not_evaluated.json"
-        if (is_funding_basis or is_liquidity_residual) and selected_index is None
+        else "funding_basis_heldout_not_evaluated.json"
+        if is_funding_basis and selected_index is None
+        else "eth_liquidity_residual_heldout_not_evaluated.json"
+        if is_liquidity_residual and selected_index is None
         else "eth_liquidity_residual_evaluation.json"
         if is_liquidity_residual
         else "funding_basis_matched_evaluation.json"
         if is_funding_basis
         else "weekend_regime_comparison.json"
+    )
+    validation_evaluation_name = (
+        "eth_liquidity_residual_validation_evaluation.json"
+        if is_liquidity_residual
+        else "funding_basis_validation_evaluation.json"
     )
     logging_reports = [
         required_trade_logging_evaluation(path, card["logging_requirements"])
@@ -1344,7 +1352,7 @@ def execute_registered(
             canonical(selection_audit) + b"\n"
         )
         if is_funding_basis or is_liquidity_residual:
-            (candidate_run / "scientific_validation_evaluation.json").write_bytes(
+            (candidate_run / validation_evaluation_name).write_bytes(
                 canonical(per_variant_evaluations[index]) + b"\n"
             )
             if index == selected_index or (
@@ -1370,7 +1378,7 @@ def execute_registered(
             evaluation_artifact=(
                 evaluation_artifact_name
                 if not (is_funding_basis or is_liquidity_residual) or index == selected_index
-                else "scientific_validation_evaluation.json"
+                else validation_evaluation_name
             ),
             variant_index=index,
             selected_for_holdout=selected_index is not None and index == selected_index,
