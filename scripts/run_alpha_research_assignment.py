@@ -183,13 +183,27 @@ def attach_adaptive_features(
             "strategy adaptive_representation_fields differ from the frozen plan"
         )
     frame = pd.read_parquet(execution_data_path)
-    overlap = set(output_fields) & set(frame.columns)
+    provenance_fields = {
+        "representation_plan_digest",
+        "representation_output_fields",
+        "representation_decision_ts",
+    }
+    overlap = (set(output_fields) | provenance_fields) & set(frame.columns)
     if overlap:
         raise BridgeError(f"adaptive fields collide with source data: {sorted(overlap)}")
     features = materialized.frame[["decision_at", *output_fields]].rename(
         columns={"decision_at": "ts"}
     )
     features["ts"] = pd.to_datetime(features["ts"], utc=True, errors="raise")
+    plan_digest = materialized.receipt.get("plan_digest")
+    if plan_digest is not None:
+        features["representation_plan_digest"] = plan_digest
+        features["representation_output_fields"] = json.dumps(
+            output_fields, separators=(",", ":")
+        )
+        features["representation_decision_ts"] = features["ts"].map(
+            lambda value: value.isoformat()
+        )
     if features["ts"].duplicated().any():
         raise BridgeError("adaptive representation has duplicate decision timestamps")
     frame["ts"] = pd.to_datetime(frame["ts"], utc=True, errors="raise")
@@ -1004,12 +1018,22 @@ def execute_registered(
     required_extra_columns = contract.schema.execution_semantics.get(
         "required_extra_columns", []
     )
-    if adaptive_receipt is not None and required_extra_columns != adaptive_receipt[
-        "output_fields"
-    ]:
-        raise BridgeError(
-            "required_extra_columns must exactly match adaptive representation outputs"
+    if adaptive_receipt is not None:
+        expected_prefix = adaptive_receipt["output_fields"]
+        required_provenance = [
+            "representation_plan_digest",
+            "representation_output_fields",
+            "representation_decision_ts",
+        ]
+        legacy_contract = required_extra_columns == expected_prefix
+        provenance_contract = (
+            required_extra_columns[: len(expected_prefix)] == expected_prefix
+            and all(item in required_extra_columns for item in required_provenance)
         )
+        if not (legacy_contract or provenance_contract):
+            raise BridgeError(
+                "required_extra_columns must preserve ordered adaptive outputs and provenance"
+            )
     execution_overrides: list[str] = []
     if required_extra_columns:
         if (

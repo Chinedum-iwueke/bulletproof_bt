@@ -95,12 +95,22 @@ def draft_research_card(
         expected_fields = [
             item["output_field"] for item in representation_plan["transformations"]
         ]
+        required_fields = [
+            *expected_fields,
+            "representation_plan_digest",
+            "representation_output_fields",
+            "representation_decision_ts",
+            "open_interest",
+            "oi_source_ts",
+        ]
         semantics = card.get("execution_semantics", {})
         if (
             semantics.get("adaptive_representation_plan_digest")
             != canonical_hash(representation_plan)
             or semantics.get("adaptive_representation_fields") != expected_fields
-            or semantics.get("required_extra_columns") != expected_fields
+            or semantics.get("required_extra_columns") not in (
+                expected_fields, required_fields
+            )
         ):
             raise ValueError("engineered_card_adaptive_representation_mismatch")
     count = parameter_variant_count(card)
