@@ -342,6 +342,19 @@ def causal_warmup_receipt(
         raise BridgeError(
             "official-start representation is missing, duplicated, or incomplete"
         )
+    official_source_end = None
+    if "btc_15m_realized_volatility_96" in official_required_fields:
+        source_field = "prior_only_volatility_source_end_ts"
+        if source_field not in official:
+            raise BridgeError("official-start prior-only volatility provenance is missing")
+        try:
+            official_source_end = pd.Timestamp(official.iloc[0][source_field])
+        except (TypeError, ValueError):
+            official_source_end = pd.NaT
+        if official_source_end != start - pd.Timedelta(minutes=15):
+            raise BridgeError(
+                "official-start prior-only volatility source boundary is invalid"
+            )
     receipt = {
         "schema_version": "alpha-causal-warmup-receipt-v1.0.0",
         "authority": "causal_feature_state_only",
@@ -359,6 +372,11 @@ def causal_warmup_receipt(
         "admitted_prior_last": admitted_prior["decision_at"].iloc[-1].isoformat(),
         "official_required_fields": official_required_fields,
         "official_decision_at": start.isoformat(),
+        "official_prior_only_source_end": (
+            official_source_end.isoformat()
+            if official_source_end is not None
+            else None
+        ),
         "orders_permitted_during_warmup": False,
         "performance_attribution_during_warmup": False,
     }

@@ -267,6 +267,7 @@ def test_causal_warmup_receipt_requires_complete_pre_evaluation_decisions() -> N
     assert receipt["admitted_prior_first"] == "2024-12-31T23:55:00+00:00"
     assert receipt["admitted_prior_last"] == "2024-12-31T23:59:00+00:00"
     assert receipt["official_decision_at"] == "2025-01-01T00:00:00+00:00"
+    assert receipt["official_prior_only_source_end"] == "2024-12-31T23:45:00+00:00"
     assert receipt["orders_permitted_during_warmup"] is False
     broken_prior = causal.copy()
     broken_prior.loc[3, "displacement"] = None
@@ -291,6 +292,24 @@ def test_causal_warmup_receipt_requires_complete_pre_evaluation_decisions() -> N
     with pytest.raises(BridgeError, match="official-start representation"):
         causal_warmup_receipt(
             shifted_current_only,
+            official_start="2025-01-01T00:00:00Z",
+            source_warmup_bars=7,
+            warmup_timeframe="1m",
+            required_prior_observations=5,
+            required_prior_fields=["displacement"],
+            official_required_fields=[
+                "displacement",
+                "btc_15m_realized_volatility_96",
+            ],
+        )
+    corrupted_source = causal.copy()
+    corrupted_source.loc[
+        corrupted_source["ts"] == pd.Timestamp("2025-01-01T00:00:00Z"),
+        "prior_only_volatility_source_end_ts",
+    ] = "2025-01-01T00:00:00+00:00"
+    with pytest.raises(BridgeError, match="source boundary"):
+        causal_warmup_receipt(
+            corrupted_source,
             official_start="2025-01-01T00:00:00Z",
             source_warmup_bars=7,
             warmup_timeframe="1m",
