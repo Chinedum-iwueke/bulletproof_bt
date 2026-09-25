@@ -15,6 +15,7 @@ from bt.governance.research_bridge import BridgeError
 from scripts.run_alpha_research_assignment import (
     AUTHORITY,
     attach_adaptive_features,
+    causal_warmup_receipt,
     engineering_required,
     execute_registered,
     execution_scope,
@@ -23,6 +24,7 @@ from scripts.run_alpha_research_assignment import (
     independent_review_required,
     hypothesis_identity,
     materialize_execution_panel,
+    materialize_causal_feature_frame,
     representation,
     record_alpha_memory,
     retain_bundle,
@@ -189,6 +191,220 @@ def test_execution_panel_materializes_every_digest_bound_basket_member(tmp_path)
     assert len(combined) == 20
     assert set(panels) == {"BTCUSDT", "ETHUSDT"}
     assert len(aggregate_digest) == 64
+
+
+def test_execution_panel_materializes_explicit_causal_warmup(tmp_path) -> None:
+    timestamps = pd.date_range("2024-12-31T23:55:00Z", periods=15, freq="1min")
+    path = tmp_path / "BTCUSDT.parquet"
+    pd.DataFrame(
+        {
+            "ts": timestamps,
+            "symbol": "BTCUSDT",
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.5,
+            "volume": 1000.0,
+        }
+    ).to_parquet(path, index=False)
+    value = assignment() | {
+        "dataset_path": str(path),
+        "window_start": "2025-01-01T00:00:00Z",
+        "window_end": "2025-01-01T00:10:00Z",
+    }
+    output = tmp_path / "output"
+    output.mkdir()
+    destination, _, panels = materialize_execution_panel(
+        value, output, warmup_bars=5, warmup_timeframe="1m"
+    )
+    materialized = pd.read_parquet(destination)
+    assert materialized["ts"].min() == pd.Timestamp("2024-12-31T23:55:00Z")
+    assert len(materialized) == 15
+    assert len(panels["BTCUSDT"]) == 15
+
+
+def test_causal_warmup_receipt_requires_complete_pre_evaluation_decisions() -> None:
+    materialized = SimpleNamespace(
+        frame=pd.DataFrame(
+            {
+                "decision_at": pd.date_range(
+                    "2024-12-31T23:54:00Z", periods=7, freq="1min"
+                ),
+                "displacement": [None, 1, 1, 1, 1, 1, 2],
+                "btc_15m_realized_volatility_96": [
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0.1,
+                    0.2,
+                ],
+            }
+        ),
+        receipt={
+            "output_fields": [
+                "displacement",
+                "btc_15m_realized_volatility_96",
+            ],
+            "plan_digest": "a" * 64,
+        },
+    )
+    causal = materialize_causal_feature_frame(materialized)
+    receipt = causal_warmup_receipt(
+        causal,
+        official_start="2025-01-01T00:00:00Z",
+        source_warmup_bars=7,
+        warmup_timeframe="1m",
+        required_prior_observations=5,
+        required_prior_fields=["displacement"],
+        official_required_fields=[
+            "displacement",
+            "btc_15m_realized_volatility_96",
+        ],
+    )
+    assert receipt["usable_prior_observations"] == 5
+    assert receipt["admitted_prior_first"] == "2024-12-31T23:55:00+00:00"
+    assert receipt["admitted_prior_last"] == "2024-12-31T23:59:00+00:00"
+    assert receipt["official_decision_at"] == "2025-01-01T00:00:00+00:00"
+    assert receipt["official_prior_only_source_end"] == "2024-12-31T23:45:00+00:00"
+    assert receipt["orders_permitted_during_warmup"] is False
+    broken_prior = causal.copy()
+    broken_prior.loc[3, "displacement"] = None
+    with pytest.raises(BridgeError, match="lacks the declared causal warmup"):
+        causal_warmup_receipt(
+            broken_prior,
+            official_start="2025-01-01T00:00:00Z",
+            source_warmup_bars=7,
+            warmup_timeframe="1m",
+            required_prior_observations=5,
+            required_prior_fields=["displacement"],
+            official_required_fields=[
+                "displacement",
+                "btc_15m_realized_volatility_96",
+            ],
+        )
+    raw_current_only = SimpleNamespace(
+        frame=materialized.frame.copy(), receipt=materialized.receipt
+    )
+    raw_current_only.frame.loc[5, "btc_15m_realized_volatility_96"] = None
+    shifted_current_only = materialize_causal_feature_frame(raw_current_only)
+    with pytest.raises(BridgeError, match="official-start representation"):
+        causal_warmup_receipt(
+            shifted_current_only,
+            official_start="2025-01-01T00:00:00Z",
+            source_warmup_bars=7,
+            warmup_timeframe="1m",
+            required_prior_observations=5,
+            required_prior_fields=["displacement"],
+            official_required_fields=[
+                "displacement",
+                "btc_15m_realized_volatility_96",
+            ],
+        )
+    corrupted_source = causal.copy()
+    corrupted_source.loc[
+        corrupted_source["ts"] == pd.Timestamp("2025-01-01T00:00:00Z"),
+        "prior_only_volatility_source_end_ts",
+    ] = "2025-01-01T00:00:00+00:00"
+    with pytest.raises(BridgeError, match="source boundary"):
+        causal_warmup_receipt(
+            corrupted_source,
+            official_start="2025-01-01T00:00:00Z",
+            source_warmup_bars=7,
+            warmup_timeframe="1m",
+            required_prior_observations=5,
+            required_prior_fields=["displacement"],
+            official_required_fields=[
+                "displacement",
+                "btc_15m_realized_volatility_96",
+            ],
+        )
+
+
+@pytest.mark.parametrize(
+    "malformed_source",
+    [None, "not-a-timestamp", "2024-12-31T23:45:00", {"invalid": "type"}],
+    ids=["null", "unparseable", "timezone-naive", "invalid-type"],
+)
+def test_causal_warmup_receipt_rejects_malformed_prior_source(
+    malformed_source: object,
+) -> None:
+    materialized = SimpleNamespace(
+        frame=pd.DataFrame(
+            {
+                "decision_at": pd.date_range(
+                    "2024-12-31T23:54:00Z", periods=7, freq="1min"
+                ),
+                "displacement": [None, 1, 1, 1, 1, 1, 2],
+                "btc_15m_realized_volatility_96": [
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0.1,
+                    0.2,
+                ],
+            }
+        ),
+        receipt={
+            "output_fields": [
+                "displacement",
+                "btc_15m_realized_volatility_96",
+            ],
+            "plan_digest": "a" * 64,
+        },
+    )
+    causal = materialize_causal_feature_frame(materialized)
+    causal.loc[
+        causal["ts"] == pd.Timestamp("2025-01-01T00:00:00Z"),
+        "prior_only_volatility_source_end_ts",
+    ] = malformed_source
+    with pytest.raises(BridgeError, match="source boundary"):
+        causal_warmup_receipt(
+            causal,
+            official_start="2025-01-01T00:00:00Z",
+            source_warmup_bars=7,
+            warmup_timeframe="1m",
+            required_prior_observations=5,
+            required_prior_fields=["displacement"],
+            official_required_fields=[
+                "displacement",
+                "btc_15m_realized_volatility_96",
+            ],
+        )
+
+
+def test_causal_warmup_receipt_rejects_missing_prior_source_field() -> None:
+    frame = pd.DataFrame(
+        {
+            "ts": pd.date_range("2024-12-31T23:54:00Z", periods=7, freq="1min"),
+            "displacement": [None, 1, 1, 1, 1, 1, 2],
+            "btc_15m_realized_volatility_96": [
+                None,
+                None,
+                None,
+                None,
+                None,
+                0.1,
+                0.2,
+            ],
+        }
+    )
+    with pytest.raises(BridgeError, match="provenance is missing"):
+        causal_warmup_receipt(
+            frame,
+            official_start="2025-01-01T00:00:00Z",
+            source_warmup_bars=7,
+            warmup_timeframe="1m",
+            required_prior_observations=5,
+            required_prior_fields=["displacement"],
+            official_required_fields=[
+                "displacement",
+                "btc_15m_realized_volatility_96",
+            ],
+        )
 
 
 def test_commissioning_scope_is_review_contained_and_non_qualifying() -> None:

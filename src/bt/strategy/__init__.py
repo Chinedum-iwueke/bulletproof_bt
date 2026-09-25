@@ -58,6 +58,8 @@ from bt.strategy.alpha_weekend_momentum import AlphaWeekendMomentumStrategy  # n
 from bt.strategy.btc_5m_impact_proxy_reversal import Btc5mImpactProxyReversalStrategy  # noqa: E402
 from bt.strategy.btc_funding_basis_crowding_60m import BtcFundingBasisCrowding60mStrategy  # noqa: E402
 from bt.strategy.btc_oi_expansion_return_asymmetry_60m import BtcOiExpansionReturnAsymmetry60mStrategy  # noqa: E402
+from bt.strategy.bybit_cross_sectional_liquidity_dispersion_reversal import BybitCrossSectionalLiquidityDispersionReversalStrategy  # noqa: E402
+from bt.strategy.eth_liquidity_displacement_btc_residual_60m import EthLiquidityDisplacementBtcResidual60mStrategy  # noqa: E402
 from bt.strategy.l1_h10a_mean_reversion_small_tp import L1H10AMeanReversionSmallTPStrategy  # noqa: E402
 from bt.strategy.l1_h10b_breakout_scalping import L1H10BBreakoutScalpingStrategy  # noqa: E402
 from bt.strategy.l1_h11_quality_filtered_continuation import L1H11QualityFilteredContinuationStrategy  # noqa: E402
@@ -89,10 +91,13 @@ __all__ = [
     "L1H7SqueezeExpansionPullbackStrategy",
     "L1H8TrendContinuationPullbackStrategy",
     "L1H9MomentumBreakoutStrategy",
+    "ResearchGraphV1Strategy",
     "AlphaWeekendMomentumStrategy",
     "Btc5mImpactProxyReversalStrategy",
     "BtcFundingBasisCrowding60mStrategy",
     "BtcOiExpansionReturnAsymmetry60mStrategy",
+    "BybitCrossSectionalLiquidityDispersionReversalStrategy",
+    "EthLiquidityDisplacementBtcResidual60mStrategy",
     "L1H10AMeanReversionSmallTPStrategy",
     "L1H10BBreakoutScalpingStrategy",
     "L1H11QualityFilteredContinuationStrategy",
