@@ -1,8 +1,10 @@
 from datetime import UTC, datetime
+from copy import deepcopy
 import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from bt.governance.alpha_strategy_pipeline import (
     confirm_card,
@@ -218,6 +220,48 @@ def test_single_instrument_registered_strategy_rejects_basket_assignment():
     )
     with pytest.raises(ValueError, match="input_cardinality_mismatch"):
         draft_research_card(value, repository_root=str(root))
+
+
+def test_registered_basket_requires_exact_instruments_and_representation():
+    root = Path(__file__).parents[1]
+    contract_path = (
+        root
+        / "research/hypotheses/alpha_003_eth_liquidity_displacement_btc_residual_60m.yaml"
+    )
+    payload = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
+    question = payload["immutable_contract"]["question"]
+    value = assignment()
+    value.update({
+        "question": question,
+        "question_digest": canonical_hash({"question": question}),
+        "instrument": "BTCUSDT",
+        "instruments": ["BTCUSDT", "ETHUSDT"],
+        "research_timeframe": "15m",
+        "max_variants": 8,
+        "representation_plan": payload["representation_plan"],
+    })
+    catalog = build_strategy_capability_catalog(root, source_commit="a" * 40)
+    value["reusable_strategy"] = next(
+        item
+        for item in catalog["capabilities"]
+        if item["hypothesis_id"]
+        == "ALPHA-003-ETH-LIQUIDITY-DISPLACEMENT-BTC-RESIDUAL-60M"
+    )
+
+    draft = draft_research_card(value, repository_root=str(root))
+    assert draft["engine_strategy_name"] == (
+        "eth_liquidity_displacement_btc_residual_60m"
+    )
+
+    changed_basket = deepcopy(value)
+    changed_basket["instruments"] = ["BTCUSDT", "SOLUSDT"]
+    with pytest.raises(ValueError, match="instrument_contract_mismatch"):
+        draft_research_card(changed_basket, repository_root=str(root))
+
+    changed_plan = deepcopy(value)
+    changed_plan["representation_plan"]["transformations"][0]["rationale"] += " Changed."
+    with pytest.raises(ValueError, match="adaptive_representation_mismatch"):
+        draft_research_card(changed_plan, repository_root=str(root))
 
 
 def review_packet_fixture():

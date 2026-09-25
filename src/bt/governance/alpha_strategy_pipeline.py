@@ -159,10 +159,13 @@ def draft_registered_strategy_card(
     capability = assignment["reusable_strategy"]
     if capability.get("bounded_weekly_reuse_eligible") is not True:
         raise ValueError("registered_strategy_not_weekly_eligible")
+    assignment_instruments = assignment.get("instruments", [assignment["instrument"]])
+    expected_mode = (
+        "aligned_basket" if len(assignment_instruments) > 1 else "single_instrument"
+    )
     if (
-        capability.get("input_mode") != "single_instrument"
-        or capability.get("maximum_instruments") != 1
-        or len(assignment.get("instruments", [assignment["instrument"]])) != 1
+        capability.get("input_mode") != expected_mode
+        or capability.get("maximum_instruments") != len(assignment_instruments)
     ):
         raise ValueError("registered_strategy_input_cardinality_mismatch")
     root = Path(repository_root).resolve(strict=True)
@@ -176,12 +179,31 @@ def draft_registered_strategy_card(
     payload = yaml.safe_load(payload_bytes)
     if not isinstance(payload, dict):
         raise ValueError("registered_strategy_contract_invalid")
+    immutable_contract = payload.get("immutable_contract", {})
+    declared_instruments = immutable_contract.get("instruments")
+    if not isinstance(declared_instruments, list) or not declared_instruments:
+        declared_instruments = payload.get("representation_plan", {}).get("instruments")
+    if declared_instruments is None:
+        declared_instruments = [assignment["instrument"]]
+    if declared_instruments != assignment_instruments:
+        raise ValueError("registered_strategy_instrument_contract_mismatch")
     entry = payload.get("entry")
     parameters = payload.get("parameter_grid")
     semantics = {
         **payload.get("execution_semantics", {}),
         **{key: payload.get("truth_contract", {}).get(key) for key in EXACT_TRUTH},
     }
+    representation_plan = assignment.get("representation_plan")
+    if representation_plan is not None:
+        expected_fields = [
+            item["output_field"] for item in representation_plan["transformations"]
+        ]
+        if (
+            semantics.get("adaptive_representation_plan_digest")
+            != canonical_hash(representation_plan)
+            or semantics.get("adaptive_representation_fields") != expected_fields
+        ):
+            raise ValueError("registered_strategy_adaptive_representation_mismatch")
     contract_logging = payload.get("logging", {}).get("required_fields", [])
     logging = capability.get("logging_requirements", [])
     if (
