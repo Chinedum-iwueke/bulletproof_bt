@@ -266,6 +266,7 @@ def real_data_admission_receipt(
         "panel_uri": f"file://{panel}",
         "byte_size": panel.stat().st_size,
         "schema_digest": digest(sorted(metadata.schema_arrow.names)),
+        "output_columns": sorted(metadata.schema_arrow.names),
         "quality": {
             "null_counts": null_counts,
             "duplicate_timestamp_count": duplicate_count,

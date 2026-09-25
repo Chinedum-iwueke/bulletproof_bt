@@ -30,6 +30,7 @@ def fixture(root: Path, *, duplicate: bool = False) -> Path:
             "low": [0.5, 1.5],
             "close": [1.5, 2.5],
             "volume": [10.0, 11.0],
+            "quote_volume": [15.0, 27.5],
         }
     ).to_parquet(panel, index=False)
     manifests = root / "manifests"
@@ -81,6 +82,7 @@ def test_admits_canonical_exchange_history_with_no_authority(tmp_path):
     assert receipt.result["admitted"] is True
     assert receipt.result["schema_version"] == "alpha001-real-data-admission-v2.0.0"
     assert receipt.result["row_count"] == 2
+    assert "quote_volume" in receipt.result["output_columns"]
     assert receipt.dataset_digest == receipt.result["panel_sha256"]
     assert verify_receipt(receipt)
     assert not any(receipt.authority.values())
@@ -149,7 +151,12 @@ def test_batch_admits_only_the_exact_preregistered_assets(tmp_path):
         "data_root": str(tmp_path),
         "backup_root": str(tmp_path / "backups"),
         "assets": [
-            {"venue": "bybit", "instrument": "BTCUSDT", "timeframe": "1m"}
+            {
+                "venue": "bybit",
+                "instrument": "BTCUSDT",
+                "timeframe": "1m",
+                "required_fields": ["ts", "close", "quote_volume"],
+            }
         ],
     }
     result = build_batch(assignment)
@@ -161,6 +168,30 @@ def test_batch_admits_only_the_exact_preregistered_assets(tmp_path):
     ]
     assignment["assets"].append(assignment["assets"][0])
     with pytest.raises(ValueError, match="must be unique"):
+        build_batch(assignment)
+
+
+def test_batch_rejects_panel_missing_candidate_required_field(tmp_path):
+    panel = fixture(tmp_path)
+    frame = pd.read_parquet(panel).drop(columns=["quote_volume"])
+    frame.to_parquet(panel, index=False)
+    assignment = {
+        "candidate_id": "candidate-1",
+        "candidate_digest": "b" * 64,
+        "catalog_receipt_digest": "c" * 64,
+        "source_commit": COMMIT,
+        "data_root": str(tmp_path),
+        "backup_root": str(tmp_path / "backups"),
+        "assets": [
+            {
+                "venue": "bybit",
+                "instrument": "BTCUSDT",
+                "timeframe": "1m",
+                "required_fields": ["ts", "close", "quote_volume"],
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match="missing required fields: quote_volume"):
         build_batch(assignment)
 
 
