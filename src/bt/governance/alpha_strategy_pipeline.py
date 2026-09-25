@@ -58,7 +58,11 @@ def draft_research_card(
             changed = any(
                 getattr(before, field) != getattr(after, field)
                 for field in (
-                    "st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns"
+                    "st_dev",
+                    "st_ino",
+                    "st_size",
+                    "st_mtime_ns",
+                    "st_ctime_ns",
                 )
             )
             if changed or len(payload) > 1_000_000:
@@ -84,7 +88,8 @@ def draft_research_card(
     if card.get("dataset_binding") != expected_dataset:
         raise ValueError("engineered_card_dataset_mismatch")
     if card.get("execution_window") != {
-        "start": assignment["window_start"], "end": assignment["window_end"]
+        "start": assignment["window_start"],
+        "end": assignment["window_end"],
     }:
         raise ValueError("engineered_card_window_mismatch")
     errors = validate_hypothesis_card(card, require_confirmed=False)
@@ -93,12 +98,15 @@ def draft_research_card(
     representation_plan = assignment.get("representation_plan")
     if representation_plan is not None:
         card = deepcopy(card)
-        if card.get("execution_semantics", {}).get(
-            "adaptive_representation_plan_digest"
-        ) == "assignment_bound_exact_plan":
-            card["execution_semantics"][
+        if (
+            card.get("execution_semantics", {}).get(
                 "adaptive_representation_plan_digest"
-            ] = canonical_hash(representation_plan)
+            )
+            == "assignment_bound_exact_plan"
+        ):
+            card["execution_semantics"]["adaptive_representation_plan_digest"] = (
+                canonical_hash(representation_plan)
+            )
         expected_fields = [
             item["output_field"] for item in representation_plan["transformations"]
         ]
@@ -107,16 +115,18 @@ def draft_research_card(
             "representation_plan_digest",
             "representation_output_fields",
             "representation_decision_ts",
-            "open_interest",
-            "oi_source_ts",
         ]
         semantics = card.get("execution_semantics", {})
+        declared_required = semantics.get("required_extra_columns")
         if (
             semantics.get("adaptive_representation_plan_digest")
             != canonical_hash(representation_plan)
             or semantics.get("adaptive_representation_fields") != expected_fields
-            or semantics.get("required_extra_columns") not in (
-                expected_fields, required_fields
+            or not isinstance(declared_required, list)
+            or declared_required[: len(expected_fields)] != expected_fields
+            or (
+                declared_required != expected_fields
+                and not all(item in declared_required for item in required_fields)
             )
         ):
             raise ValueError("engineered_card_adaptive_representation_mismatch")
@@ -128,8 +138,10 @@ def draft_research_card(
 
 def parameter_variant_count(card: dict[str, Any]) -> int:
     grid = card["parameters"]
-    if not isinstance(grid, dict) or not grid or any(
-        not isinstance(values, list) or not values for values in grid.values()
+    if (
+        not isinstance(grid, dict)
+        or not grid
+        or any(not isinstance(values, list) or not values for values in grid.values())
     ):
         raise ValueError("invalid_parameter_grid")
     return prod(len(values) for values in grid.values())
@@ -163,10 +175,7 @@ def draft_registered_strategy_card(
     parameters = payload.get("parameter_grid")
     semantics = {
         **payload.get("execution_semantics", {}),
-        **{
-            key: payload.get("truth_contract", {}).get(key)
-            for key in EXACT_TRUTH
-        },
+        **{key: payload.get("truth_contract", {}).get(key) for key in EXACT_TRUTH},
     }
     contract_logging = payload.get("logging", {}).get("required_fields", [])
     logging = capability.get("logging_requirements", [])
@@ -236,9 +245,7 @@ def draft_registered_strategy_card(
         "parameters": parameters,
         "data_requirements": ["research_panel"],
         "logging_requirements": logging,
-        "evaluation": payload.get(
-            "evaluation", {"required_tiers": ["Tier2", "Tier3"]}
-        ),
+        "evaluation": payload.get("evaluation", {"required_tiers": ["Tier2", "Tier3"]}),
         "falsification_criteria": [
             "Reject when preregistered held-out or cost-stress gates fail.",
             "Reject when the exact native contract cannot replay deterministically.",
@@ -279,7 +286,9 @@ def draft_registered_strategy_card(
     return card
 
 
-def governed_review_verified(assignment: dict[str, Any], qualification: dict[str, Any] | None) -> bool:
+def governed_review_verified(
+    assignment: dict[str, Any], qualification: dict[str, Any] | None
+) -> bool:
     """Replay review evidence from an authenticated immutable control-plane assignment."""
     if not isinstance(qualification, dict):
         return False
@@ -299,20 +308,32 @@ def governed_review_verified(assignment: dict[str, Any], qualification: dict[str
         or not re.fullmatch(r"[0-9a-f-]{36}", str(packet.get("route_id", "")))
         or assertion.get("schema_version") != "evaluation-independence-assertion-v1.0.0"
         or not re.fullmatch(r"[0-9a-f]{64}", str(assertion.get("route_digest", "")))
-        or not isinstance(producer, dict) or not isinstance(policy, dict)
-        or not isinstance(excluded, list) or not excluded
+        or not isinstance(producer, dict)
+        or not isinstance(policy, dict)
+        or not isinstance(excluded, list)
+        or not excluded
         or not all(isinstance(actor, str) and actor for actor in excluded)
-        or not isinstance(producer_identities, list) or not producer_identities
+        or not isinstance(producer_identities, list)
+        or not producer_identities
         or not all(isinstance(identity, dict) for identity in producer_identities)
         or producer.get("agent_id") not in excluded
     ):
         return False
     for identity in producer_identities:
         if (
-            not all(isinstance(identity.get(key), str) and identity[key] for key in (
-                "agent_id", "package_digest", "context_group", "profile_digest",
-                "machine", "provider", "model_family", "runtime",
-            ))
+            not all(
+                isinstance(identity.get(key), str) and identity[key]
+                for key in (
+                    "agent_id",
+                    "package_digest",
+                    "context_group",
+                    "profile_digest",
+                    "machine",
+                    "provider",
+                    "model_family",
+                    "runtime",
+                )
+            )
             or not re.fullmatch(r"[0-9a-f]{64}", identity["package_digest"])
             or not re.fullmatch(r"[0-9a-f]{64}", identity["profile_digest"])
         ):
@@ -320,9 +341,22 @@ def governed_review_verified(assignment: dict[str, Any], qualification: dict[str
     if {identity.get("agent_id") for identity in producer_identities} != set(excluded):
         return False
     primary = subject.get("qualifier_identity")
-    if not isinstance(primary, dict) or primary not in producer_identities or any(primary.get(key) != producer.get(key) for key in (
-        "agent_id", "package_digest", "context_group", "machine", "provider", "model_family", "runtime",
-    )):
+    if (
+        not isinstance(primary, dict)
+        or primary not in producer_identities
+        or any(
+            primary.get(key) != producer.get(key)
+            for key in (
+                "agent_id",
+                "package_digest",
+                "context_group",
+                "machine",
+                "provider",
+                "model_family",
+                "runtime",
+            )
+        )
+    ):
         return False
     required = policy.get("required_review_kinds")
     ceiling = policy.get("max_pairwise_shared_dimensions")
@@ -330,7 +364,8 @@ def governed_review_verified(assignment: dict[str, Any], qualification: dict[str
         not isinstance(required, list)
         or not all(isinstance(kind, str) and kind for kind in required)
         or not {"strategy_spec", "causality_leakage"}.issubset(set(required))
-        or not isinstance(ceiling, int) or not 0 <= ceiling <= 4
+        or not isinstance(ceiling, int)
+        or not 0 <= ceiling <= 4
     ):
         return False
     reviewers = []
@@ -338,36 +373,65 @@ def governed_review_verified(assignment: dict[str, Any], qualification: dict[str
     for item in assertion["assignments"]:
         if not isinstance(item, dict):
             return False
-        identity, review = item.get("evaluator_identity"), item.get("alpha_strategy_review")
+        identity, review = (
+            item.get("evaluator_identity"),
+            item.get("alpha_strategy_review"),
+        )
         if not isinstance(identity, dict) or not isinstance(review, dict):
             return False
         if (
             not isinstance(item.get("review_kind"), str)
             or not item["review_kind"]
             or identity.get("agent_id") in excluded
-            or not all(isinstance(identity.get(key), str) and identity[key] for key in (
-                "agent_id", "package_digest", "context_group", "profile_digest",
-                "machine", "provider", "model_family", "runtime",
-            ))
+            or not all(
+                isinstance(identity.get(key), str) and identity[key]
+                for key in (
+                    "agent_id",
+                    "package_digest",
+                    "context_group",
+                    "profile_digest",
+                    "machine",
+                    "provider",
+                    "model_family",
+                    "runtime",
+                )
+            )
             or not re.fullmatch(r"[0-9a-f]{64}", identity["package_digest"])
             or not re.fullmatch(r"[0-9a-f]{64}", identity["profile_digest"])
             or not re.fullmatch(r"[0-9a-f]{64}", str(item.get("assignment_digest", "")))
             or item.get("review_digest") != canonical_hash(review)
             or review.get("subject_digest") != canonical_hash(subject)
-            or review.get("verdict") != "approve" or review.get("blockers") != []
-            or not isinstance(review.get("checks"), list) or not review["checks"]
-            or not isinstance(review.get("rationale"), str) or len(review["rationale"]) < 20
+            or review.get("verdict") != "approve"
+            or review.get("blockers") != []
+            or not isinstance(review.get("checks"), list)
+            or not review["checks"]
+            or not isinstance(review.get("rationale"), str)
+            or len(review["rationale"]) < 20
             or not isinstance(item.get("correlation_report"), dict)
         ):
             return False
         for other in (producer, *producer_identities, *reviewers):
-            if any(identity.get(key) == other.get(key) for key in (
-                "agent_id", "package_digest", "context_group",
-            )):
+            if any(
+                identity.get(key) == other.get(key)
+                for key in (
+                    "agent_id",
+                    "package_digest",
+                    "context_group",
+                )
+            ):
                 return False
-            if sum(identity.get(key) == other.get(key) for key in (
-                "machine", "provider", "model_family", "runtime",
-            )) > ceiling:
+            if (
+                sum(
+                    identity.get(key) == other.get(key)
+                    for key in (
+                        "machine",
+                        "provider",
+                        "model_family",
+                        "runtime",
+                    )
+                )
+                > ceiling
+            ):
                 return False
         reviewers.append(identity)
         kinds.append(item.get("review_kind"))
@@ -615,7 +679,11 @@ def qualify_card(card: dict[str, Any], *, repository_root: str) -> dict[str, Any
         "card_digest": canonical_hash(card),
         "artifact_bundle": bundle,
         "review": review,
-        "qualified": all(value for key, value in gates.items() if key != "independent_review_complete"),
+        "qualified": all(
+            value
+            for key, value in gates.items()
+            if key != "independent_review_complete"
+        ),
         "qualification_scope": "deterministic_compilation_only",
         "tier": "Tier2B",
         "dataset": card["dataset_binding"],

@@ -11,7 +11,7 @@
   "representation_mode": "registered_engine_contract",
   "engine_strategy_name": "bybit_cross_sectional_liquidity_dispersion_reversal",
   "engine_hypothesis_template": "research/hypotheses/alpha_003_bybit_cross_sectional_liquidity_dispersion_reversal.yaml",
-  "engine_hypothesis_template_digest": "49f61cab94d3af8e6474e1e59308f7d98a9d15ffd196b50b0a32e8e7223cd736",
+  "engine_hypothesis_template_digest": "b86ce614897da86e411b5f2305a0ebc07ea71de9d9d13b0ba9f19d0c89a63868",
   "features": [],
   "gates": [],
   "entry": {"type": "atomic_research_observation", "timing": "completed_5m_boundary"},
@@ -44,7 +44,7 @@
     "threshold_fit_policy": "rolling_prior_only_up_to_288_completed_opportunities_minimum_20",
     "liquidity_normal_control_policy": "stress_at_or_below_prior_median_with_25pct_dispersion_and_volatility_calipers",
     "adaptive_representation_fields": ["btcusdt_log_return_5m", "ethusdt_log_return_5m", "solusdt_log_return_5m", "btcusdt_quote_volume_5m", "ethusdt_quote_volume_5m", "solusdt_quote_volume_5m", "btcusdt_volume_5m", "ethusdt_volume_5m", "solusdt_volume_5m"],
-    "required_extra_columns": ["btcusdt_log_return_5m", "ethusdt_log_return_5m", "solusdt_log_return_5m", "btcusdt_quote_volume_5m", "ethusdt_quote_volume_5m", "solusdt_quote_volume_5m", "btcusdt_volume_5m", "ethusdt_volume_5m", "solusdt_volume_5m", "representation_plan_digest", "representation_output_fields", "representation_decision_ts", "open_interest", "oi_source_ts"]
+    "required_extra_columns": ["btcusdt_log_return_5m", "ethusdt_log_return_5m", "solusdt_log_return_5m", "btcusdt_quote_volume_5m", "ethusdt_quote_volume_5m", "solusdt_quote_volume_5m", "btcusdt_volume_5m", "ethusdt_volume_5m", "solusdt_volume_5m", "representation_plan_digest", "representation_output_fields", "representation_decision_ts"]
   },
   "source_citations": [],
   "field_provenance": {

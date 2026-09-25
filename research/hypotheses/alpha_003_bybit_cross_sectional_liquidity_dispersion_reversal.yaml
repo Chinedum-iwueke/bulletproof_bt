@@ -52,7 +52,7 @@ execution_semantics:
   tp_update_policy: "none"
   hold_time_unit: "six_contiguous_complete_5m_bars"
   atr_source_timeframe: "5m"
-  required_extra_columns: [btcusdt_log_return_5m, ethusdt_log_return_5m, solusdt_log_return_5m, btcusdt_quote_volume_5m, ethusdt_quote_volume_5m, solusdt_quote_volume_5m, btcusdt_volume_5m, ethusdt_volume_5m, solusdt_volume_5m, representation_plan_digest, representation_output_fields, representation_decision_ts, open_interest, oi_source_ts]
+  required_extra_columns: [btcusdt_log_return_5m, ethusdt_log_return_5m, solusdt_log_return_5m, btcusdt_quote_volume_5m, ethusdt_quote_volume_5m, solusdt_quote_volume_5m, btcusdt_volume_5m, ethusdt_volume_5m, solusdt_volume_5m, representation_plan_digest, representation_output_fields, representation_decision_ts]
   adaptive_representation_fields: [btcusdt_log_return_5m, ethusdt_log_return_5m, solusdt_log_return_5m, btcusdt_quote_volume_5m, ethusdt_quote_volume_5m, solusdt_quote_volume_5m, btcusdt_volume_5m, ethusdt_volume_5m, solusdt_volume_5m]
   signal_bar_policy: "complete_left_closed_left_labeled_only"
   threshold_fit_policy: "rolling_prior_only_up_to_288_completed_opportunities_minimum_20"

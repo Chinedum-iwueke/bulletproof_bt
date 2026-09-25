@@ -78,8 +78,14 @@ def _invalid(reason: str, params: Mapping[str, Any]) -> dict[str, Any]:
         "reason": reason,
         "passed": False,
         "decision_records": [],
+        "observation_records": [],
         "treated_support": 0,
+        "control_support": 0,
         "matched_support": 0,
+        "mean_signed_reversal_after_costs": 0.0,
+        "doubled_cost_mean_signed_reversal": 0.0,
+        "matched_control_confidence_interval_95": {"lower": 0.0, "upper": 0.0},
+        "directional_support": {"positive": 0, "nonpositive": 0},
     }
     result["record_digest"] = _canonical_hash(result)
     return result
