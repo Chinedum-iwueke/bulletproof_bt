@@ -462,8 +462,21 @@ def test_official_boundary_has_exact_prior_history_and_can_signal(
     assert official[0].signal_type == "eth_liquidity_displacement_btc_residual_entry"
 
 
+@pytest.mark.parametrize(
+    "malformed_source",
+    [
+        None,
+        "not-a-timestamp",
+        "2025-05-02T05:45:00",
+        {"invalid": "type"},
+        "missing",
+    ],
+    ids=["null", "unparseable", "timezone-naive", "invalid-type", "missing"],
+)
 def test_compiler_attachment_and_classic_engine_are_causal_and_deterministic(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    malformed_source: object,
 ) -> None:
     monkeypatch.setattr(strategy_module, "MIN_HISTORY", 20)
     panels = _panels(240)
@@ -494,12 +507,13 @@ def test_compiler_attachment_and_classic_engine_are_causal_and_deterministic(
     assert entries
     assert all(pd.Timestamp(row["ts"]) >= analysis_start for row in first)
     corrupt = attached.copy()
-    corrupt.loc[
-        corrupt["representation_decision_ts"].notna(),
-        "prior_only_volatility_source_end_ts",
-    ] = corrupt.loc[
-        corrupt["representation_decision_ts"].notna(), "representation_decision_ts"
-    ]
+    if malformed_source == "missing":
+        corrupt = corrupt.drop(columns=["prior_only_volatility_source_end_ts"])
+    else:
+        corrupt.loc[
+            corrupt["representation_decision_ts"].notna(),
+            "prior_only_volatility_source_end_ts",
+        ] = malformed_source
     rejected = _classic_run(
         corrupt, tmp_path / "corrupt", analysis_start=analysis_start
     )

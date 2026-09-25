@@ -322,6 +322,91 @@ def test_causal_warmup_receipt_requires_complete_pre_evaluation_decisions() -> N
         )
 
 
+@pytest.mark.parametrize(
+    "malformed_source",
+    [None, "not-a-timestamp", "2024-12-31T23:45:00", {"invalid": "type"}],
+    ids=["null", "unparseable", "timezone-naive", "invalid-type"],
+)
+def test_causal_warmup_receipt_rejects_malformed_prior_source(
+    malformed_source: object,
+) -> None:
+    materialized = SimpleNamespace(
+        frame=pd.DataFrame(
+            {
+                "decision_at": pd.date_range(
+                    "2024-12-31T23:54:00Z", periods=7, freq="1min"
+                ),
+                "displacement": [None, 1, 1, 1, 1, 1, 2],
+                "btc_15m_realized_volatility_96": [
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0.1,
+                    0.2,
+                ],
+            }
+        ),
+        receipt={
+            "output_fields": [
+                "displacement",
+                "btc_15m_realized_volatility_96",
+            ],
+            "plan_digest": "a" * 64,
+        },
+    )
+    causal = materialize_causal_feature_frame(materialized)
+    causal.loc[
+        causal["ts"] == pd.Timestamp("2025-01-01T00:00:00Z"),
+        "prior_only_volatility_source_end_ts",
+    ] = malformed_source
+    with pytest.raises(BridgeError, match="source boundary"):
+        causal_warmup_receipt(
+            causal,
+            official_start="2025-01-01T00:00:00Z",
+            source_warmup_bars=7,
+            warmup_timeframe="1m",
+            required_prior_observations=5,
+            required_prior_fields=["displacement"],
+            official_required_fields=[
+                "displacement",
+                "btc_15m_realized_volatility_96",
+            ],
+        )
+
+
+def test_causal_warmup_receipt_rejects_missing_prior_source_field() -> None:
+    frame = pd.DataFrame(
+        {
+            "ts": pd.date_range("2024-12-31T23:54:00Z", periods=7, freq="1min"),
+            "displacement": [None, 1, 1, 1, 1, 1, 2],
+            "btc_15m_realized_volatility_96": [
+                None,
+                None,
+                None,
+                None,
+                None,
+                0.1,
+                0.2,
+            ],
+        }
+    )
+    with pytest.raises(BridgeError, match="provenance is missing"):
+        causal_warmup_receipt(
+            frame,
+            official_start="2025-01-01T00:00:00Z",
+            source_warmup_bars=7,
+            warmup_timeframe="1m",
+            required_prior_observations=5,
+            required_prior_fields=["displacement"],
+            official_required_fields=[
+                "displacement",
+                "btc_15m_realized_volatility_96",
+            ],
+        )
+
+
 def test_commissioning_scope_is_review_contained_and_non_qualifying() -> None:
     value = assignment() | {
         "execution_class": "commissioning",
