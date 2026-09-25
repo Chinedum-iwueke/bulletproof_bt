@@ -118,15 +118,20 @@ def draft_research_card(
         ]
         semantics = card.get("execution_semantics", {})
         declared_required = semantics.get("required_extra_columns")
+        provenance_bound = bool(
+            isinstance(declared_required, list)
+            and declared_required[: len(expected_fields)] == expected_fields
+            and all(
+                field in declared_required
+                for field in required_fields[len(expected_fields) :]
+            )
+        )
         if (
             semantics.get("adaptive_representation_plan_digest")
             != canonical_hash(representation_plan)
             or semantics.get("adaptive_representation_fields") != expected_fields
-            or not isinstance(declared_required, list)
-            or declared_required[: len(expected_fields)] != expected_fields
-            or (
-                declared_required != expected_fields
-                and not all(item in declared_required for item in required_fields)
+            or not (
+                declared_required == expected_fields or provenance_bound
             )
         ):
             raise ValueError("engineered_card_adaptive_representation_mismatch")
@@ -679,10 +684,13 @@ def qualify_card(card: dict[str, Any], *, repository_root: str) -> dict[str, Any
         "card_digest": canonical_hash(card),
         "artifact_bundle": bundle,
         "review": review,
-        "qualified": all(
-            value
-            for key, value in gates.items()
-            if key != "independent_review_complete"
+        "qualified": (
+            all(gates.values())
+            if card.get("independent_review_required", False)
+            else all(
+                value for key, value in gates.items()
+                if key != "independent_review_complete"
+            )
         ),
         "qualification_scope": "deterministic_compilation_only",
         "tier": "Tier2B",
@@ -697,3 +705,25 @@ def qualify_card(card: dict[str, Any], *, repository_root: str) -> dict[str, Any
             "self_approval": False,
         },
     }
+
+
+def complete_independent_review(
+    assignment: dict[str, Any], qualification: dict[str, Any]
+) -> dict[str, Any]:
+    """Promote compilation to qualification only from bound external review evidence."""
+    if not governed_review_verified(assignment, qualification):
+        raise ValueError("independent_specification_review_unverified")
+    result = deepcopy(qualification)
+    result["review"]["gates"]["independent_review_complete"] = True
+    result["review"]["independent_of_drafter"] = True
+    result["review"]["governed_review_receipt_digest"] = canonical_hash(
+        assignment["governed_review"]
+        if "governed_review" in assignment
+        else qualification.get("governed_review")
+    )
+    result["review"]["review_digest"] = canonical_hash(
+        {key: value for key, value in result["review"].items() if key != "review_digest"}
+    )
+    result["qualified"] = all(result["review"]["gates"].values())
+    result["qualification_scope"] = "independently_reviewed_execution"
+    return result

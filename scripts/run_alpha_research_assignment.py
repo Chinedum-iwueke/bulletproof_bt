@@ -55,6 +55,7 @@ from bt.governance.research_bridge import (
 )
 from bt.governance.alpha_strategy_pipeline import (
     canonical_hash,
+    complete_independent_review,
     confirm_card,
     draft_research_card,
     governed_review_verified,
@@ -69,6 +70,9 @@ from bt.strategy.btc_funding_basis_crowding_60m import (
 from bt.strategy.bybit_cross_sectional_liquidity_dispersion_reversal import (
     cross_sectional_reversal_evaluation,
     verify_contiguous_overlap,
+)
+from bt.strategy.eth_liquidity_displacement_btc_residual_60m import (
+    liquidity_displacement_grid_evaluation,
 )
 
 AUTHORITY = {
@@ -173,7 +177,11 @@ def native_representation_acceptance(
 
 
 def materialize_execution_panel(
-    assignment: dict[str, Any], output: Path
+    assignment: dict[str, Any],
+    output: Path,
+    *,
+    warmup_bars: int = 0,
+    warmup_timeframe: str = "1m",
 ) -> tuple[Path, str, dict[str, pd.DataFrame]]:
     """Bind every admitted basket member into one immutable engine panel."""
     bindings = assignment.get("dataset_bindings") or [
@@ -194,14 +202,19 @@ def materialize_execution_panel(
     end = (
         pd.Timestamp(assignment["window_end"]) if assignment.get("window_end") else None
     )
+    warmup_start = start
+    if start is not None and warmup_bars:
+        warmup_start = start - (
+            pd.Timedelta(minutes=timeframe_minutes(warmup_timeframe)) * warmup_bars
+        )
     frames: list[pd.DataFrame] = []
     panels: dict[str, pd.DataFrame] = {}
     for binding in bindings:
         path = Path(binding["dataset_path"])
         filters = None
-        if start is not None and end is not None:
+        if warmup_start is not None and end is not None:
             filters = [
-                ("ts", ">=", start.to_pydatetime()),
+                ("ts", ">=", warmup_start.to_pydatetime()),
                 ("ts", "<", end.to_pydatetime()),
             ]
         selected = pd.read_parquet(path, filters=filters)
@@ -250,6 +263,9 @@ def materialize_execution_panel(
             ],
             "window_start": assignment.get("window_start"),
             "window_end": assignment.get("window_end"),
+            "warmup_start": warmup_start.isoformat() if warmup_start is not None else None,
+            "warmup_bars": warmup_bars,
+            "warmup_timeframe": warmup_timeframe,
             "materialized_file_digest": file_digest(destination),
         }
     )
@@ -295,6 +311,7 @@ def attach_adaptive_features(
     *,
     output: Path,
     declared_fields: list[str],
+    feature_frame: pd.DataFrame | None = None,
 ) -> Path:
     """Expose reviewed adaptive fields to strategies only at causal decision times."""
     output_fields = materialized.receipt["output_fields"]
@@ -307,25 +324,33 @@ def attach_adaptive_features(
         "representation_plan_digest",
         "representation_output_fields",
         "representation_decision_ts",
+        "prior_only_volatility_source_end_ts",
     }
     overlap = (set(output_fields) | provenance_fields) & set(frame.columns)
     if overlap:
         raise BridgeError(
             f"adaptive fields collide with source data: {sorted(overlap)}"
         )
-    features = materialized.frame[["decision_at", *output_fields]].rename(
-        columns={"decision_at": "ts"}
+    features = (
+        feature_frame.copy()
+        if feature_frame is not None
+        else materialize_causal_feature_frame(materialized)
     )
+    causal_provenance = (
+        ["prior_only_volatility_source_end_ts"]
+        if "btc_15m_realized_volatility_96" in output_fields
+        else []
+    )
+    if list(features.columns) != [
+        "ts",
+        *output_fields,
+        *causal_provenance,
+        "representation_plan_digest",
+        "representation_output_fields",
+        "representation_decision_ts",
+    ]:
+        raise BridgeError("causal feature frame differs from the attachment contract")
     features["ts"] = pd.to_datetime(features["ts"], utc=True, errors="raise")
-    plan_digest = materialized.receipt.get("plan_digest")
-    if plan_digest is not None:
-        features["representation_plan_digest"] = plan_digest
-        features["representation_output_fields"] = json.dumps(
-            output_fields, separators=(",", ":")
-        )
-        features["representation_decision_ts"] = features["ts"].map(
-            lambda value: value.isoformat()
-        )
     if features["ts"].duplicated().any():
         raise BridgeError("adaptive representation has duplicate decision timestamps")
     frame["ts"] = pd.to_datetime(frame["ts"], utc=True, errors="raise")
@@ -402,6 +427,151 @@ def validate_materialized_payload(
                 actual.sort_values(["ts", "symbol"], kind="stable"), index=False
             ).values.tobytes()
         ),
+    }
+    receipt["record_digest"] = digest(receipt)
+    return receipt
+
+
+def materialize_causal_feature_frame(materialized: Any) -> pd.DataFrame:
+    """Build the one authoritative shifted feature frame used by receipt and engine."""
+    output_fields = list(materialized.receipt["output_fields"])
+    features = materialized.frame[["decision_at", *output_fields]].rename(
+        columns={"decision_at": "ts"}
+    )
+    features["ts"] = pd.to_datetime(features["ts"], utc=True, errors="raise")
+    prior_volatility = "btc_15m_realized_volatility_96"
+    if prior_volatility in output_fields:
+        features[prior_volatility] = features[prior_volatility].shift(1)
+        features["prior_only_volatility_source_end_ts"] = (
+            features["ts"] - pd.Timedelta(minutes=15)
+        ).map(lambda value: value.isoformat())
+    plan_digest = materialized.receipt.get("plan_digest")
+    features["representation_plan_digest"] = plan_digest
+    features["representation_output_fields"] = json.dumps(
+        output_fields, separators=(",", ":")
+    )
+    features["representation_decision_ts"] = features["ts"].map(
+        lambda value: value.isoformat()
+    )
+    causal_provenance = (
+        ["prior_only_volatility_source_end_ts"]
+        if prior_volatility in output_fields
+        else []
+    )
+    return features[
+        [
+            "ts",
+            *output_fields,
+            *causal_provenance,
+            "representation_plan_digest",
+            "representation_output_fields",
+            "representation_decision_ts",
+        ]
+    ]
+
+
+def causal_warmup_receipt(
+    feature_frame: pd.DataFrame,
+    *,
+    official_start: Any,
+    source_warmup_bars: int,
+    warmup_timeframe: str,
+    required_prior_observations: int,
+    required_prior_fields: list[str],
+    official_required_fields: list[str],
+) -> dict[str, Any]:
+    """Prove exact usable prior state and the first official decision boundary."""
+    start = pd.Timestamp(official_start)
+    interval = pd.Timedelta(minutes=timeframe_minutes(warmup_timeframe))
+    frame = feature_frame.copy()
+    decision_at = pd.to_datetime(frame["ts"], utc=True, errors="raise")
+    required_fields = list(
+        dict.fromkeys([*required_prior_fields, *official_required_fields])
+    )
+    if (
+        source_warmup_bars <= 0
+        or required_prior_observations <= 0
+        or not required_prior_fields
+        or not official_required_fields
+        or any(not isinstance(field, str) or not field for field in required_fields)
+        or len(required_prior_fields) != len(set(required_prior_fields))
+        or len(official_required_fields) != len(set(official_required_fields))
+    ):
+        raise BridgeError("causal warmup field and observation contract is invalid")
+    missing_fields = sorted(set(required_fields) - set(frame.columns))
+    if missing_fields:
+        raise BridgeError(f"causal warmup fields are missing: {missing_fields}")
+
+    def finite_rows(rows: pd.DataFrame, fields: list[str]) -> pd.Series:
+        numeric = rows[fields].apply(pd.to_numeric, errors="coerce")
+        return numeric.notna().all(axis=1) & numeric.map(math.isfinite).all(axis=1)
+
+    prior = frame.loc[decision_at < start].copy()
+    prior["decision_at"] = decision_at.loc[prior.index]
+    usable_prior = prior.loc[finite_rows(prior, required_prior_fields)].sort_values(
+        "decision_at", kind="stable"
+    )
+    if len(usable_prior) < required_prior_observations:
+        raise BridgeError(
+            "materialized representation lacks the declared causal warmup: "
+            f"{len(usable_prior)} < {required_prior_observations} usable prior "
+            f"{warmup_timeframe} observations"
+        )
+    admitted_prior = usable_prior.tail(required_prior_observations)
+    expected_prior = pd.date_range(
+        start=start - interval * required_prior_observations,
+        periods=required_prior_observations,
+        freq=interval,
+        tz="UTC",
+    )
+    if list(admitted_prior["decision_at"]) != list(expected_prior):
+        raise BridgeError(
+            "materialized causal warmup is not contiguous through the official boundary"
+        )
+    official = frame.loc[decision_at == start]
+    if len(official) != 1 or not finite_rows(
+        official, official_required_fields
+    ).all():
+        raise BridgeError(
+            "official-start representation is missing, duplicated, or incomplete"
+        )
+    official_source_end = None
+    if "btc_15m_realized_volatility_96" in official_required_fields:
+        source_field = "prior_only_volatility_source_end_ts"
+        if source_field not in official:
+            raise BridgeError("official-start prior-only volatility provenance is missing")
+        try:
+            official_source_end = pd.Timestamp(official.iloc[0][source_field])
+        except (TypeError, ValueError):
+            official_source_end = pd.NaT
+        if official_source_end != start - pd.Timedelta(minutes=15):
+            raise BridgeError(
+                "official-start prior-only volatility source boundary is invalid"
+            )
+    receipt = {
+        "schema_version": "alpha-causal-warmup-receipt-v1.0.0",
+        "authority": "causal_feature_state_only",
+        "official_evaluation_start": start.isoformat(),
+        "warmup_start": (
+            start
+            - interval * source_warmup_bars
+        ).isoformat(),
+        "warmup_timeframe": warmup_timeframe,
+        "requested_source_bars": source_warmup_bars,
+        "required_prior_observations": required_prior_observations,
+        "required_prior_fields": required_prior_fields,
+        "usable_prior_observations": len(usable_prior),
+        "admitted_prior_first": admitted_prior["decision_at"].iloc[0].isoformat(),
+        "admitted_prior_last": admitted_prior["decision_at"].iloc[-1].isoformat(),
+        "official_required_fields": official_required_fields,
+        "official_decision_at": start.isoformat(),
+        "official_prior_only_source_end": (
+            official_source_end.isoformat()
+            if official_source_end is not None
+            else None
+        ),
+        "orders_permitted_during_warmup": False,
+        "performance_attribution_during_warmup": False,
     }
     receipt["record_digest"] = digest(receipt)
     return receipt
@@ -901,6 +1071,87 @@ def select_funding_basis_variant(evaluations: list[dict[str, Any]]) -> int | Non
     )
 
 
+def heldout_not_evaluated_evidence(
+    *,
+    question: str,
+    parameters: dict[str, Any],
+    validation: list[dict[str, Any]],
+    liquidity_grid: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Retain why validation did not authorize opening the held-out test."""
+    if liquidity_grid is not None:
+        outcome = str(liquidity_grid["outcome"])
+        reason = (
+            "no_valid_validation_variant"
+            if outcome == "invalid"
+            else "validation_edge_nonpositive_test_not_opened"
+        )
+    else:
+        outcome = (
+            "invalid"
+            if all(item["outcome"] == "invalid" for item in validation)
+            else "failed"
+        )
+        reason = (
+            "no_valid_validation_variant"
+            if outcome == "invalid"
+            else "no_supported_validation_variant"
+        )
+    result = {
+        "schema_version": "scientific-heldout-not-evaluated-v1.0.0",
+        "question": question,
+        "parameters": parameters,
+        "outcome": outcome,
+        "reason": reason,
+        "evaluation_partition": "test",
+        "held_out_evaluated": False,
+        "decision_records": [],
+        "pairs": [],
+        "matched_support": 0,
+        "treated_support": 0,
+        "control_support": 0,
+        "treated_minus_control_mean": 0.0,
+        "confidence_interval_95": {"lower": 0.0, "upper": 0.0},
+        "confidence_interval_method": "not_evaluated",
+        "doubled_cost_treated_minus_control": 0.0,
+        "directional_support": {
+            "positive_trailing_return": 0,
+            "nonpositive_trailing_return": 0,
+        },
+        "passed": False,
+    }
+    if liquidity_grid is not None:
+        result.update(
+            {
+                "validation_directional_effect": max(
+                    (
+                        float(item.get("validation_directional_effect", 0.0))
+                        for item in validation
+                        if item.get("outcome") in {"positive", "negative"}
+                    ),
+                    default=0.0,
+                ),
+                "test_directional_effect": 0.0,
+                "doubled_cost_directional_effect": 0.0,
+                "extreme_support": 0,
+                "maximum_drawdown": 0.0,
+            }
+        )
+    result["record_digest"] = digest(result)
+    return result
+
+
+def heldout_test_consulted(
+    *, is_liquidity_residual: bool, liquidity_grid: dict[str, Any] | None
+) -> bool:
+    """Report whether validation opened the single permitted held-out test."""
+    return bool(
+        is_liquidity_residual
+        and liquidity_grid is not None
+        and liquidity_grid.get("test_open_count") == 1
+    )
+
+
 def weekend_regime_comparison(
     frame: pd.DataFrame, *, lookback: int = 60
 ) -> dict[str, Any]:
@@ -1086,6 +1337,9 @@ def execute_registered(
         raise BridgeError(
             "independent specification review is missing or unbound; no compute started"
         )
+    qualification_card = qualification.get("artifact_bundle", {}).get("card", {})
+    if qualification_card.get("independent_review_required", False):
+        qualification = complete_independent_review(assignment, qualification)
     scope = execution_scope(assignment, qualification)
     completed = prepare_execution_output(output, assignment)
     if completed is not None:
@@ -1154,8 +1408,19 @@ def execute_registered(
     if len(variants) > assignment["max_variants"]:
         raise BridgeError("qualified strategy exceeds the immutable variant budget")
 
+    execution_semantics = contract.schema.execution_semantics
+    warmup_bars = int(execution_semantics.get("warmup_observations", 0))
+    warmup_timeframe = str(
+        execution_semantics.get(
+            "warmup_timeframe",
+            execution_semantics.get("signal_timeframe", "1m"),
+        )
+    )
     execution_data_path, window_digest, source_panels = materialize_execution_panel(
-        assignment, output
+        assignment,
+        output,
+        warmup_bars=warmup_bars,
+        warmup_timeframe=warmup_timeframe,
     )
     adaptive_receipt = None
     materialized_payload_receipt = None
@@ -1186,11 +1451,32 @@ def execute_registered(
             raise BridgeError(
                 "adaptive_representation_fields must be a non-empty string list"
             )
+        causal_features = materialize_causal_feature_frame(materialized)
+        if warmup_bars:
+            warmup_receipt = causal_warmup_receipt(
+                causal_features,
+                official_start=assignment["window_start"],
+                source_warmup_bars=warmup_bars,
+                warmup_timeframe=warmup_timeframe,
+                required_prior_observations=int(
+                    execution_semantics.get("warmup_required_prior_observations", 0)
+                ),
+                required_prior_fields=list(
+                    execution_semantics.get("warmup_required_prior_fields", [])
+                ),
+                official_required_fields=list(
+                    execution_semantics.get("warmup_official_required_fields", [])
+                ),
+            )
+            (output / "causal-warmup-receipt.json").write_bytes(
+                canonical(warmup_receipt) + b"\n"
+            )
         execution_data_path = attach_adaptive_features(
             execution_data_path,
             materialized,
             output=output,
             declared_fields=declared_adaptive_fields,
+            feature_frame=causal_features,
         )
         materialized_payload_receipt = validate_materialized_payload(
             execution_data_path,
@@ -1211,6 +1497,12 @@ def execute_registered(
         if column not in lightweight_columns:
             lightweight_columns.append(column)
     lightweight = pd.read_parquet(execution_data_path, columns=lightweight_columns)
+    if assignment.get("window_start") and assignment.get("window_end"):
+        lightweight_ts = pd.to_datetime(lightweight["ts"], utc=True, errors="raise")
+        lightweight = lightweight.loc[
+            (lightweight_ts >= pd.Timestamp(assignment["window_start"]))
+            & (lightweight_ts < pd.Timestamp(assignment["window_end"]))
+        ].copy()
     code_digest = digest(assignment["base_ref"].encode())
     split_contract = contract_document.get("evaluation", {}).get("split", {})
     rep, leakage = representation(
@@ -1278,6 +1570,29 @@ def execute_registered(
                 "required_extra_columns must preserve ordered adaptive outputs and provenance"
             )
     execution_overrides: list[str] = []
+    if warmup_bars:
+        if not assignment.get("window_start") or not assignment.get("window_end"):
+            raise BridgeError("causal warmup requires an immutable execution window")
+        warmup_start = pd.Timestamp(assignment["window_start"]) - (
+            pd.Timedelta(minutes=timeframe_minutes(warmup_timeframe)) * warmup_bars
+        )
+        warmup_override_path = output / "causal-warmup-window.yaml"
+        warmup_override_path.write_text(
+            yaml.safe_dump(
+                {
+                    "data": {
+                        "date_range": {
+                            "start": assignment["window_start"],
+                            "end": assignment["window_end"],
+                        },
+                        "warmup_start": warmup_start.isoformat(),
+                    }
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        execution_overrides.append(str(warmup_override_path))
     if required_extra_columns:
         if not isinstance(required_extra_columns, list) or not all(
             isinstance(column, str) and column for column in required_extra_columns
@@ -1299,15 +1614,19 @@ def execute_registered(
         contract.schema.metadata.hypothesis_family
         == "cross_sectional_liquidity_dispersion_reversal"
     )
+    is_liquidity_residual = (
+        contract.schema.metadata.hypothesis_family
+        == "cross_asset_liquidity_transmission"
+    )
     grid_data_path = execution_data_path
-    if is_funding_basis:
+    if is_funding_basis or is_liquidity_residual:
         validation_end = pd.Timestamp(rep.split.validation_end)
         validation_frame = pd.read_parquet(execution_data_path)
         validation_frame = validation_frame[
             pd.to_datetime(validation_frame["ts"], utc=True) <= validation_end
         ]
         if validation_frame.empty:
-            raise BridgeError("funding-basis validation partition contains no rows")
+            raise BridgeError("scientific validation partition contains no rows")
         grid_data_path = output / "validation-window.parquet"
         validation_frame.to_parquet(grid_data_path, index=False)
     jobs = [
@@ -1355,7 +1674,28 @@ def execute_registered(
         results.append(result)
         run_dirs.append(run_dir)
     trials = search.trials()
-    if is_funding_basis:
+    liquidity_grid = None
+    if is_liquidity_residual:
+        liquidity_grid = liquidity_displacement_grid_evaluation(
+            source_panels,
+            parameter_grid=contract.schema.parameter_grid,
+            evaluation_start=assignment["window_start"],
+            evaluation_end=assignment["window_end"],
+        )
+        validation = liquidity_grid["selection_candidates"]
+        for item in validation:
+            item["record_digest"] = digest(item)
+        selected_parameters = liquidity_grid.get("selected_parameters")
+        selected_index = next(
+            (
+                index
+                for index, variant in enumerate(variants)
+                if variant["params"] == selected_parameters
+            ),
+            None,
+        )
+        selection_metric = "validation_directional_effect"
+    elif is_funding_basis:
         validation = [
             funding_basis_matched_evaluation(
                 lightweight,
@@ -1401,7 +1741,7 @@ def execute_registered(
             key=lambda item: (validation[item].get("matched_support", 0), -item),
         )
     )
-    if is_funding_basis and selected_index is not None:
+    if (is_funding_basis or is_liquidity_residual) and selected_index is not None:
         heldout_root = runs
         heldout_job = dict(
             contract=contract,
@@ -1435,7 +1775,10 @@ def execute_registered(
         "evaluated_variant_count": len(validation),
         "selection_partition": "validation",
         "selection_metric": selection_metric,
-        "held_out_test_consulted": False,
+        "held_out_test_consulted": heldout_test_consulted(
+            is_liquidity_residual=is_liquidity_residual,
+            liquidity_grid=liquidity_grid,
+        ),
         "stopping_rule": "exhaustive",
         "selected_variant_index": selected_index,
         "validation_results": validation,
@@ -1487,7 +1830,9 @@ def execute_registered(
             }
         )
     per_variant_evaluations = (
-        validation if (is_funding_basis or is_cross_sectional) else []
+        validation
+        if (is_funding_basis or is_cross_sectional or is_liquidity_residual)
+        else []
     )
     heldout_evaluation = (
         funding_basis_matched_evaluation(
@@ -1497,6 +1842,8 @@ def execute_registered(
             params=variants[selected_index]["params"],
         )
         if is_funding_basis and selected_index is not None
+        else liquidity_grid
+        if is_liquidity_residual and selected_index is not None
         else None
     )
     if heldout_evaluation is not None:
@@ -1512,40 +1859,13 @@ def execute_registered(
         )
         heldout_evaluation["record_digest"] = digest(heldout_evaluation)
     unsupported_validation = None
-    if is_funding_basis and selected_index is None:
-        unsupported_outcome = (
-            "invalid"
-            if all(item["outcome"] == "invalid" for item in validation)
-            else "failed"
+    if (is_funding_basis or is_liquidity_residual) and selected_index is None:
+        unsupported_validation = heldout_not_evaluated_evidence(
+            question=contract_document["immutable_contract"]["question"],
+            parameters=variants[execution_index]["params"],
+            validation=validation,
+            liquidity_grid=liquidity_grid if is_liquidity_residual else None,
         )
-        unsupported_validation = {
-            "schema_version": "funding-basis-heldout-not-evaluated-v1.0.0",
-            "question": contract_document["immutable_contract"]["question"],
-            "parameters": variants[execution_index]["params"],
-            "outcome": unsupported_outcome,
-            "reason": (
-                "no_valid_validation_variant"
-                if unsupported_outcome == "invalid"
-                else "no_supported_validation_variant"
-            ),
-            "evaluation_partition": "test",
-            "held_out_evaluated": False,
-            "decision_records": [],
-            "pairs": [],
-            "matched_support": 0,
-            "treated_support": 0,
-            "control_support": 0,
-            "treated_minus_control_mean": 0.0,
-            "confidence_interval_95": {"lower": 0.0, "upper": 0.0},
-            "confidence_interval_method": "not_evaluated",
-            "doubled_cost_treated_minus_control": 0.0,
-            "directional_support": {
-                "positive_trailing_return": 0,
-                "nonpositive_trailing_return": 0,
-            },
-            "passed": False,
-        }
-        unsupported_validation["record_digest"] = digest(unsupported_validation)
     evaluation_artifact = (
         cross_sectional_reversal_evaluation(
             lightweight,
@@ -1567,7 +1887,7 @@ def execute_registered(
         )
         if is_impact_proxy
         else heldout_evaluation or unsupported_validation
-        if is_funding_basis
+        if (is_funding_basis or is_liquidity_residual)
         else weekend_regime_comparison(lightweight)
     )
     if "record_digest" not in evaluation_artifact:
@@ -1579,6 +1899,10 @@ def execute_registered(
         if is_impact_proxy
         else "funding_basis_heldout_not_evaluated.json"
         if is_funding_basis and selected_index is None
+        else "eth_liquidity_residual_heldout_not_evaluated.json"
+        if is_liquidity_residual and selected_index is None
+        else "eth_liquidity_residual_evaluation.json"
+        if is_liquidity_residual
         else "funding_basis_matched_evaluation.json"
         if is_funding_basis
         else "weekend_regime_comparison.json"
@@ -1597,6 +1921,11 @@ def execute_registered(
             for path in run_dirs
         ]
     )
+    validation_evaluation_name = (
+        "eth_liquidity_residual_validation_evaluation.json"
+        if is_liquidity_residual
+        else "funding_basis_validation_evaluation.json"
+    )
     failed_logging = [
         index for index, report in enumerate(logging_reports) if not report["passed"]
     ]
@@ -1608,8 +1937,8 @@ def execute_registered(
         (candidate_run / "selection_bias_audit.json").write_bytes(
             canonical(selection_audit) + b"\n"
         )
-        if is_funding_basis:
-            (candidate_run / "funding_basis_validation_evaluation.json").write_bytes(
+        if is_funding_basis or is_liquidity_residual:
+            (candidate_run / validation_evaluation_name).write_bytes(
                 canonical(per_variant_evaluations[index]) + b"\n"
             )
             if index == selected_index or (
@@ -1634,8 +1963,9 @@ def execute_registered(
             search_plan_digest=search.digest,
             evaluation_artifact=(
                 evaluation_artifact_name
-                if not is_funding_basis or index == selected_index
-                else "funding_basis_validation_evaluation.json"
+                if not (is_funding_basis or is_liquidity_residual)
+                or index == selected_index
+                else validation_evaluation_name
             ),
             variant_index=index,
             selected_for_holdout=selected_index is not None and index == selected_index,
@@ -1689,7 +2019,8 @@ def execute_registered(
     retained_bundle = retained[execution_index]
     holdout = (
         None
-        if is_cross_sectional or (is_funding_basis and selected_index is None)
+        if is_cross_sectional
+        or (is_funding_basis or is_liquidity_residual) and selected_index is None
         else held_out_trade_evaluation(run_dir, rep.split.test_start)
     )
     logging_report = logging_reports[execution_index]
@@ -1766,6 +2097,21 @@ def execute_registered(
                 "selection_bias_audit": selection_audit,
             }
         )
+    elif is_liquidity_residual:
+        metrics.update(
+            {
+                key: evaluation_artifact[key]
+                for key in (
+                    "validation_directional_effect",
+                    "test_directional_effect",
+                    "confidence_interval_95",
+                    "doubled_cost_directional_effect",
+                    "extreme_support",
+                    "matched_support",
+                    "maximum_drawdown",
+                )
+            }
+        )
     else:
         metrics["selection_bias_audit"] = selection_audit
     required_metrics = tuple(contract_document.get("evaluation", {}).get("metrics", ()))
@@ -1779,7 +2125,7 @@ def execute_registered(
     independent_review_complete = governed_review_verified(assignment, qualification)
     passed_edge = bool(
         (
-            (is_funding_basis or is_cross_sectional)
+            (is_funding_basis or is_cross_sectional or is_liquidity_residual)
             or (
                 holdout is not None
                 and holdout["adequate_support"]
@@ -1802,13 +2148,13 @@ def execute_registered(
             )
         )
         and (
-            not (is_funding_basis or is_cross_sectional)
+            not (is_funding_basis or is_cross_sectional or is_liquidity_residual)
             or evaluation_artifact["passed"]
         )
     )
     classic_pnl_gates = (
         ()
-        if (is_funding_basis or is_cross_sectional)
+        if (is_funding_basis or is_cross_sectional or is_liquidity_residual)
         else (
             ("oos_trade_support", holdout["adequate_support"]),
             ("positive_oos_net_edge", holdout["positive_net_edge"]),
@@ -1831,10 +2177,13 @@ def execute_registered(
             failed_gates.append("positive_reversal_in_both_directions")
     scientific_outcome = (
         evaluation_artifact["outcome"]
-        if (is_funding_basis or is_cross_sectional)
+        if (is_funding_basis or is_cross_sectional or is_liquidity_residual)
         else None
     )
-    if is_funding_basis or is_cross_sectional:
+    heldout_scientific_evaluated = bool(
+        evaluation_artifact.get("held_out_evaluated", True)
+    )
+    if is_funding_basis or is_cross_sectional or is_liquidity_residual:
         if scientific_outcome == "invalid":
             failed_gates.append("point_in_time_scientific_sample_invalid")
         elif scientific_outcome == "failed":
@@ -1854,32 +2203,35 @@ def execute_registered(
                 failed_gates.append("matched_control_95pct_lower_bound")
             if evaluation_artifact["doubled_cost_mean_signed_reversal"] <= 0:
                 failed_gates.append("cross_sectional_double_cost_stress")
+        elif is_liquidity_residual and not heldout_scientific_evaluated:
+            failed_gates.append("validation_edge_nonpositive_test_not_opened")
+        elif is_liquidity_residual and not evaluation_artifact["passed"]:
+            if evaluation_artifact["confidence_interval_95"][0] <= 0:
+                failed_gates.append("eth_btc_residual_95pct_lower_bound")
+            if evaluation_artifact["doubled_cost_directional_effect"] <= 0:
+                failed_gates.append("eth_btc_residual_double_cost_stress")
     scientific_observations_complete = (
         not is_cross_sectional
         or logging_report.get("scientific_observation_logging_complete") is True
     )
     if is_cross_sectional and not scientific_observations_complete:
         failed_gates.append("scientific_observation_support_absent")
+    scientific_family = is_funding_basis or is_cross_sectional or is_liquidity_residual
     scientific_valid = (
-        not (is_funding_basis or is_cross_sectional)
-        or (
-            scientific_outcome != "invalid"
-            and scientific_observations_complete
-        )
+        not scientific_family
+        or scientific_outcome != "invalid" and scientific_observations_complete
     )
-    scientific_supported = (
-        not (is_funding_basis or is_cross_sectional)
-        or (
-            scientific_outcome in {"positive", "negative"}
-            and scientific_observations_complete
-        )
+    scientific_supported = not scientific_family or (
+        scientific_outcome in {"positive", "negative"}
+        and scientific_observations_complete
+        and (not is_liquidity_residual or heldout_scientific_evaluated)
     )
     evaluation_evidence_digests = (
         [
             *[item["record_digest"] for item in per_variant_evaluations],
             evaluation_artifact["record_digest"],
         ]
-        if (is_funding_basis or is_cross_sectional)
+        if (is_funding_basis or is_cross_sectional or is_liquidity_residual)
         else [evaluation_artifact["record_digest"]]
     )
     gate_report = {
@@ -1908,7 +2260,7 @@ def execute_registered(
             "failed"
             if not independent_review_complete
             else scientific_outcome
-            if (is_funding_basis or is_cross_sectional)
+            if (is_funding_basis or is_cross_sectional or is_liquidity_residual)
             else "candidate"
             if passed_edge
             else "negative"
@@ -1917,7 +2269,7 @@ def execute_registered(
             "independent_evaluation"
             if not independent_review_complete
             else "truth_gate"
-            if (is_funding_basis or is_cross_sectional)
+            if (is_funding_basis or is_cross_sectional or is_liquidity_residual)
             and scientific_outcome == "failed"
             else None
         ),
