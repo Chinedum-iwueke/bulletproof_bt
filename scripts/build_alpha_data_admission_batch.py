@@ -25,7 +25,7 @@ def build_batch(assignment: dict) -> dict:
     if len(identities) != len(set(identities)):
         raise ValueError("selected-panel admission assets must be unique")
     receipts = []
-    for venue, instrument, timeframe in identities:
+    for asset, (venue, instrument, timeframe) in zip(assets, identities, strict=True):
         panel = (
             data_root
             / "canonical"
@@ -35,17 +35,24 @@ def build_batch(assignment: dict) -> dict:
             / f"timeframe={timeframe}"
             / "research_panel.parquet"
         )
-        receipts.append(
-            real_data_admission_receipt(
-                data_root=data_root,
-                panel_path=panel,
-                venue=venue,
-                instrument=instrument,
-                timeframe=timeframe,
-                source_commit=source_commit,
-                backup_root=backup_root,
-            ).as_dict()
-        )
+        receipt = real_data_admission_receipt(
+            data_root=data_root,
+            panel_path=panel,
+            venue=venue,
+            instrument=instrument,
+            timeframe=timeframe,
+            source_commit=source_commit,
+            backup_root=backup_root,
+        ).as_dict()
+        required_fields = set(asset.get("required_fields", []))
+        output_columns = set(receipt["result"]["output_columns"])
+        missing = sorted(required_fields - output_columns)
+        if missing:
+            raise ValueError(
+                f"selected panel {venue}:{instrument}:{timeframe} is missing "
+                f"required fields: {', '.join(missing)}"
+            )
+        receipts.append(receipt)
     return {
         "schema_version": "alpha007-selected-panel-admission-batch-v1.0.0",
         "candidate_id": assignment["candidate_id"],
