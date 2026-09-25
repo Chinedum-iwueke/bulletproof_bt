@@ -190,6 +190,7 @@ def attach_adaptive_features(
     *,
     output: Path,
     declared_fields: list[str],
+    feature_frame: pd.DataFrame | None = None,
 ) -> Path:
     """Expose reviewed adaptive fields to strategies only at causal decision times."""
     output_fields = materialized.receipt["output_fields"]
@@ -209,28 +210,26 @@ def attach_adaptive_features(
         raise BridgeError(
             f"adaptive fields collide with source data: {sorted(overlap)}"
         )
-    features = materialized.frame[["decision_at", *output_fields]].rename(
-        columns={"decision_at": "ts"}
+    features = (
+        feature_frame.copy()
+        if feature_frame is not None
+        else materialize_causal_feature_frame(materialized)
     )
+    causal_provenance = (
+        ["prior_only_volatility_source_end_ts"]
+        if "btc_15m_realized_volatility_96" in output_fields
+        else []
+    )
+    if list(features.columns) != [
+        "ts",
+        *output_fields,
+        *causal_provenance,
+        "representation_plan_digest",
+        "representation_output_fields",
+        "representation_decision_ts",
+    ]:
+        raise BridgeError("causal feature frame differs from the attachment contract")
     features["ts"] = pd.to_datetime(features["ts"], utc=True, errors="raise")
-    # The frozen ETH->BTC experiment requires a one-completed-bar lag.  Bind
-    # that semantic here instead of relabelling compiler output that includes
-    # the signal bar as "prior-only".
-    prior_volatility = "btc_15m_realized_volatility_96"
-    if prior_volatility in output_fields:
-        features[prior_volatility] = features[prior_volatility].shift(1)
-        features["prior_only_volatility_source_end_ts"] = (
-            features["ts"] - pd.Timedelta(minutes=15)
-        ).map(lambda value: value.isoformat())
-    plan_digest = materialized.receipt.get("plan_digest")
-    if plan_digest is not None:
-        features["representation_plan_digest"] = plan_digest
-        features["representation_output_fields"] = json.dumps(
-            output_fields, separators=(",", ":")
-        )
-        features["representation_decision_ts"] = features["ts"].map(
-            lambda value: value.isoformat()
-        )
     if features["ts"].duplicated().any():
         raise BridgeError("adaptive representation has duplicate decision timestamps")
     frame["ts"] = pd.to_datetime(frame["ts"], utc=True, errors="raise")
@@ -240,8 +239,46 @@ def attach_adaptive_features(
     return destination
 
 
+def materialize_causal_feature_frame(materialized: Any) -> pd.DataFrame:
+    """Build the one authoritative shifted feature frame used by receipt and engine."""
+    output_fields = list(materialized.receipt["output_fields"])
+    features = materialized.frame[["decision_at", *output_fields]].rename(
+        columns={"decision_at": "ts"}
+    )
+    features["ts"] = pd.to_datetime(features["ts"], utc=True, errors="raise")
+    prior_volatility = "btc_15m_realized_volatility_96"
+    if prior_volatility in output_fields:
+        features[prior_volatility] = features[prior_volatility].shift(1)
+        features["prior_only_volatility_source_end_ts"] = (
+            features["ts"] - pd.Timedelta(minutes=15)
+        ).map(lambda value: value.isoformat())
+    plan_digest = materialized.receipt.get("plan_digest")
+    features["representation_plan_digest"] = plan_digest
+    features["representation_output_fields"] = json.dumps(
+        output_fields, separators=(",", ":")
+    )
+    features["representation_decision_ts"] = features["ts"].map(
+        lambda value: value.isoformat()
+    )
+    causal_provenance = (
+        ["prior_only_volatility_source_end_ts"]
+        if prior_volatility in output_fields
+        else []
+    )
+    return features[
+        [
+            "ts",
+            *output_fields,
+            *causal_provenance,
+            "representation_plan_digest",
+            "representation_output_fields",
+            "representation_decision_ts",
+        ]
+    ]
+
+
 def causal_warmup_receipt(
-    materialized: Any,
+    feature_frame: pd.DataFrame,
     *,
     official_start: Any,
     source_warmup_bars: int,
@@ -253,8 +290,8 @@ def causal_warmup_receipt(
     """Prove exact usable prior state and the first official decision boundary."""
     start = pd.Timestamp(official_start)
     interval = pd.Timedelta(minutes=timeframe_minutes(warmup_timeframe))
-    frame = materialized.frame.copy()
-    decision_at = pd.to_datetime(frame["decision_at"], utc=True, errors="raise")
+    frame = feature_frame.copy()
+    decision_at = pd.to_datetime(frame["ts"], utc=True, errors="raise")
     required_fields = list(
         dict.fromkeys([*required_prior_fields, *official_required_fields])
     )
@@ -1177,25 +1214,6 @@ def execute_registered(
         materialized = materialize_adaptive_representation(
             assignment["representation_plan"], source_panels
         )
-        if warmup_bars:
-            warmup_receipt = causal_warmup_receipt(
-                materialized,
-                official_start=assignment["window_start"],
-                source_warmup_bars=warmup_bars,
-                warmup_timeframe=warmup_timeframe,
-                required_prior_observations=int(
-                    execution_semantics.get("warmup_required_prior_observations", 0)
-                ),
-                required_prior_fields=list(
-                    execution_semantics.get("warmup_required_prior_fields", [])
-                ),
-                official_required_fields=list(
-                    execution_semantics.get("warmup_official_required_fields", [])
-                ),
-            )
-            (output / "causal-warmup-receipt.json").write_bytes(
-                canonical(warmup_receipt) + b"\n"
-            )
         materialized.frame.to_parquet(
             output / "adaptive-representation.parquet", index=False
         )
@@ -1212,11 +1230,32 @@ def execute_registered(
             raise BridgeError(
                 "adaptive_representation_fields must be a non-empty string list"
             )
+        causal_features = materialize_causal_feature_frame(materialized)
+        if warmup_bars:
+            warmup_receipt = causal_warmup_receipt(
+                causal_features,
+                official_start=assignment["window_start"],
+                source_warmup_bars=warmup_bars,
+                warmup_timeframe=warmup_timeframe,
+                required_prior_observations=int(
+                    execution_semantics.get("warmup_required_prior_observations", 0)
+                ),
+                required_prior_fields=list(
+                    execution_semantics.get("warmup_required_prior_fields", [])
+                ),
+                official_required_fields=list(
+                    execution_semantics.get("warmup_official_required_fields", [])
+                ),
+            )
+            (output / "causal-warmup-receipt.json").write_bytes(
+                canonical(warmup_receipt) + b"\n"
+            )
         execution_data_path = attach_adaptive_features(
             execution_data_path,
             materialized,
             output=output,
             declared_fields=declared_adaptive_fields,
+            feature_frame=causal_features,
         )
 
     lightweight_columns = ["ts", "symbol", "close"]
