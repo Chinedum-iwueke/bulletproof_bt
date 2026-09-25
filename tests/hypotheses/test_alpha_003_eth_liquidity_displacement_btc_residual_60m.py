@@ -32,7 +32,10 @@ from bt.strategy.eth_liquidity_displacement_btc_residual_60m import (
 import bt.strategy.eth_liquidity_displacement_btc_residual_60m as strategy_module
 from bt.universe.universe import UniverseEngine
 from bt.validation.strategy_admission import validate_hypothesis_admission
-from scripts.run_alpha_research_assignment import attach_adaptive_features
+from scripts.run_alpha_research_assignment import (
+    attach_adaptive_features,
+    heldout_not_evaluated_evidence,
+)
 
 
 ROOT = Path(__file__).parents[2]
@@ -153,6 +156,22 @@ def test_grid_is_deterministic_and_opens_test_at_most_once() -> None:
     assert one == two
     assert len(one["selection_candidates"]) == 4
     assert one["test_open_count"] in (0, 1)
+
+
+def test_supported_negative_validation_is_not_mislabeled_as_failure() -> None:
+    validation = [{
+        "outcome": "negative",
+        "validation_directional_effect": -0.002,
+    }]
+    evidence = heldout_not_evaluated_evidence(
+        question=QUESTION,
+        parameters={"response_direction": "continuation"},
+        validation=validation,
+        liquidity_grid={"outcome": "negative"},
+    )
+    assert evidence["outcome"] == "negative"
+    assert evidence["reason"] == "validation_edge_nonpositive_test_not_opened"
+    assert evidence["held_out_evaluated"] is False
 
 
 def _classic_run(frame: pd.DataFrame, output: Path) -> list[dict]:

@@ -730,6 +730,74 @@ def select_funding_basis_variant(evaluations: list[dict[str, Any]]) -> int | Non
     )
 
 
+def heldout_not_evaluated_evidence(
+    *,
+    question: str,
+    parameters: dict[str, Any],
+    validation: list[dict[str, Any]],
+    liquidity_grid: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Retain why validation did not authorize opening the held-out test."""
+    if liquidity_grid is not None:
+        outcome = str(liquidity_grid["outcome"])
+        reason = (
+            "no_valid_validation_variant"
+            if outcome == "invalid"
+            else "validation_edge_nonpositive_test_not_opened"
+        )
+    else:
+        outcome = (
+            "invalid"
+            if all(item["outcome"] == "invalid" for item in validation)
+            else "failed"
+        )
+        reason = (
+            "no_valid_validation_variant"
+            if outcome == "invalid"
+            else "no_supported_validation_variant"
+        )
+    result = {
+        "schema_version": "scientific-heldout-not-evaluated-v1.0.0",
+        "question": question,
+        "parameters": parameters,
+        "outcome": outcome,
+        "reason": reason,
+        "evaluation_partition": "test",
+        "held_out_evaluated": False,
+        "decision_records": [],
+        "pairs": [],
+        "matched_support": 0,
+        "treated_support": 0,
+        "control_support": 0,
+        "treated_minus_control_mean": 0.0,
+        "confidence_interval_95": {"lower": 0.0, "upper": 0.0},
+        "confidence_interval_method": "not_evaluated",
+        "doubled_cost_treated_minus_control": 0.0,
+        "directional_support": {
+            "positive_trailing_return": 0,
+            "nonpositive_trailing_return": 0,
+        },
+        "passed": False,
+    }
+    if liquidity_grid is not None:
+        result.update({
+            "validation_directional_effect": max(
+                (
+                    float(item.get("validation_directional_effect", 0.0))
+                    for item in validation
+                    if item.get("outcome") in {"positive", "negative"}
+                ),
+                default=0.0,
+            ),
+            "test_directional_effect": 0.0,
+            "doubled_cost_directional_effect": 0.0,
+            "extreme_support": 0,
+            "maximum_drawdown": 0.0,
+        })
+    result["record_digest"] = digest(result)
+    return result
+
+
 def weekend_regime_comparison(
     frame: pd.DataFrame, *, lookback: int = 60
 ) -> dict[str, Any]:
@@ -1263,47 +1331,12 @@ def execute_registered(
         heldout_evaluation["record_digest"] = digest(heldout_evaluation)
     unsupported_validation = None
     if (is_funding_basis or is_liquidity_residual) and selected_index is None:
-        unsupported_outcome = (
-            "invalid"
-            if all(item["outcome"] == "invalid" for item in validation)
-            else "failed"
+        unsupported_validation = heldout_not_evaluated_evidence(
+            question=contract_document["immutable_contract"]["question"],
+            parameters=variants[execution_index]["params"],
+            validation=validation,
+            liquidity_grid=liquidity_grid if is_liquidity_residual else None,
         )
-        unsupported_validation = {
-            "schema_version": "scientific-heldout-not-evaluated-v1.0.0",
-            "question": contract_document["immutable_contract"]["question"],
-            "parameters": variants[execution_index]["params"],
-            "outcome": unsupported_outcome,
-            "reason": (
-                "no_valid_validation_variant"
-                if unsupported_outcome == "invalid"
-                else "no_supported_validation_variant"
-            ),
-            "evaluation_partition": "test",
-            "held_out_evaluated": False,
-            "decision_records": [],
-            "pairs": [],
-            "matched_support": 0,
-            "treated_support": 0,
-            "control_support": 0,
-            "treated_minus_control_mean": 0.0,
-            "confidence_interval_95": {"lower": 0.0, "upper": 0.0},
-            "confidence_interval_method": "not_evaluated",
-            "doubled_cost_treated_minus_control": 0.0,
-            "directional_support": {
-                "positive_trailing_return": 0,
-                "nonpositive_trailing_return": 0,
-            },
-            "passed": False,
-        }
-        if is_liquidity_residual:
-            unsupported_validation.update({
-                "validation_directional_effect": 0.0,
-                "test_directional_effect": 0.0,
-                "doubled_cost_directional_effect": 0.0,
-                "extreme_support": 0,
-                "maximum_drawdown": 0.0,
-            })
-        unsupported_validation["record_digest"] = digest(unsupported_validation)
     evaluation_artifact = (
         impact_proxy_evaluation(
             lightweight,
@@ -1555,6 +1588,9 @@ def execute_registered(
         ]:
             failed_gates.append("positive_reversal_in_both_directions")
     scientific_outcome = evaluation_artifact["outcome"] if (is_funding_basis or is_liquidity_residual) else None
+    heldout_scientific_evaluated = bool(
+        evaluation_artifact.get("held_out_evaluated", True)
+    )
     if is_funding_basis or is_liquidity_residual:
         if scientific_outcome == "invalid":
             failed_gates.append("point_in_time_scientific_sample_invalid")
@@ -1565,13 +1601,21 @@ def execute_registered(
                 failed_gates.append("matched_funding_basis_95pct_upper_bound")
             if evaluation_artifact["doubled_cost_treated_minus_control"] >= 0:
                 failed_gates.append("matched_funding_basis_double_cost_stress")
+        elif is_liquidity_residual and not heldout_scientific_evaluated:
+            failed_gates.append("validation_edge_nonpositive_test_not_opened")
         elif is_liquidity_residual and not evaluation_artifact["passed"]:
             if evaluation_artifact["confidence_interval_95"][0] <= 0:
                 failed_gates.append("eth_btc_residual_95pct_lower_bound")
             if evaluation_artifact["doubled_cost_directional_effect"] <= 0:
                 failed_gates.append("eth_btc_residual_double_cost_stress")
     scientific_valid = not (is_funding_basis or is_liquidity_residual) or scientific_outcome != "invalid"
-    scientific_supported = not (is_funding_basis or is_liquidity_residual) or scientific_outcome in {"positive", "negative"}
+    scientific_supported = (
+        not (is_funding_basis or is_liquidity_residual)
+        or (
+            heldout_scientific_evaluated
+            and scientific_outcome in {"positive", "negative"}
+        )
+    )
     evaluation_evidence_digests = (
         [
             *[item["record_digest"] for item in per_variant_evaluations],
