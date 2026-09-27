@@ -60,6 +60,7 @@ from bt.strategy.btc_funding_basis_crowding_60m import BtcFundingBasisCrowding60
 from bt.strategy.btc_oi_expansion_return_asymmetry_60m import BtcOiExpansionReturnAsymmetry60mStrategy  # noqa: E402
 from bt.strategy.bybit_cross_sectional_liquidity_dispersion_reversal import BybitCrossSectionalLiquidityDispersionReversalStrategy  # noqa: E402
 from bt.strategy.eth_liquidity_displacement_btc_residual_60m import EthLiquidityDisplacementBtcResidual60mStrategy  # noqa: E402
+from bt.strategy.eth_relative_liquidity_reversal_6h import EthRelativeLiquidityReversal6hStrategy  # noqa: E402
 from bt.strategy.l1_h10a_mean_reversion_small_tp import L1H10AMeanReversionSmallTPStrategy  # noqa: E402
 from bt.strategy.l1_h10b_breakout_scalping import L1H10BBreakoutScalpingStrategy  # noqa: E402
 from bt.strategy.l1_h11_quality_filtered_continuation import L1H11QualityFilteredContinuationStrategy  # noqa: E402
@@ -98,6 +99,7 @@ __all__ = [
     "BtcOiExpansionReturnAsymmetry60mStrategy",
     "BybitCrossSectionalLiquidityDispersionReversalStrategy",
     "EthLiquidityDisplacementBtcResidual60mStrategy",
+    "EthRelativeLiquidityReversal6hStrategy",
     "L1H10AMeanReversionSmallTPStrategy",
     "L1H10BBreakoutScalpingStrategy",
     "L1H11QualityFilteredContinuationStrategy",

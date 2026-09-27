@@ -74,6 +74,9 @@ from bt.strategy.bybit_cross_sectional_liquidity_dispersion_reversal import (
 from bt.strategy.eth_liquidity_displacement_btc_residual_60m import (
     liquidity_displacement_grid_evaluation,
 )
+from bt.strategy.eth_relative_liquidity_reversal_6h import (
+    relative_liquidity_reversal_grid_evaluation,
+)
 
 AUTHORITY = {
     "capital": False,
@@ -81,6 +84,51 @@ AUTHORITY = {
     "promotion": False,
     "self_approval": False,
 }
+TRUSTED_BINDING_FIELDS = (
+    "dataset_build_id",
+    "dataset_digest",
+    "catalog_digest",
+    "manifest_digest",
+    "producer_receipt_digest",
+    "lake_governance_digest",
+    "partition_digest",
+)
+
+
+def verify_trusted_dataset_bindings(
+    assignment: dict[str, Any], expected_bindings: list[dict[str, Any]]
+) -> None:
+    """Replay a contract's evidence identities against the materialized files."""
+    bindings = assignment.get("dataset_bindings")
+    if not isinstance(bindings, list) or len(bindings) != len(expected_bindings):
+        raise BridgeError("execution requires every trusted dataset binding")
+    actual = {item.get("instrument"): item for item in bindings}
+    expected_by_symbol = {item.get("instrument"): item for item in expected_bindings}
+    if (
+        None in actual
+        or None in expected_by_symbol
+        or set(actual) != set(expected_by_symbol)
+    ):
+        raise BridgeError("trusted dataset basket identity mismatch")
+    for symbol, expected in expected_by_symbol.items():
+        item = actual.get(symbol, {})
+        normalized = dict(item)
+        if (
+            "partition_digest" not in normalized
+            and isinstance(normalized.get("partition_digests"), list)
+            and len(normalized["partition_digests"]) == 1
+        ):
+            normalized["partition_digest"] = normalized["partition_digests"][0]
+        required = [key for key in TRUSTED_BINDING_FIELDS if key in expected]
+        if any(normalized.get(key) != expected[key] for key in required):
+            raise BridgeError(f"trusted immutable evidence binding mismatch: {symbol}")
+        path = Path(str(normalized.get("dataset_path", "")))
+        if not path.is_file() or file_digest(path) != str(expected["dataset_digest"]):
+            raise BridgeError(
+                f"trusted materialized dataset content mismatch: {symbol}"
+            )
+
+
 _EXPLICIT_HYPOTHESIS = re.compile(
     r"(?:hypothesis(?:_id)?|strategy)\s*[:=]\s*([A-Za-z0-9][A-Za-z0-9._-]*)",
     re.IGNORECASE,
@@ -108,7 +156,11 @@ def file_digest(path: Path) -> str:
 
 
 def native_representation_acceptance(
-    run_dir: Path, *, expected_digest: str, expected_fields: list[str]
+    run_dir: Path,
+    *,
+    expected_digest: str,
+    expected_fields: list[str],
+    signal_type: str = "cross_sectional_representation_validation",
 ) -> dict[str, Any]:
     """Fail closed unless the classic strategy consumed every retained payload."""
     decisions_path = run_dir / "decisions.jsonl"
@@ -119,9 +171,7 @@ def native_representation_acceptance(
                 continue
             row = json.loads(line)
             signal = row.get("signal")
-            if not isinstance(signal, dict) or signal.get("signal_type") != (
-                "cross_sectional_representation_validation"
-            ):
+            if not isinstance(signal, dict) or signal.get("signal_type") != signal_type:
                 continue
             metadata = signal.get("metadata")
             if not isinstance(metadata, dict):
@@ -150,19 +200,22 @@ def native_representation_acceptance(
         if item["outcome"] not in {"consumed", "warmup"}
         or item["representation_plan_digest"] != expected_digest
         or item["representation_output_fields"] != expected_fields
-        or pd.Timestamp(item["representation_decision_ts"])
-        != pd.Timestamp(item["ts"])
+        or pd.Timestamp(item["representation_decision_ts"]) != pd.Timestamp(item["ts"])
     ]
     if rejected:
         raise BridgeError(
             "native strategy rejected or misbound adaptive representation payloads"
         )
-    warmups = [index for index, item in enumerate(records) if item["outcome"] == "warmup"]
-    if warmups not in ([], [0]):
-        raise BridgeError("native representation warmup occurred after causal initialization")
+    warmups = [
+        index for index, item in enumerate(records) if item["outcome"] == "warmup"
+    ]
+    if warmups != list(range(len(warmups))):
+        raise BridgeError(
+            "native representation warmup occurred after causal initialization"
+        )
     receipt = {
         "schema_version": "native-representation-acceptance-v1.0.0",
-        "strategy": "bybit_cross_sectional_liquidity_dispersion_reversal",
+        "strategy": signal_type.removesuffix("_representation_validation"),
         "representation_plan_digest": expected_digest,
         "representation_output_fields": expected_fields,
         "decision_count": len(records),
@@ -263,7 +316,9 @@ def materialize_execution_panel(
             ],
             "window_start": assignment.get("window_start"),
             "window_end": assignment.get("window_end"),
-            "warmup_start": warmup_start.isoformat() if warmup_start is not None else None,
+            "warmup_start": warmup_start.isoformat()
+            if warmup_start is not None
+            else None,
             "warmup_bars": warmup_bars,
             "warmup_timeframe": warmup_timeframe,
             "materialized_file_digest": file_digest(destination),
@@ -389,7 +444,9 @@ def validate_materialized_payload(
     if actual.empty or expected_by_ts.empty:
         raise BridgeError("materialized representation produced no native payload rows")
     if set(actual["symbol"].astype(str)) != set(instruments):
-        raise BridgeError("native adaptive payload basket differs from reviewed instruments")
+        raise BridgeError(
+            "native adaptive payload basket differs from reviewed instruments"
+        )
     counts = actual.groupby("ts")["symbol"].nunique()
     if not counts.eq(len(instruments)).all() or set(actual["ts"]) != set(
         expected_by_ts.index
@@ -409,8 +466,12 @@ def validate_materialized_payload(
             wanted = reference[field]
             if pd.isna(observed) and pd.isna(wanted):
                 continue
-            if pd.isna(observed) or pd.isna(wanted) or not math.isclose(
-                float(observed), float(wanted), rel_tol=1e-12, abs_tol=1e-15
+            if (
+                pd.isna(observed)
+                or pd.isna(wanted)
+                or not math.isclose(
+                    float(observed), float(wanted), rel_tol=1e-12, abs_tol=1e-15
+                )
             ):
                 raise BridgeError(
                     f"native adaptive payload value differs from materialization: {field}"
@@ -529,9 +590,7 @@ def causal_warmup_receipt(
             "materialized causal warmup is not contiguous through the official boundary"
         )
     official = frame.loc[decision_at == start]
-    if len(official) != 1 or not finite_rows(
-        official, official_required_fields
-    ).all():
+    if len(official) != 1 or not finite_rows(official, official_required_fields).all():
         raise BridgeError(
             "official-start representation is missing, duplicated, or incomplete"
         )
@@ -539,7 +598,9 @@ def causal_warmup_receipt(
     if "btc_15m_realized_volatility_96" in official_required_fields:
         source_field = "prior_only_volatility_source_end_ts"
         if source_field not in official:
-            raise BridgeError("official-start prior-only volatility provenance is missing")
+            raise BridgeError(
+                "official-start prior-only volatility provenance is missing"
+            )
         try:
             official_source_end = pd.Timestamp(official.iloc[0][source_field])
         except (TypeError, ValueError):
@@ -552,10 +613,7 @@ def causal_warmup_receipt(
         "schema_version": "alpha-causal-warmup-receipt-v1.0.0",
         "authority": "causal_feature_state_only",
         "official_evaluation_start": start.isoformat(),
-        "warmup_start": (
-            start
-            - interval * source_warmup_bars
-        ).isoformat(),
+        "warmup_start": (start - interval * source_warmup_bars).isoformat(),
         "warmup_timeframe": warmup_timeframe,
         "requested_source_bars": source_warmup_bars,
         "required_prior_observations": required_prior_observations,
@@ -566,9 +624,7 @@ def causal_warmup_receipt(
         "official_required_fields": official_required_fields,
         "official_decision_at": start.isoformat(),
         "official_prior_only_source_end": (
-            official_source_end.isoformat()
-            if official_source_end is not None
-            else None
+            official_source_end.isoformat() if official_source_end is not None else None
         ),
         "orders_permitted_during_warmup": False,
         "performance_attribution_during_warmup": False,
@@ -1142,13 +1198,22 @@ def heldout_not_evaluated_evidence(
 
 
 def heldout_test_consulted(
-    *, is_liquidity_residual: bool, liquidity_grid: dict[str, Any] | None
+    *,
+    is_liquidity_residual: bool,
+    liquidity_grid: dict[str, Any] | None,
+    eth_relative_grid: dict[str, Any] | None = None,
 ) -> bool:
     """Report whether validation opened the single permitted held-out test."""
     return bool(
-        is_liquidity_residual
-        and liquidity_grid is not None
-        and liquidity_grid.get("test_open_count") == 1
+        (
+            is_liquidity_residual
+            and liquidity_grid is not None
+            and liquidity_grid.get("test_open_count") == 1
+        )
+        or (
+            eth_relative_grid is not None
+            and eth_relative_grid.get("test_open_count") == 1
+        )
     )
 
 
@@ -1407,6 +1472,17 @@ def execute_registered(
     variants = contract.to_run_specs()
     if len(variants) > assignment["max_variants"]:
         raise BridgeError("qualified strategy exceeds the immutable variant budget")
+    is_eth_relative = (
+        contract.schema.metadata.hypothesis_family == "eth_relative_liquidity_reversal"
+    )
+    contract_bindings = list(
+        contract_document["immutable_contract"].get("dataset_bindings", [])
+    )
+    if contract_bindings and all(
+        all(field in binding for field in TRUSTED_BINDING_FIELDS)
+        for binding in contract_bindings
+    ):
+        verify_trusted_dataset_bindings(assignment, contract_bindings)
 
     execution_semantics = contract.schema.execution_semantics
     warmup_bars = int(execution_semantics.get("warmup_observations", 0))
@@ -1488,10 +1564,10 @@ def execute_registered(
         )
 
     lightweight_columns = ["ts", "symbol", "close"]
-    if (
-        contract.schema.metadata.hypothesis_family
-        == "cross_sectional_liquidity_dispersion_reversal"
-    ):
+    if contract.schema.metadata.hypothesis_family in {
+        "cross_sectional_liquidity_dispersion_reversal",
+        "eth_relative_liquidity_reversal",
+    }:
         lightweight_columns.extend(["volume", "quote_volume"])
     for column in contract.schema.execution_semantics.get("required_extra_columns", []):
         if column not in lightweight_columns:
@@ -1619,7 +1695,7 @@ def execute_registered(
         == "cross_asset_liquidity_transmission"
     )
     grid_data_path = execution_data_path
-    if is_funding_basis or is_liquidity_residual:
+    if is_funding_basis or is_liquidity_residual or is_eth_relative:
         validation_end = pd.Timestamp(rep.split.validation_end)
         validation_frame = pd.read_parquet(execution_data_path)
         validation_frame = validation_frame[
@@ -1660,13 +1736,18 @@ def execute_registered(
             (run_dir / "materialized-native-payload-validation.json").write_bytes(
                 canonical(materialized_payload_receipt) + b"\n"
             )
-        if is_cross_sectional:
+        if is_cross_sectional or is_eth_relative:
             if adaptive_receipt is None:
-                raise BridgeError("cross-sectional execution lacks representation receipt")
+                raise BridgeError("scientific execution lacks representation receipt")
             acceptance = native_representation_acceptance(
                 run_dir,
                 expected_digest=str(adaptive_receipt["plan_digest"]),
                 expected_fields=list(adaptive_receipt["output_fields"]),
+                signal_type=(
+                    "eth_relative_representation_validation"
+                    if is_eth_relative
+                    else "cross_sectional_representation_validation"
+                ),
             )
             (run_dir / "native-representation-acceptance.json").write_bytes(
                 canonical(acceptance) + b"\n"
@@ -1675,7 +1756,29 @@ def execute_registered(
         run_dirs.append(run_dir)
     trials = search.trials()
     liquidity_grid = None
-    if is_liquidity_residual:
+    eth_relative_grid = None
+    if is_eth_relative:
+        eth_relative_grid = relative_liquidity_reversal_grid_evaluation(
+            source_panels,
+            parameter_grid=contract.schema.parameter_grid,
+            evaluation_start=assignment["window_start"],
+            evaluation_end=assignment["window_end"],
+            representation_plan_digest=(
+                adaptive_receipt.get("plan_digest") if adaptive_receipt else ""
+            ),
+        )
+        validation = eth_relative_grid["selection_candidates"]
+        selected_parameters = eth_relative_grid.get("selected_parameters")
+        selected_index = next(
+            (
+                index
+                for index, variant in enumerate(variants)
+                if variant["params"] == selected_parameters
+            ),
+            None,
+        )
+        selection_metric = "validation_mean_net_residual_return"
+    elif is_liquidity_residual:
         liquidity_grid = liquidity_displacement_grid_evaluation(
             source_panels,
             parameter_grid=contract.schema.parameter_grid,
@@ -1736,6 +1839,8 @@ def execute_registered(
     execution_index = (
         selected_index
         if selected_index is not None
+        else 0
+        if not validation
         else max(
             range(len(validation)),
             key=lambda item: (validation[item].get("matched_support", 0), -item),
@@ -1778,6 +1883,7 @@ def execute_registered(
         "held_out_test_consulted": heldout_test_consulted(
             is_liquidity_residual=is_liquidity_residual,
             liquidity_grid=liquidity_grid,
+            eth_relative_grid=eth_relative_grid,
         ),
         "stopping_rule": "exhaustive",
         "selected_variant_index": selected_index,
@@ -1831,7 +1937,12 @@ def execute_registered(
         )
     per_variant_evaluations = (
         validation
-        if (is_funding_basis or is_cross_sectional or is_liquidity_residual)
+        if (
+            is_funding_basis
+            or is_cross_sectional
+            or is_liquidity_residual
+            or is_eth_relative
+        )
         else []
     )
     heldout_evaluation = (
@@ -1842,11 +1953,13 @@ def execute_registered(
             params=variants[selected_index]["params"],
         )
         if is_funding_basis and selected_index is not None
+        else eth_relative_grid["held_out_evaluation"]
+        if is_eth_relative
         else liquidity_grid
         if is_liquidity_residual and selected_index is not None
         else None
     )
-    if heldout_evaluation is not None:
+    if heldout_evaluation is not None and not is_eth_relative:
         heldout_partition = period_evaluation(
             run_dirs[selected_index],
             rep.split.test_start,
@@ -1867,7 +1980,9 @@ def execute_registered(
             liquidity_grid=liquidity_grid if is_liquidity_residual else None,
         )
     evaluation_artifact = (
-        cross_sectional_reversal_evaluation(
+        eth_relative_grid["held_out_evaluation"]
+        if is_eth_relative
+        else cross_sectional_reversal_evaluation(
             lightweight,
             params=variants[execution_index]["params"],
             start=rep.split.test_start,
@@ -1879,7 +1994,7 @@ def execute_registered(
                 else None
             ),
         )
-        if is_cross_sectional
+        if is_cross_sectional or is_eth_relative
         else impact_proxy_evaluation(
             lightweight,
             test_start=rep.split.test_start,
@@ -1893,8 +2008,10 @@ def execute_registered(
     if "record_digest" not in evaluation_artifact:
         evaluation_artifact["record_digest"] = digest(evaluation_artifact)
     evaluation_artifact_name = (
-        "cross_sectional_reversal_evaluation.json"
-        if is_cross_sectional
+        "eth_relative_liquidity_reversal_evaluation.json"
+        if is_eth_relative
+        else "cross_sectional_reversal_evaluation.json"
+        if is_cross_sectional or is_eth_relative
         else "impact_proxy_evaluation.json"
         if is_impact_proxy
         else "funding_basis_heldout_not_evaluated.json"
@@ -1915,14 +2032,16 @@ def execute_registered(
             )
             for _ in run_dirs
         ]
-        if is_cross_sectional
+        if is_cross_sectional or is_eth_relative
         else [
             required_trade_logging_evaluation(path, card["logging_requirements"])
             for path in run_dirs
         ]
     )
     validation_evaluation_name = (
-        "eth_liquidity_residual_validation_evaluation.json"
+        "eth_relative_liquidity_reversal_validation_evaluation.json"
+        if is_eth_relative
+        else "eth_liquidity_residual_validation_evaluation.json"
         if is_liquidity_residual
         else "funding_basis_validation_evaluation.json"
     )
@@ -1937,7 +2056,7 @@ def execute_registered(
         (candidate_run / "selection_bias_audit.json").write_bytes(
             canonical(selection_audit) + b"\n"
         )
-        if is_funding_basis or is_liquidity_residual:
+        if is_funding_basis or is_liquidity_residual or is_eth_relative:
             (candidate_run / validation_evaluation_name).write_bytes(
                 canonical(per_variant_evaluations[index]) + b"\n"
             )
@@ -1963,7 +2082,7 @@ def execute_registered(
             search_plan_digest=search.digest,
             evaluation_artifact=(
                 evaluation_artifact_name
-                if not (is_funding_basis or is_liquidity_residual)
+                if not (is_funding_basis or is_liquidity_residual or is_eth_relative)
                 or index == selected_index
                 else validation_evaluation_name
             ),
@@ -2020,7 +2139,9 @@ def execute_registered(
     holdout = (
         None
         if is_cross_sectional
-        or (is_funding_basis or is_liquidity_residual) and selected_index is None
+        or is_eth_relative
+        or (is_funding_basis or is_liquidity_residual)
+        and selected_index is None
         else held_out_trade_evaluation(run_dir, rep.split.test_start)
     )
     logging_report = logging_reports[execution_index]
@@ -2097,6 +2218,22 @@ def execute_registered(
                 "selection_bias_audit": selection_audit,
             }
         )
+    elif is_eth_relative:
+        metrics.update(
+            {
+                "mean_net_residual_return": evaluation_artifact.get(
+                    "mean_net_residual_return", 0.0
+                ),
+                "confidence_interval_95": evaluation_artifact.get(
+                    "confidence_interval_95", (0.0, 0.0)
+                ),
+                "doubled_cost_mean_net_residual_return": evaluation_artifact.get(
+                    "doubled_cost_mean_net_residual_return", 0.0
+                ),
+                "support": evaluation_artifact.get("support", 0),
+                "selection_bias_audit": selection_audit,
+            }
+        )
     elif is_liquidity_residual:
         metrics.update(
             {
@@ -2125,7 +2262,12 @@ def execute_registered(
     independent_review_complete = governed_review_verified(assignment, qualification)
     passed_edge = bool(
         (
-            (is_funding_basis or is_cross_sectional or is_liquidity_residual)
+            (
+                is_funding_basis
+                or is_cross_sectional
+                or is_liquidity_residual
+                or is_eth_relative
+            )
             or (
                 holdout is not None
                 and holdout["adequate_support"]
@@ -2148,13 +2290,23 @@ def execute_registered(
             )
         )
         and (
-            not (is_funding_basis or is_cross_sectional or is_liquidity_residual)
+            not (
+                is_funding_basis
+                or is_cross_sectional
+                or is_liquidity_residual
+                or is_eth_relative
+            )
             or evaluation_artifact["passed"]
         )
     )
     classic_pnl_gates = (
         ()
-        if (is_funding_basis or is_cross_sectional or is_liquidity_residual)
+        if (
+            is_funding_basis
+            or is_cross_sectional
+            or is_liquidity_residual
+            or is_eth_relative
+        )
         else (
             ("oos_trade_support", holdout["adequate_support"]),
             ("positive_oos_net_edge", holdout["positive_net_edge"]),
@@ -2177,13 +2329,23 @@ def execute_registered(
             failed_gates.append("positive_reversal_in_both_directions")
     scientific_outcome = (
         evaluation_artifact["outcome"]
-        if (is_funding_basis or is_cross_sectional or is_liquidity_residual)
+        if (
+            is_funding_basis
+            or is_cross_sectional
+            or is_liquidity_residual
+            or is_eth_relative
+        )
         else None
     )
     heldout_scientific_evaluated = bool(
         evaluation_artifact.get("held_out_evaluated", True)
     )
-    if is_funding_basis or is_cross_sectional or is_liquidity_residual:
+    if (
+        is_funding_basis
+        or is_cross_sectional
+        or is_liquidity_residual
+        or is_eth_relative
+    ):
         if scientific_outcome == "invalid":
             failed_gates.append("point_in_time_scientific_sample_invalid")
         elif scientific_outcome == "failed":
@@ -2210,16 +2372,33 @@ def execute_registered(
                 failed_gates.append("eth_btc_residual_95pct_lower_bound")
             if evaluation_artifact["doubled_cost_directional_effect"] <= 0:
                 failed_gates.append("eth_btc_residual_double_cost_stress")
+        elif is_eth_relative and not evaluation_artifact["passed"]:
+            if evaluation_artifact.get("confidence_interval_95", (0.0, 0.0))[0] <= 0:
+                failed_gates.append("eth_relative_residual_95pct_lower_bound")
+            if (
+                evaluation_artifact.get("doubled_cost_mean_net_residual_return", 0.0)
+                <= 0
+            ):
+                failed_gates.append("eth_relative_residual_double_cost_stress")
     scientific_observations_complete = (
-        not is_cross_sectional
-        or logging_report.get("scientific_observation_logging_complete") is True
+        logging_report.get("scientific_observation_logging_complete") is True
+        if is_cross_sectional
+        else logging_report.get("terminal_retention_complete") is True
+        if is_eth_relative
+        else True
     )
-    if is_cross_sectional and not scientific_observations_complete:
+    if (is_cross_sectional or is_eth_relative) and not scientific_observations_complete:
         failed_gates.append("scientific_observation_support_absent")
-    scientific_family = is_funding_basis or is_cross_sectional or is_liquidity_residual
+    scientific_family = (
+        is_funding_basis
+        or is_cross_sectional
+        or is_liquidity_residual
+        or is_eth_relative
+    )
     scientific_valid = (
         not scientific_family
-        or scientific_outcome != "invalid" and scientific_observations_complete
+        or scientific_outcome != "invalid"
+        and scientific_observations_complete
     )
     scientific_supported = not scientific_family or (
         scientific_outcome in {"positive", "negative"}
@@ -2231,7 +2410,7 @@ def execute_registered(
             *[item["record_digest"] for item in per_variant_evaluations],
             evaluation_artifact["record_digest"],
         ]
-        if (is_funding_basis or is_cross_sectional or is_liquidity_residual)
+        if scientific_family
         else [evaluation_artifact["record_digest"]]
     )
     gate_report = {
@@ -2260,7 +2439,7 @@ def execute_registered(
             "failed"
             if not independent_review_complete
             else scientific_outcome
-            if (is_funding_basis or is_cross_sectional or is_liquidity_residual)
+            if scientific_family
             else "candidate"
             if passed_edge
             else "negative"
@@ -2269,8 +2448,7 @@ def execute_registered(
             "independent_evaluation"
             if not independent_review_complete
             else "truth_gate"
-            if (is_funding_basis or is_cross_sectional or is_liquidity_residual)
-            and scientific_outcome == "failed"
+            if scientific_family and scientific_outcome == "failed"
             else None
         ),
         "gate_report": gate_report,

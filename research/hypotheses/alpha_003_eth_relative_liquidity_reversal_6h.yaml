@@ -1,0 +1,89 @@
+metadata:
+  hypothesis_id: ALPHA-003-ETH-RELATIVE-LIQUIDITY-REVERSAL-6H
+  title: ETH relative underperformance with declining liquidity and six-hour residual reversal
+  description: &question "Among the preregistered Bybit basket ETHUSDT, BTCUSDT, and SOLUSDT, does persistent point-in-time ETHUSDT relative underperformance accompanied by declining ETHUSDT quote_volume predict a positive ETHUSDT residual log return over the next 6h?"
+  research_layer: ALPHA
+  hypothesis_family: eth_relative_liquidity_reversal
+  version: 1.0.0
+hypothesis_id: ALPHA-003-ETH-RELATIVE-LIQUIDITY-REVERSAL-6H
+title: ETH relative underperformance with declining liquidity and six-hour residual reversal
+description: *question
+research_layer: ALPHA
+hypothesis_family: eth_relative_liquidity_reversal
+version: 1.0.0
+status: draft
+immutable_contract:
+  question: *question
+  question_digest: 4454892e0f78b507d772b6e82733007301db4065d6fb8415ab3298bcc1276916
+  venue: bybit
+  instruments: [ETHUSDT, BTCUSDT, SOLUSDT]
+  source_timeframe: 1m
+  research_timeframe: 1h
+  resampling_policy: left_closed_left_labeled_complete_bars
+  window: {start: '2023-01-01T00:00:00Z', end: '2024-01-01T00:00:00Z'}
+  tier: Tier2B
+  required_fields: [ts, close, quote_volume, volume]
+  dataset_bindings:
+    - {instrument: ETHUSDT, dataset_build_id: e1abea55-f597-415b-af85-95e6a12b5a3d, dataset_digest: 17c0dc35d32f3e838f43ba116eb8917f01f08594f14ea2a6c104c3905e4a4473, catalog_digest: debec183dbaead71f96286920a805998c61c5141fe93499efcfb41e72249e031, manifest_digest: 1add98708c8427d7d4daa5f94d05c54920df8ea2bbbd1582f9aa532cd30d639c, producer_receipt_digest: 06c474dbc27afbf802cc8539c88ac8e61554c607c5693ba0317846043aa028bf, lake_governance_digest: 3c831d64cad97c076a82700f59e8c2021c8316a711b6c29dfed9a47e0fe003c1, partition_digest: 17c0dc35d32f3e838f43ba116eb8917f01f08594f14ea2a6c104c3905e4a4473}
+    - {instrument: BTCUSDT, dataset_build_id: 25d9958c-71b6-4c2b-949a-3c0433f70f38, dataset_digest: 9a211d8818c5ab8ec82ad5a7d38957e63eb387ea83d4b00541922a0eeca4aacb, catalog_digest: 4f007cc5c0a77dfc3a338508b49a849e7fd953c66f33d2cf5c6af67dee594141, manifest_digest: 4b4cfb5af9058454fe2a4a3a5d8cbd63f44b77b7cec9157292fb27f0d7a410b4, producer_receipt_digest: 6e735d64b3ad7a845b0fc3d1187d628c3dfc743b8e98ae93a1548fa780faa3e4, lake_governance_digest: 7af91738a385c79c0397520696641c962c7080df8cfba0ae594c5eb75604f71f, partition_digest: 9a211d8818c5ab8ec82ad5a7d38957e63eb387ea83d4b00541922a0eeca4aacb}
+    - {instrument: SOLUSDT, dataset_build_id: 233b1bf0-cde2-4eff-a58e-0ff57b7ade1f, dataset_digest: 3921896b9b2be24b0834766a2945e54e89d1223ce5480c83a2a6757b9eaf9a41, catalog_digest: b69af601f8e2c8c76f2692f7186f99069c3ea821975483f4dd4eb0f60ac3c290, manifest_digest: 455beed3cf4e5c80e8f63bb33cf2e4b7beff9b0813063080aae9dfb6e11b4788, producer_receipt_digest: 917e2b25de13a8427af7391d9e59d95083865c3ca60d9721cf77becb3bb424c8, lake_governance_digest: d62fb5a4ed3f9acbdd76cc8896d68ad1ce36d0ca0e72a673042c40b754513b96, partition_digest: 3921896b9b2be24b0834766a2945e54e89d1223ce5480c83a2a6757b9eaf9a41}
+representation_plan: {"basket_members":[{"instrument":"ETHUSDT","legacy_groups":["stable"],"role":"primary","selection_rationale":"Primary asset named by the frozen question and residual-return target."},{"instrument":"BTCUSDT","legacy_groups":["stable"],"role":"predictor","selection_rationale":"Broad crypto return input required by both preregistered residualization variants."},{"instrument":"SOLUSDT","legacy_groups":["stable"],"role":"control","selection_rationale":"Second market control required to distinguish ETH-specific movement from broader large-cap movement."}],"candidate_key":"eth-relative-liquidity-reversal-6h-v1","instruments":["ETHUSDT","BTCUSDT","SOLUSDT"],"outcome_data_consulted":false,"rejected_alternatives":["BTCUSDT alone was rejected because it violates the frozen two-instrument minimum and cannot identify ETH residual returns.","ETHUSDT plus BTCUSDT was rejected because it omits the preregistered SOLUSDT control and cannot support the frozen BTC-and-SOL residualization rival.","A larger all-eligible or legacy-group basket was rejected as causally unnecessary and would add admission, missingness, and multiple-testing burden.","Price-level ratios and fractional differentiation were rejected because the hypothesis concerns finite six-hour returns rather than persistent price levels; log returns are scale-safe and exactly aligned to the stated predictor and target.","Rolling z-scores, realized-volatility scaling, and cross-sectional ranks were rejected because they would add unregistered windows or alter the frozen underperformance-and-liquidity-state question.","Funding, basis, and open-interest representations were rejected because they belong to distinct founder-idea branches and are not predictors in this candidate."],"resampling_policy":"left_closed_left_labeled_complete_bars","research_timeframe":"1h","schema_version":"adaptive-representation-plan-v1.0.0","selection_data_boundary":"metadata_predictors_only_no_targets","source_timeframe":"1m","transformation_rationale":"The founder's omnibus premise is not accepted: only the specific relative-price and declining-liquidity branch is retained. Complete 1m observations are aggregated into left-closed, left-labeled 1h bars, and every decision uses only six completed historical bars. Six-period log returns provide scale-safe cumulative returns for ETH and both controls. Six-period simple quote-volume change expresses the frozen declining-liquidity predictor without an outcome-selected normalization window. Contemporaneous quote_volume and volume are retained as actual liquidity measurements for every member; the USD floor is enforced on quote_volume. The preregistered train-only linear residualization against BTC and SOL is not expressible by the native transformation vocabulary, so the graph supplies its causal return inputs unchanged and leaves coefficient fitting to the governed train-only evaluator. ETHUSDT and SOLUSDT are catalog-visible but require content-bound admission before execution.","transformations":[{"fit_policy":"stateless","input_fields":["ETHUSDT__close"],"operation":"log_return","output_field":"eth_return_6h","parameters":{"periods":6},"rationale":"Scale-safe six-hour ETH return using only completed historical 1h closes."},{"fit_policy":"stateless","input_fields":["BTCUSDT__close"],"operation":"log_return","output_field":"btc_return_6h","parameters":{"periods":6},"rationale":"Six-hour BTC market-control return supplied to the governed residualization fit."},{"fit_policy":"stateless","input_fields":["SOLUSDT__close"],"operation":"log_return","output_field":"sol_return_6h","parameters":{"periods":6},"rationale":"Six-hour SOL control return supplied to the governed residualization fit."},{"fit_policy":"stateless","input_fields":["ETHUSDT__quote_volume"],"operation":"simple_return","output_field":"eth_quote_volume_change_6h","parameters":{"periods":6},"rationale":"Past-only proportional quote-volume change defining declining ETH liquidity over the same six-hour window."},{"fit_policy":"stateless","input_fields":["ETHUSDT__quote_volume"],"operation":"identity","output_field":"eth_quote_volume_usd","parameters":{},"rationale":"Actual ETH quote-volume measurement used to enforce the USD liquidity floor."},{"fit_policy":"stateless","input_fields":["BTCUSDT__quote_volume"],"operation":"identity","output_field":"btc_quote_volume_usd","parameters":{},"rationale":"Actual BTC quote-volume measurement used to enforce the USD liquidity floor."},{"fit_policy":"stateless","input_fields":["SOLUSDT__quote_volume"],"operation":"identity","output_field":"sol_quote_volume_usd","parameters":{},"rationale":"Actual SOL quote-volume measurement used to enforce the USD liquidity floor."},{"fit_policy":"stateless","input_fields":["ETHUSDT__volume"],"operation":"identity","output_field":"eth_base_volume","parameters":{},"rationale":"Retains the mandated companion liquidity measurement for completeness checks."},{"fit_policy":"stateless","input_fields":["BTCUSDT__volume"],"operation":"identity","output_field":"btc_base_volume","parameters":{},"rationale":"Retains the mandated companion liquidity measurement for completeness checks."},{"fit_policy":"stateless","input_fields":["SOLUSDT__volume"],"operation":"identity","output_field":"sol_base_volume","parameters":{},"rationale":"Retains the mandated companion liquidity measurement for completeness checks."}]}
+parameter_grid:
+  relative_return_lookback_hours: [6]
+  underperformance_threshold: [-0.01, -0.02]
+  quote_volume_change_threshold: [0.0]
+  residualization_control_set: [btc_only, btc_and_sol]
+grid_contract: {maximum_parameters: 4, maximum_variants: 4, frozen_before_outcomes: true, stopping_rule: exhaustive}
+entry: {strategy: eth_relative_liquidity_reversal_6h, signal_timeframe: 1h, authority: research_observation_only}
+exit: {target: next_six_contiguous_complete_1h_bars, time_exit_minutes: 360}
+sizing: {mode: fixed_notional_pct_equity, notional_pct_equity: 0.05}
+risk: {authority: engine, max_positions: 0, pyramiding: false, flips: false}
+costs: {authority: registered_evaluator, taker_fee_bps: 6.0, slippage_bps: 2.0, spread_bps: 1.0, round_trip_bps: 9.0, robustness_multiplier: 2.0}
+execution_semantics:
+  signal_timeframe: 1h
+  base_execution_timeframe: 1m
+  base_data_frequency_expected: 1m
+  exit_monitoring_timeframe: 1m
+  hold_time_unit: six_contiguous_complete_1h_bars
+  atr_source_timeframe: 1h
+  stop_model: not_applicable_research_observation
+  stop_update_policy: none
+  tp_update_policy: none
+  warmup_observations: 0
+  warmup_timeframe: 1h
+  adaptive_representation_plan_digest: a8cffeeb5797b9d4e0b8a53a0ca3408a37d8fc4bb2e4e01f362e7bda07175769
+  adaptive_representation_fields: [eth_return_6h, btc_return_6h, sol_return_6h, eth_quote_volume_change_6h, eth_quote_volume_usd, btc_quote_volume_usd, sol_quote_volume_usd, eth_base_volume, btc_base_volume, sol_base_volume]
+  required_extra_columns: [eth_return_6h, btc_return_6h, sol_return_6h, eth_quote_volume_change_6h, eth_quote_volume_usd, btc_quote_volume_usd, sol_quote_volume_usd, eth_base_volume, btc_base_volume, sol_base_volume, representation_plan_digest, representation_output_fields, representation_decision_ts]
+evaluation:
+  required_tiers: [Tier2B]
+  outcome_retention: [positive, negative, invalid, failed]
+  split: {method: chronological_decision_row_fraction, train_fraction: 0.60, validation_fraction: 0.20, test_fraction: 0.20, purge_seconds: 21600, embargo_seconds: 21600}
+  native_implementation: {path: src/bt/strategy/eth_relative_liquidity_reversal_6h.py, function: relative_liquidity_reversal_grid_evaluation}
+  metrics: [mean_net_residual_return, confidence_interval_95, doubled_cost_mean_net_residual_return, support, selection_bias_audit]
+  confidence_interval: {method: deterministic_circular_block_bootstrap, block_length_observations: 6, resamples: 2000, seed: 20260927}
+falsification_criteria:
+  - Reject fewer than 30 held-out qualified decisions.
+  - Reject unless held-out mean net residual return and its dependence-aware 95% confidence lower bound are positive.
+  - Reject if either BTC-only or BTC-and-SOL residualization is nonpositive.
+  - Reject if matched nondeclining quote_volume has equal or larger return.
+  - Reject if doubled registered costs make the effect nonpositive.
+logging:
+  required_fields: [decision_trace, decision_ts, target_exit_ts, outcome, reason, stop_price, representation_plan_digest, representation_output_fields, representation_decision_ts]
+runtime_controls: {enabled: true, max_variants: 4, tags: [alpha-003, classic-only, point-in-time, research-only]}
+truth_contract:
+  version: '1.0'
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  parity_required_for_fast_path: true
+  fast_path_generation: forbidden
+  research_memory_requires_certification: true
+authority: {capital: false, orders: false, production_promotion: false, self_approval: false}
