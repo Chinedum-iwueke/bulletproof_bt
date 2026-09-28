@@ -89,7 +89,10 @@ def _overlap_receipt(assignment: dict) -> dict:
 
 def _attached_frame(decisions: int = 4120) -> pd.DataFrame:
     start = pd.Timestamp("2023-01-01T00:00:00Z")
-    minutes = (decisions + 14) * 120
+    # The native contract now rejects partial raw windows. Keep the argument for
+    # existing call sites, but always build the exact non-leap frozen year.
+    _ = decisions
+    minutes = 365 * 24 * 60
     timestamps = pd.date_range(start, periods=minutes, freq="1min")
     minute = np.arange(minutes, dtype=float)
     members = []
@@ -290,7 +293,7 @@ def test_grid_retains_positive_negative_invalid_and_failed(monkeypatch: pytest.M
 
 
 def test_evaluator_rejects_unbound_or_wrong_dataset_identity() -> None:
-    frame = _attached_frame(decisions=40)
+    frame = _attached_frame()
     assert not compile_decision_rows(frame, plan_digest=PLAN_DIGEST).empty
 
     unbound = frame.drop(columns=["source_dataset_digest"])
@@ -302,6 +305,23 @@ def test_evaluator_rejects_unbound_or_wrong_dataset_identity() -> None:
     wrong = frame.copy()
     wrong.loc[wrong.symbol.eq("SOLUSDT"), "source_dataset_digest"] = "0" * 64
     assert compile_decision_rows(wrong, plan_digest=PLAN_DIGEST).empty
+
+    partly_null = frame.copy()
+    partly_null.loc[partly_null.index[0], "source_dataset_digest"] = None
+    assert compile_decision_rows(partly_null, plan_digest=PLAN_DIGEST).empty
+
+
+def test_evaluator_rejects_non_utc_and_out_of_window_raw_rows() -> None:
+    frame = _attached_frame()
+    non_utc = frame.copy()
+    non_utc["ts"] = non_utc.ts.dt.tz_convert("Europe/Stockholm")
+    assert compile_decision_rows(non_utc, plan_digest=PLAN_DIGEST).empty
+
+    out_of_window = frame.copy()
+    extra = frame.loc[frame.ts.eq(frame.ts.min())].copy()
+    extra["ts"] = extra.ts - pd.Timedelta(minutes=1)
+    out_of_window = pd.concat([extra, out_of_window], ignore_index=True)
+    assert compile_decision_rows(out_of_window, plan_digest=PLAN_DIGEST).empty
 
 
 def test_evaluator_rejects_window_outside_frozen_contract() -> None:
