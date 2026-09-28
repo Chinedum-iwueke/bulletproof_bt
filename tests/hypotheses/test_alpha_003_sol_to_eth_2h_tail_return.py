@@ -256,15 +256,26 @@ def test_grid_retains_positive_negative_invalid_and_failed(monkeypatch: pytest.M
         evaluation_start="2022-01-01T00:00:00Z", evaluation_end="2024-01-01T00:00:00Z",
         representation_plan_digest=PLAN_DIGEST)
     assert result["outcome"] == "negative" and result["test_open_count"] == 1
+    audit = result["selection_bias_audit"]
+    assert audit["preregistered_variant_count"] == 2
+    assert audit["evaluated_variant_count"] == 2
+    assert audit["selected_index"] == 0
+    assert audit["test_open_count"] == 1
+    assert audit["held_out_used_for_selection"] is False
+    assert len(audit["candidates"]) == 2
     invalid = sol_to_eth_tail_grid_evaluation(frame, parameter_grid={"wrong": [1]},
         evaluation_start="2022-01-01T00:00:00Z", evaluation_end="2024-01-01T00:00:00Z",
         representation_plan_digest=PLAN_DIGEST)
     assert invalid["outcome"] == "invalid"
+    assert invalid["selection_bias_audit"]["test_open_count"] == 0
+    assert invalid["selection_bias_audit"]["selected_index"] is None
     monkeypatch.setattr(strategy, "_score", lambda *a, **k: (_ for _ in ()).throw(RuntimeError()))
     failed = sol_to_eth_tail_grid_evaluation(frame, parameter_grid=FROZEN_GRID,
         evaluation_start="2022-01-01T00:00:00Z", evaluation_end="2024-01-01T00:00:00Z",
         representation_plan_digest=PLAN_DIGEST)
     assert failed["outcome"] == "failed" and failed["test_open_count"] == 0
+    assert failed["selection_bias_audit"]["evaluated_variant_count"] == 2
+    assert failed["selection_bias_audit"]["held_out_used_for_selection"] is False
 
 
 def test_real_split_preserves_declared_training_history(
