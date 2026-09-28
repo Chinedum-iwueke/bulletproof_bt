@@ -42,6 +42,22 @@ ROUND_TRIP_COST = 0.0009
 EXPECTED_REPRESENTATION_PLAN_DIGEST = (
     "da66f342076d9d15600355066237cb17c8470ae133e7ebfce1319c597621dbdb"
 )
+EXPECTED_DATASET_IDENTITIES = {
+    "ETHUSDT": {
+        "source_venue": "bybit",
+        "source_dataset_build_id": "e1abea55-f597-415b-af85-95e6a12b5a3d",
+        "source_dataset_digest": (
+            "17c0dc35d32f3e838f43ba116eb8917f01f08594f14ea2a6c104c3905e4a4473"
+        ),
+    },
+    "SOLUSDT": {
+        "source_venue": "bybit",
+        "source_dataset_build_id": "233b1bf0-cde2-4eff-a58e-0ff57b7ade1f",
+        "source_dataset_digest": (
+            "3921896b9b2be24b0834766a2945e54e89d1223ce5480c83a2a6757b9eaf9a41"
+        ),
+    },
+}
 
 
 def _hash(value: Any) -> str:
@@ -114,7 +130,7 @@ def _selection_bias_audit(
             "index": index,
             "parameters": item.get("parameters", {}),
             "outcome": item.get("outcome"),
-            "passed_validation": bool(item.get("passed", False)),
+            "passed_validation": bool(item.get("selection_eligible", False)),
             "validation_mean_net_signed_residual_return": item.get(
                 "mean_net_signed_residual_return"
             ),
@@ -174,6 +190,7 @@ def compile_decision_rows(frame: pd.DataFrame, *, plan_digest: str) -> pd.DataFr
     if plan_digest != EXPECTED_REPRESENTATION_PLAN_DIGEST:
         return pd.DataFrame()
     required = {"ts", "symbol", "close", "quote_volume", *OUTPUT_FIELDS,
+                "source_venue", "source_dataset_build_id", "source_dataset_digest",
                 "prior_only_volatility_source_end_ts", "representation_plan_digest",
                 "representation_output_fields", "representation_decision_ts"}
     if not required.issubset(frame):
@@ -182,6 +199,15 @@ def compile_decision_rows(frame: pd.DataFrame, *, plan_digest: str) -> pd.DataFr
     data["ts"] = pd.to_datetime(data["ts"], utc=True, errors="coerce")
     if data.ts.isna().any() or data.duplicated(["symbol", "ts"]).any():
         return pd.DataFrame()
+    if set(data.symbol.astype(str)) != set(EXPECTED_DATASET_IDENTITIES):
+        return pd.DataFrame()
+    for symbol, expected_identity in EXPECTED_DATASET_IDENTITIES.items():
+        member = data.loc[data.symbol.eq(symbol)]
+        if member.empty or any(
+            set(member[field].dropna().astype(str)) != {expected}
+            for field, expected in expected_identity.items()
+        ):
+            return pd.DataFrame()
     encoded = json.dumps(list(OUTPUT_FIELDS), separators=(",", ":"))
     decisions = data.loc[data["representation_plan_digest"].notna()].copy()
     if decisions.empty:
@@ -362,11 +388,13 @@ def _score(rows: pd.DataFrame, train: pd.DataFrame, params: Mapping[str, Any],
              "current_exceeds_same_timestamp_lag": mean > lag_mean,
              "doubled_cost_positive": doubled > 0}
     outcome = "positive" if all(gates.values()) else "negative"
+    selection_eligible = partition == "validation" and gates["minimum_support"]
     return _result(outcome, "all_gates_passed" if outcome == "positive" else "falsification_gate_failed",
                    params, records=records, plan_digest=plan_digest, support=len(values),
                    mean_net_signed_residual_return=mean, lag_rival_mean_net_signed_residual_return=lag_mean,
                    confidence_interval_95=ci, doubled_cost_mean_net_signed_residual_return=doubled,
-                   gates=gates, partition=partition, held_out_evaluated=partition == "test")
+                   gates=gates, partition=partition, held_out_evaluated=partition == "test",
+                   selection_eligible=selection_eligible)
 
 
 def sol_to_eth_tail_grid_evaluation(frame: pd.DataFrame, *, parameter_grid: Mapping[str, Any],
@@ -439,7 +467,11 @@ def sol_to_eth_tail_grid_evaluation(frame: pd.DataFrame, *, parameter_grid: Mapp
         except Exception as exc:
             candidates.append(_result("failed", f"validation_evaluation_failed:{type(exc).__name__}", params,
                                       plan_digest=representation_plan_digest))
-    eligible = [(i, item) for i, item in enumerate(candidates) if item["passed"]]
+    eligible = [
+        (i, item)
+        for i, item in enumerate(candidates)
+        if item.get("selection_eligible") is True
+    ]
     if not eligible:
         outcomes = {item["outcome"] for item in candidates}
         outcome = "failed" if "failed" in outcomes else "invalid" if outcomes == {"invalid"} else "negative"

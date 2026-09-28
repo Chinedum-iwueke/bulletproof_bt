@@ -281,6 +281,9 @@ def materialize_execution_panel(
             selected["symbol"] = instrument
         elif set(selected["symbol"].astype(str)) != {instrument}:
             raise BridgeError("basket panel symbol differs from its admitted binding")
+        selected["source_venue"] = binding.get("venue")
+        selected["source_dataset_build_id"] = binding["dataset_build_id"]
+        selected["source_dataset_digest"] = binding["dataset_digest"]
         panels[instrument] = selected.copy()
         frames.append(selected)
     combined = pd.concat(frames, ignore_index=True).sort_values(
@@ -1605,6 +1608,14 @@ def execute_registered(
         "sol_to_eth_information_diffusion",
     }:
         lightweight_columns.extend(["volume", "quote_volume"])
+    if contract.schema.metadata.hypothesis_family == "sol_to_eth_information_diffusion":
+        lightweight_columns.extend(
+            [
+                "source_venue",
+                "source_dataset_build_id",
+                "source_dataset_digest",
+            ]
+        )
     for column in contract.schema.execution_semantics.get("required_extra_columns", []):
         if column not in lightweight_columns:
             lightweight_columns.append(column)

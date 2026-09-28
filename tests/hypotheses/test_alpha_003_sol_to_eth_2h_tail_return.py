@@ -111,6 +111,10 @@ def _attached_frame(decisions: int = 4120) -> pd.DataFrame:
             )
         )
     frame = pd.concat(members, ignore_index=True)
+    for symbol, identity in strategy.EXPECTED_DATASET_IDENTITIES.items():
+        mask = frame.symbol.eq(symbol)
+        for field, value in identity.items():
+            frame.loc[mask, field] = value
     expected = strategy._recompute_representation(frame)
     encoded = json.dumps(list(OUTPUT_FIELDS), separators=(",", ":"))
     frame = frame.merge(expected, left_on="ts", right_on="decision_ts", how="left")
@@ -246,11 +250,14 @@ def test_evaluator_rejects_unpinned_irregular_and_missing_decision_rows() -> Non
 
 def test_grid_retains_positive_negative_invalid_and_failed(monkeypatch: pytest.MonkeyPatch) -> None:
     frame = _attached_frame()
-    outcomes = iter(["positive", "positive", "negative"])
+    # Validation selection requires support only; held-out profitability gates must
+    # not be applied while choosing between the two frozen variants.
+    outcomes = iter(["negative", "negative", "negative"])
     def fake_score(rows, train, params, partition, plan_digest):
         outcome = next(outcomes)
         return strategy._result(outcome, outcome, params, records=[{"record_kind": "x"}],
-                                plan_digest=plan_digest, mean_net_signed_residual_return=1.0)
+                                plan_digest=plan_digest, mean_net_signed_residual_return=1.0,
+                                selection_eligible=partition == "validation")
     monkeypatch.setattr(strategy, "_score", fake_score)
     result = sol_to_eth_tail_grid_evaluation(frame, parameter_grid=FROZEN_GRID,
         evaluation_start="2022-01-01T00:00:00Z", evaluation_end="2024-01-01T00:00:00Z",
@@ -276,6 +283,18 @@ def test_grid_retains_positive_negative_invalid_and_failed(monkeypatch: pytest.M
     assert failed["outcome"] == "failed" and failed["test_open_count"] == 0
     assert failed["selection_bias_audit"]["evaluated_variant_count"] == 2
     assert failed["selection_bias_audit"]["held_out_used_for_selection"] is False
+
+
+def test_evaluator_rejects_unbound_or_wrong_dataset_identity() -> None:
+    frame = _attached_frame(decisions=40)
+    assert not compile_decision_rows(frame, plan_digest=PLAN_DIGEST).empty
+
+    unbound = frame.drop(columns=["source_dataset_digest"])
+    assert compile_decision_rows(unbound, plan_digest=PLAN_DIGEST).empty
+
+    wrong = frame.copy()
+    wrong.loc[wrong.symbol.eq("SOLUSDT"), "source_dataset_digest"] = "0" * 64
+    assert compile_decision_rows(wrong, plan_digest=PLAN_DIGEST).empty
 
 
 def test_real_split_preserves_declared_training_history(
