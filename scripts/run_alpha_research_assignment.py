@@ -1611,6 +1611,9 @@ def execute_registered(
     if contract.schema.metadata.hypothesis_family == "sol_to_eth_information_diffusion":
         lightweight_columns.extend(
             [
+                "open",
+                "high",
+                "low",
                 "source_venue",
                 "source_dataset_build_id",
                 "source_dataset_digest",

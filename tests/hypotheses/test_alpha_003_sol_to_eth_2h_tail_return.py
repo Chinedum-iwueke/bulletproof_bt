@@ -88,7 +88,7 @@ def _overlap_receipt(assignment: dict) -> dict:
 
 
 def _attached_frame(decisions: int = 4120) -> pd.DataFrame:
-    start = pd.Timestamp("2022-01-01T00:00:00Z")
+    start = pd.Timestamp("2023-01-01T00:00:00Z")
     minutes = (decisions + 14) * 120
     timestamps = pd.date_range(start, periods=minutes, freq="1min")
     minute = np.arange(minutes, dtype=float)
@@ -105,7 +105,11 @@ def _attached_frame(decisions: int = 4120) -> pd.DataFrame:
                 {
                     "ts": timestamps,
                     "symbol": symbol,
+                    "open": close,
+                    "high": close * 1.0001,
+                    "low": close * 0.9999,
                     "close": close,
+                    "volume": 1_000.0,
                     "quote_volume": 20_000.0,
                 }
             )
@@ -260,7 +264,7 @@ def test_grid_retains_positive_negative_invalid_and_failed(monkeypatch: pytest.M
                                 selection_eligible=partition == "validation")
     monkeypatch.setattr(strategy, "_score", fake_score)
     result = sol_to_eth_tail_grid_evaluation(frame, parameter_grid=FROZEN_GRID,
-        evaluation_start="2022-01-01T00:00:00Z", evaluation_end="2024-01-01T00:00:00Z",
+        evaluation_start="2023-01-01T00:00:00Z", evaluation_end="2024-01-01T00:00:00Z",
         representation_plan_digest=PLAN_DIGEST)
     assert result["outcome"] == "negative" and result["test_open_count"] == 1
     audit = result["selection_bias_audit"]
@@ -271,14 +275,14 @@ def test_grid_retains_positive_negative_invalid_and_failed(monkeypatch: pytest.M
     assert audit["held_out_used_for_selection"] is False
     assert len(audit["candidates"]) == 2
     invalid = sol_to_eth_tail_grid_evaluation(frame, parameter_grid={"wrong": [1]},
-        evaluation_start="2022-01-01T00:00:00Z", evaluation_end="2024-01-01T00:00:00Z",
+        evaluation_start="2023-01-01T00:00:00Z", evaluation_end="2024-01-01T00:00:00Z",
         representation_plan_digest=PLAN_DIGEST)
     assert invalid["outcome"] == "invalid"
     assert invalid["selection_bias_audit"]["test_open_count"] == 0
     assert invalid["selection_bias_audit"]["selected_index"] is None
     monkeypatch.setattr(strategy, "_score", lambda *a, **k: (_ for _ in ()).throw(RuntimeError()))
     failed = sol_to_eth_tail_grid_evaluation(frame, parameter_grid=FROZEN_GRID,
-        evaluation_start="2022-01-01T00:00:00Z", evaluation_end="2024-01-01T00:00:00Z",
+        evaluation_start="2023-01-01T00:00:00Z", evaluation_end="2024-01-01T00:00:00Z",
         representation_plan_digest=PLAN_DIGEST)
     assert failed["outcome"] == "failed" and failed["test_open_count"] == 0
     assert failed["selection_bias_audit"]["evaluated_variant_count"] == 2
@@ -292,9 +296,25 @@ def test_evaluator_rejects_unbound_or_wrong_dataset_identity() -> None:
     unbound = frame.drop(columns=["source_dataset_digest"])
     assert compile_decision_rows(unbound, plan_digest=PLAN_DIGEST).empty
 
+    incomplete_schema = frame.drop(columns=["open"])
+    assert compile_decision_rows(incomplete_schema, plan_digest=PLAN_DIGEST).empty
+
     wrong = frame.copy()
     wrong.loc[wrong.symbol.eq("SOLUSDT"), "source_dataset_digest"] = "0" * 64
     assert compile_decision_rows(wrong, plan_digest=PLAN_DIGEST).empty
+
+
+def test_evaluator_rejects_window_outside_frozen_contract() -> None:
+    result = sol_to_eth_tail_grid_evaluation(
+        _attached_frame(decisions=40),
+        parameter_grid=FROZEN_GRID,
+        evaluation_start="2023-02-01T00:00:00Z",
+        evaluation_end="2024-01-01T00:00:00Z",
+        representation_plan_digest=PLAN_DIGEST,
+    )
+    assert result["outcome"] == "invalid"
+    assert result["reason"] == "evaluation_window_differs_from_frozen_contract"
+    assert result["test_open_count"] == 0
 
 
 def test_real_split_preserves_declared_training_history(
@@ -319,7 +339,7 @@ def test_real_split_preserves_declared_training_history(
     result = sol_to_eth_tail_grid_evaluation(
         frame,
         parameter_grid=FROZEN_GRID,
-        evaluation_start="2022-01-01T00:00:00Z",
+        evaluation_start="2023-01-01T00:00:00Z",
         evaluation_end="2024-01-01T00:00:00Z",
         representation_plan_digest=PLAN_DIGEST,
     )
