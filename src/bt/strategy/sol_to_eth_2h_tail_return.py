@@ -51,11 +51,41 @@ EXPECTED_DATASET_IDENTITIES = {
         "source_dataset_digest": (
             "17c0dc35d32f3e838f43ba116eb8917f01f08594f14ea2a6c104c3905e4a4473"
         ),
+        "source_catalog_digest": (
+            "debec183dbaead71f96286920a805998c61c5141fe93499efcfb41e72249e031"
+        ),
+        "source_manifest_digest": (
+            "1add98708c8427d7d4daa5f94d05c54920df8ea2bbbd1582f9aa532cd30d639c"
+        ),
+        "source_producer_receipt_digest": (
+            "f40db3e88a6ab082091269f99b55d2885ca52c938d25a919783f9b5675aefad6"
+        ),
+        "source_lake_governance_digest": (
+            "3c831d64cad97c076a82700f59e8c2021c8316a711b6c29dfed9a47e0fe003c1"
+        ),
+        "source_partition_digest": (
+            "17c0dc35d32f3e838f43ba116eb8917f01f08594f14ea2a6c104c3905e4a4473"
+        ),
     },
     "SOLUSDT": {
         "source_venue": "bybit",
         "source_dataset_build_id": "233b1bf0-cde2-4eff-a58e-0ff57b7ade1f",
         "source_dataset_digest": (
+            "3921896b9b2be24b0834766a2945e54e89d1223ce5480c83a2a6757b9eaf9a41"
+        ),
+        "source_catalog_digest": (
+            "b69af601f8e2c8c76f2692f7186f99069c3ea821975483f4dd4eb0f60ac3c290"
+        ),
+        "source_manifest_digest": (
+            "455beed3cf4e5c80e8f63bb33cf2e4b7beff9b0813063080aae9dfb6e11b4788"
+        ),
+        "source_producer_receipt_digest": (
+            "29c440c17effbb3261262299a23f65a99afabf914b2048c92c64a557b9a1245b"
+        ),
+        "source_lake_governance_digest": (
+            "d62fb5a4ed3f9acbdd76cc8896d68ad1ce36d0ca0e72a673042c40b754513b96"
+        ),
+        "source_partition_digest": (
             "3921896b9b2be24b0834766a2945e54e89d1223ce5480c83a2a6757b9eaf9a41"
         ),
     },
@@ -191,9 +221,13 @@ def compile_decision_rows(frame: pd.DataFrame, *, plan_digest: str) -> pd.DataFr
     """Bind exact materialized predictors to contiguous future ETH closes."""
     if plan_digest != EXPECTED_REPRESENTATION_PLAN_DIGEST:
         return pd.DataFrame()
+    source_identity_fields = {
+        field
+        for identity in EXPECTED_DATASET_IDENTITIES.values()
+        for field in identity
+    }
     required = {"ts", "symbol", "open", "high", "low", "close", "volume",
-                "quote_volume", *OUTPUT_FIELDS,
-                "source_venue", "source_dataset_build_id", "source_dataset_digest",
+                "quote_volume", *OUTPUT_FIELDS, *source_identity_fields,
                 "prior_only_volatility_source_end_ts", "representation_plan_digest",
                 "representation_output_fields", "representation_decision_ts"}
     if not required.issubset(frame):

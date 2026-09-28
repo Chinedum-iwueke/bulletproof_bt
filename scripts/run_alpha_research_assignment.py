@@ -282,8 +282,12 @@ def materialize_execution_panel(
         elif set(selected["symbol"].astype(str)) != {instrument}:
             raise BridgeError("basket panel symbol differs from its admitted binding")
         selected["source_venue"] = binding.get("venue")
-        selected["source_dataset_build_id"] = binding["dataset_build_id"]
-        selected["source_dataset_digest"] = binding["dataset_digest"]
+        for field in TRUSTED_BINDING_FIELDS:
+            if field not in binding:
+                raise BridgeError(
+                    f"trusted dataset binding lacks {field}: {instrument}"
+                )
+            selected[f"source_{field}"] = binding[field]
         panels[instrument] = selected.copy()
         frames.append(selected)
     combined = pd.concat(frames, ignore_index=True).sort_values(

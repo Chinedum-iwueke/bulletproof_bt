@@ -310,6 +310,19 @@ def test_evaluator_rejects_unbound_or_wrong_dataset_identity() -> None:
     partly_null.loc[partly_null.index[0], "source_dataset_digest"] = None
     assert compile_decision_rows(partly_null, plan_digest=PLAN_DIGEST).empty
 
+    for field in (
+        "source_catalog_digest",
+        "source_manifest_digest",
+        "source_producer_receipt_digest",
+        "source_lake_governance_digest",
+        "source_partition_digest",
+    ):
+        missing = frame.drop(columns=[field])
+        assert compile_decision_rows(missing, plan_digest=PLAN_DIGEST).empty
+        altered = frame.copy()
+        altered.loc[altered.symbol.eq("ETHUSDT"), field] = "0" * 64
+        assert compile_decision_rows(altered, plan_digest=PLAN_DIGEST).empty
+
 
 def test_evaluator_rejects_non_utc_and_out_of_window_raw_rows() -> None:
     frame = _attached_frame()
