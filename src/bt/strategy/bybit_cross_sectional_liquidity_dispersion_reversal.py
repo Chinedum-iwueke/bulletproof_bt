@@ -178,9 +178,14 @@ def verify_contiguous_overlap(
     frame: pd.DataFrame,
     *,
     minimum_days: int = 365,
+    minimum_rows: int | None = None,
+    instruments: tuple[str, ...] = INSTRUMENTS,
+    require_market_fields: bool = True,
 ) -> tuple[bool, str]:
     """Require exact, common, gap-free 1m timestamps for the frozen basket."""
-    required = {"ts", "symbol", "close", "volume", "quote_volume"}
+    required = {"ts", "symbol"}
+    if require_market_fields:
+        required.update({"close", "volume", "quote_volume"})
     if not required.issubset(frame.columns):
         return False, "required_market_fields_missing"
     work = frame.copy()
@@ -188,15 +193,25 @@ def verify_contiguous_overlap(
     if work["ts"].isna().any() or work.duplicated(["ts", "symbol"]).any():
         return False, "invalid_or_duplicate_timestamp"
     sets = []
-    for symbol in INSTRUMENTS:
+    for symbol in instruments:
         part = work[work["symbol"].astype(str) == symbol]
         if part.empty:
             return False, f"missing_basket_member:{symbol}"
         sets.append(set(part["ts"]))
     common = sorted(set.intersection(*sets))
-    required_rows = minimum_days * 24 * 60
+    required_rows = minimum_rows or minimum_days * 24 * 60
+    short_reason = (
+        "less_than_required_overlapping_1m_data"
+        if minimum_rows is not None
+        else "less_than_365_days_overlapping_1m_data"
+    )
+    gap_reason = (
+        "overlapping_1m_data_not_contiguous_for_required_window"
+        if minimum_rows is not None
+        else "overlapping_1m_data_not_contiguous_for_365_days"
+    )
     if len(common) < required_rows:
-        return False, "less_than_365_days_overlapping_1m_data"
+        return False, short_reason
     # A longer source window may have edge gaps; admission requires at least one
     # full contiguous 365-day common run, not interpolation across those gaps.
     longest = run = 1
@@ -204,7 +219,7 @@ def verify_contiguous_overlap(
         run = run + 1 if after - before == pd.Timedelta(minutes=1) else 1
         longest = max(longest, run)
     if longest < required_rows:
-        return False, "overlapping_1m_data_not_contiguous_for_365_days"
+        return False, gap_reason
     return True, "admitted"
 
 

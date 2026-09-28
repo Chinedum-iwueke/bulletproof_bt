@@ -77,6 +77,7 @@ from bt.strategy.eth_liquidity_displacement_btc_residual_60m import (
 from bt.strategy.eth_relative_liquidity_reversal_6h import (
     relative_liquidity_reversal_grid_evaluation,
 )
+from bt.strategy.sol_to_eth_2h_tail_return import sol_to_eth_tail_grid_evaluation
 
 AUTHORITY = {
     "capital": False,
@@ -287,7 +288,7 @@ def materialize_execution_panel(
     )
     if combined.duplicated(["ts", "symbol"]).any():
         raise BridgeError("combined basket contains duplicate symbol timestamps")
-    if set(panels) == {"BTCUSDT", "ETHUSDT", "SOLUSDT"}:
+    if len(panels) > 1:
         overlap_receipt = assignment.get("overlap_admission_receipt")
         if overlap_receipt is not None:
             validate_overlap_admission_receipt(
@@ -297,8 +298,23 @@ def materialize_execution_panel(
                 window_start=assignment.get("window_start"),
                 window_end=assignment.get("window_end"),
             )
+        elif assignment.get("qualification") is not None:
+            raise BridgeError(
+                "basket overlap admission failed: governed multi-asset assignment "
+                "requires an immutable overlap admission receipt"
+            )
         else:
-            admitted, reason = verify_contiguous_overlap(combined)
+            required_rows = (
+                int((end - warmup_start) / pd.Timedelta(minutes=1))
+                if warmup_start is not None and end is not None
+                else None
+            )
+            admitted, reason = verify_contiguous_overlap(
+                combined,
+                minimum_rows=required_rows,
+                instruments=tuple(sorted(panels)),
+                require_market_fields=False,
+            )
             if not admitted:
                 raise BridgeError(f"basket overlap admission failed: {reason}")
     destination = output / "execution-window.parquet"
@@ -393,7 +409,13 @@ def attach_adaptive_features(
     )
     causal_provenance = (
         ["prior_only_volatility_source_end_ts"]
-        if "btc_15m_realized_volatility_96" in output_fields
+        if any(
+            field in output_fields
+            for field in (
+                "btc_15m_realized_volatility_96",
+                "ethusdt_realized_volatility_24h",
+            )
+        )
         else []
     )
     if list(features.columns) != [
@@ -420,6 +442,7 @@ def validate_materialized_payload(
     materialized: Any,
     *,
     instruments: list[str],
+    feature_frame: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     """Bind the exact adaptive values written to the native engine feed."""
     fields = list(materialized.receipt["output_fields"])
@@ -435,12 +458,15 @@ def validate_materialized_payload(
     actual = pd.read_parquet(execution_data_path, columns=columns)
     actual["ts"] = pd.to_datetime(actual["ts"], utc=True, errors="raise")
     actual = actual.loc[actual["representation_decision_ts"].notna()].copy()
-    expected = materialized.frame[["decision_at", *fields]].copy()
-    expected["decision_at"] = pd.to_datetime(
-        expected["decision_at"], utc=True, errors="raise"
-    )
-    expected = expected.loc[expected["decision_at"].isin(set(actual["ts"]))]
-    expected_by_ts = expected.set_index("decision_at")
+    if feature_frame is None:
+        expected = materialized.frame[["decision_at", *fields]].rename(
+            columns={"decision_at": "ts"}
+        )
+    else:
+        expected = feature_frame[["ts", *fields]].copy()
+    expected["ts"] = pd.to_datetime(expected["ts"], utc=True, errors="raise")
+    expected = expected.loc[expected["ts"].isin(set(actual["ts"]))]
+    expected_by_ts = expected.set_index("ts")
     if actual.empty or expected_by_ts.empty:
         raise BridgeError("materialized representation produced no native payload rows")
     if set(actual["symbol"].astype(str)) != set(instruments):
@@ -500,11 +526,16 @@ def materialize_causal_feature_frame(materialized: Any) -> pd.DataFrame:
         columns={"decision_at": "ts"}
     )
     features["ts"] = pd.to_datetime(features["ts"], utc=True, errors="raise")
-    prior_volatility = "btc_15m_realized_volatility_96"
-    if prior_volatility in output_fields:
+    prior_volatility = next(
+        (name for name in ("btc_15m_realized_volatility_96", "ethusdt_realized_volatility_24h")
+         if name in output_fields),
+        None,
+    )
+    if prior_volatility is not None:
         features[prior_volatility] = features[prior_volatility].shift(1)
+        interval = pd.Timedelta(hours=2) if prior_volatility == "ethusdt_realized_volatility_24h" else pd.Timedelta(minutes=15)
         features["prior_only_volatility_source_end_ts"] = (
-            features["ts"] - pd.Timedelta(minutes=15)
+            features["ts"] - interval
         ).map(lambda value: value.isoformat())
     plan_digest = materialized.receipt.get("plan_digest")
     features["representation_plan_digest"] = plan_digest
@@ -516,7 +547,7 @@ def materialize_causal_feature_frame(materialized: Any) -> pd.DataFrame:
     )
     causal_provenance = (
         ["prior_only_volatility_source_end_ts"]
-        if prior_volatility in output_fields
+        if prior_volatility is not None
         else []
     )
     return features[
@@ -1475,6 +1506,9 @@ def execute_registered(
     is_eth_relative = (
         contract.schema.metadata.hypothesis_family == "eth_relative_liquidity_reversal"
     )
+    is_sol_to_eth = (
+        contract.schema.metadata.hypothesis_family == "sol_to_eth_information_diffusion"
+    )
     contract_bindings = list(
         contract_document["immutable_contract"].get("dataset_bindings", [])
     )
@@ -1558,6 +1592,7 @@ def execute_registered(
             execution_data_path,
             materialized,
             instruments=list(assignment.get("instruments", [assignment["instrument"]])),
+            feature_frame=causal_features,
         )
         (output / "materialized-native-payload-validation.json").write_bytes(
             canonical(materialized_payload_receipt) + b"\n"
@@ -1567,6 +1602,7 @@ def execute_registered(
     if contract.schema.metadata.hypothesis_family in {
         "cross_sectional_liquidity_dispersion_reversal",
         "eth_relative_liquidity_reversal",
+        "sol_to_eth_information_diffusion",
     }:
         lightweight_columns.extend(["volume", "quote_volume"])
     for column in contract.schema.execution_semantics.get("required_extra_columns", []):
@@ -1695,7 +1731,7 @@ def execute_registered(
         == "cross_asset_liquidity_transmission"
     )
     grid_data_path = execution_data_path
-    if is_funding_basis or is_liquidity_residual or is_eth_relative:
+    if is_funding_basis or is_liquidity_residual or is_eth_relative or is_sol_to_eth:
         validation_end = pd.Timestamp(rep.split.validation_end)
         validation_frame = pd.read_parquet(execution_data_path)
         validation_frame = validation_frame[
@@ -1736,7 +1772,7 @@ def execute_registered(
             (run_dir / "materialized-native-payload-validation.json").write_bytes(
                 canonical(materialized_payload_receipt) + b"\n"
             )
-        if is_cross_sectional or is_eth_relative:
+        if is_cross_sectional or is_eth_relative or is_sol_to_eth:
             if adaptive_receipt is None:
                 raise BridgeError("scientific execution lacks representation receipt")
             acceptance = native_representation_acceptance(
@@ -1744,7 +1780,9 @@ def execute_registered(
                 expected_digest=str(adaptive_receipt["plan_digest"]),
                 expected_fields=list(adaptive_receipt["output_fields"]),
                 signal_type=(
-                    "eth_relative_representation_validation"
+                    "sol_to_eth_representation_validation"
+                    if is_sol_to_eth
+                    else "eth_relative_representation_validation"
                     if is_eth_relative
                     else "cross_sectional_representation_validation"
                 ),
@@ -1757,6 +1795,7 @@ def execute_registered(
     trials = search.trials()
     liquidity_grid = None
     eth_relative_grid = None
+    sol_to_eth_grid = None
     if is_eth_relative:
         eth_relative_grid = relative_liquidity_reversal_grid_evaluation(
             source_panels,
@@ -1768,6 +1807,18 @@ def execute_registered(
             ),
         )
         validation = eth_relative_grid["selection_candidates"]
+        if not validation:
+            terminal = eth_relative_grid["held_out_evaluation"]
+            validation = []
+            for variant in variants:
+                candidate = {
+                    key: value
+                    for key, value in terminal.items()
+                    if key != "record_digest"
+                }
+                candidate["parameters"] = variant["params"]
+                candidate["record_digest"] = digest(candidate)
+                validation.append(candidate)
         selected_parameters = eth_relative_grid.get("selected_parameters")
         selected_index = next(
             (
@@ -1778,6 +1829,31 @@ def execute_registered(
             None,
         )
         selection_metric = "validation_mean_net_residual_return"
+    elif is_sol_to_eth:
+        sol_to_eth_grid = sol_to_eth_tail_grid_evaluation(
+            lightweight,
+            parameter_grid=contract.schema.parameter_grid,
+            evaluation_start=assignment["window_start"],
+            evaluation_end=assignment["window_end"],
+            representation_plan_digest=(adaptive_receipt.get("plan_digest") if adaptive_receipt else ""),
+        )
+        validation = sol_to_eth_grid["selection_candidates"]
+        if not validation:
+            terminal = sol_to_eth_grid["held_out_evaluation"]
+            validation = []
+            for variant in variants:
+                candidate = {
+                    key: value
+                    for key, value in terminal.items()
+                    if key != "record_digest"
+                }
+                candidate["parameters"] = variant["params"]
+                candidate["record_digest"] = digest(candidate)
+                validation.append(candidate)
+        selected_parameters = sol_to_eth_grid.get("selected_parameters")
+        selected_index = next((index for index, variant in enumerate(variants)
+                               if variant["params"] == selected_parameters), None)
+        selection_metric = "validation_mean_net_signed_residual_return"
     elif is_liquidity_residual:
         liquidity_grid = liquidity_displacement_grid_evaluation(
             source_panels,
@@ -1883,7 +1959,7 @@ def execute_registered(
         "held_out_test_consulted": heldout_test_consulted(
             is_liquidity_residual=is_liquidity_residual,
             liquidity_grid=liquidity_grid,
-            eth_relative_grid=eth_relative_grid,
+            eth_relative_grid=eth_relative_grid or sol_to_eth_grid,
         ),
         "stopping_rule": "exhaustive",
         "selected_variant_index": selected_index,
@@ -1942,6 +2018,7 @@ def execute_registered(
             or is_cross_sectional
             or is_liquidity_residual
             or is_eth_relative
+            or is_sol_to_eth
         )
         else []
     )
@@ -1955,11 +2032,13 @@ def execute_registered(
         if is_funding_basis and selected_index is not None
         else eth_relative_grid["held_out_evaluation"]
         if is_eth_relative
+        else sol_to_eth_grid["held_out_evaluation"]
+        if is_sol_to_eth
         else liquidity_grid
         if is_liquidity_residual and selected_index is not None
         else None
     )
-    if heldout_evaluation is not None and not is_eth_relative:
+    if heldout_evaluation is not None and not (is_eth_relative or is_sol_to_eth):
         heldout_partition = period_evaluation(
             run_dirs[selected_index],
             rep.split.test_start,
@@ -1982,6 +2061,8 @@ def execute_registered(
     evaluation_artifact = (
         eth_relative_grid["held_out_evaluation"]
         if is_eth_relative
+        else sol_to_eth_grid["held_out_evaluation"]
+        if is_sol_to_eth
         else cross_sectional_reversal_evaluation(
             lightweight,
             params=variants[execution_index]["params"],
@@ -2008,10 +2089,12 @@ def execute_registered(
     if "record_digest" not in evaluation_artifact:
         evaluation_artifact["record_digest"] = digest(evaluation_artifact)
     evaluation_artifact_name = (
-        "eth_relative_liquidity_reversal_evaluation.json"
+        "sol_to_eth_2h_tail_return_evaluation.json"
+        if is_sol_to_eth
+        else "eth_relative_liquidity_reversal_evaluation.json"
         if is_eth_relative
         else "cross_sectional_reversal_evaluation.json"
-        if is_cross_sectional or is_eth_relative
+        if is_cross_sectional or is_eth_relative or is_sol_to_eth
         else "impact_proxy_evaluation.json"
         if is_impact_proxy
         else "funding_basis_heldout_not_evaluated.json"
@@ -2027,19 +2110,28 @@ def execute_registered(
     logging_reports = (
         [
             required_observation_logging_evaluation(
-                evaluation_artifact,
+                per_variant_evaluations[index],
                 card["logging_requirements"],
             )
-            for _ in run_dirs
+            for index, _ in enumerate(run_dirs)
         ]
-        if is_cross_sectional or is_eth_relative
+        if is_cross_sectional or is_eth_relative or is_sol_to_eth
         else [
             required_trade_logging_evaluation(path, card["logging_requirements"])
             for path in run_dirs
         ]
     )
+    evaluation_logging_report = (
+        required_observation_logging_evaluation(
+            evaluation_artifact, card["logging_requirements"]
+        )
+        if is_cross_sectional or is_eth_relative or is_sol_to_eth
+        else logging_reports[execution_index]
+    )
     validation_evaluation_name = (
-        "eth_relative_liquidity_reversal_validation_evaluation.json"
+        "sol_to_eth_2h_tail_return_validation_evaluation.json"
+        if is_sol_to_eth
+        else "eth_relative_liquidity_reversal_validation_evaluation.json"
         if is_eth_relative
         else "eth_liquidity_residual_validation_evaluation.json"
         if is_liquidity_residual
@@ -2056,7 +2148,7 @@ def execute_registered(
         (candidate_run / "selection_bias_audit.json").write_bytes(
             canonical(selection_audit) + b"\n"
         )
-        if is_funding_basis or is_liquidity_residual or is_eth_relative:
+        if is_funding_basis or is_liquidity_residual or is_eth_relative or is_sol_to_eth:
             (candidate_run / validation_evaluation_name).write_bytes(
                 canonical(per_variant_evaluations[index]) + b"\n"
             )
@@ -2082,7 +2174,7 @@ def execute_registered(
             search_plan_digest=search.digest,
             evaluation_artifact=(
                 evaluation_artifact_name
-                if not (is_funding_basis or is_liquidity_residual or is_eth_relative)
+                if not (is_funding_basis or is_liquidity_residual or is_eth_relative or is_sol_to_eth)
                 or index == selected_index
                 else validation_evaluation_name
             ),
@@ -2140,11 +2232,12 @@ def execute_registered(
         None
         if is_cross_sectional
         or is_eth_relative
+        or is_sol_to_eth
         or (is_funding_basis or is_liquidity_residual)
         and selected_index is None
         else held_out_trade_evaluation(run_dir, rep.split.test_start)
     )
-    logging_report = logging_reports[execution_index]
+    logging_report = evaluation_logging_report
     manifest = json.loads(
         (retained_bundle / "run_bundle_manifest.json").read_text(encoding="utf-8")
     )
@@ -2234,6 +2327,22 @@ def execute_registered(
                 "selection_bias_audit": selection_audit,
             }
         )
+    elif is_sol_to_eth:
+        metrics.update(
+            {
+                "mean_net_signed_residual_return": evaluation_artifact.get(
+                    "mean_net_signed_residual_return", 0.0
+                ),
+                "confidence_interval_95": evaluation_artifact.get(
+                    "confidence_interval_95", (0.0, 0.0)
+                ),
+                "doubled_cost_mean_net_signed_residual_return": evaluation_artifact.get(
+                    "doubled_cost_mean_net_signed_residual_return", 0.0
+                ),
+                "support": evaluation_artifact.get("support", 0),
+                "selection_bias_audit": selection_audit,
+            }
+        )
     elif is_liquidity_residual:
         metrics.update(
             {
@@ -2267,6 +2376,7 @@ def execute_registered(
                 or is_cross_sectional
                 or is_liquidity_residual
                 or is_eth_relative
+                or is_sol_to_eth
             )
             or (
                 holdout is not None
@@ -2295,6 +2405,7 @@ def execute_registered(
                 or is_cross_sectional
                 or is_liquidity_residual
                 or is_eth_relative
+                or is_sol_to_eth
             )
             or evaluation_artifact["passed"]
         )
@@ -2306,6 +2417,7 @@ def execute_registered(
             or is_cross_sectional
             or is_liquidity_residual
             or is_eth_relative
+            or is_sol_to_eth
         )
         else (
             ("oos_trade_support", holdout["adequate_support"]),
@@ -2334,17 +2446,22 @@ def execute_registered(
             or is_cross_sectional
             or is_liquidity_residual
             or is_eth_relative
+            or is_sol_to_eth
         )
         else None
     )
-    heldout_scientific_evaluated = bool(
-        evaluation_artifact.get("held_out_evaluated", True)
+    heldout_scientific_evaluated = (
+        sol_to_eth_grid.get("test_open_count") == 1
+        and evaluation_artifact.get("held_out_evaluated") is True
+        if is_sol_to_eth and sol_to_eth_grid is not None
+        else bool(evaluation_artifact.get("held_out_evaluated", True))
     )
     if (
         is_funding_basis
         or is_cross_sectional
         or is_liquidity_residual
         or is_eth_relative
+        or is_sol_to_eth
     ):
         if scientific_outcome == "invalid":
             failed_gates.append("point_in_time_scientific_sample_invalid")
@@ -2380,20 +2497,38 @@ def execute_registered(
                 <= 0
             ):
                 failed_gates.append("eth_relative_residual_double_cost_stress")
+        elif is_sol_to_eth and not heldout_scientific_evaluated:
+            failed_gates.append("validation_edge_nonpositive_test_not_opened")
+        elif is_sol_to_eth and not evaluation_artifact["passed"]:
+            if evaluation_artifact.get("confidence_interval_95", (0.0, 0.0))[0] <= 0:
+                failed_gates.append("sol_to_eth_dependence_aware_95pct_lower_bound")
+            if evaluation_artifact.get("doubled_cost_mean_net_signed_residual_return", 0.0) <= 0:
+                failed_gates.append("sol_to_eth_double_cost_stress")
+            if (
+                evaluation_artifact.get("gates", {}).get(
+                    "current_exceeds_same_timestamp_lag"
+                )
+                is not True
+            ):
+                failed_gates.append("sol_to_eth_current_predictor_exceeds_lag_rival")
     scientific_observations_complete = (
         logging_report.get("scientific_observation_logging_complete") is True
         if is_cross_sectional
-        else logging_report.get("terminal_retention_complete") is True
-        if is_eth_relative
+        else (
+            logging_report.get("scientific_observation_logging_complete") is True
+            or logging_report.get("terminal_retention_complete") is True
+        )
+        if is_eth_relative or is_sol_to_eth
         else True
     )
-    if (is_cross_sectional or is_eth_relative) and not scientific_observations_complete:
+    if (is_cross_sectional or is_eth_relative or is_sol_to_eth) and not scientific_observations_complete:
         failed_gates.append("scientific_observation_support_absent")
     scientific_family = (
         is_funding_basis
         or is_cross_sectional
         or is_liquidity_residual
         or is_eth_relative
+        or is_sol_to_eth
     )
     scientific_valid = (
         not scientific_family
@@ -2403,7 +2538,10 @@ def execute_registered(
     scientific_supported = not scientific_family or (
         scientific_outcome in {"positive", "negative"}
         and scientific_observations_complete
-        and (not is_liquidity_residual or heldout_scientific_evaluated)
+        and (
+            not (is_liquidity_residual or is_sol_to_eth)
+            or heldout_scientific_evaluated
+        )
     )
     evaluation_evidence_digests = (
         [
