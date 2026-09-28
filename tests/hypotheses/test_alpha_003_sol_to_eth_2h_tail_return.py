@@ -282,6 +282,76 @@ def test_representation_requires_contiguous_prior_24h_volatility() -> None:
     )
 
 
+def test_qualification_builds_content_bound_overlap_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start = pd.Timestamp("2023-01-01T00:00:00Z")
+    end = pd.Timestamp("2024-01-01T00:00:00Z")
+    timestamps = pd.date_range(start, end, freq="1min", inclusive="left")
+    bindings = [
+        {
+            "instrument": item["instrument"],
+            "dataset_build_id": item["dataset_build_id"],
+            "dataset_digest": item["dataset_digest"],
+            "dataset_path": f"/unused/{item['instrument']}.parquet",
+        }
+        for item in RAW["immutable_contract"]["dataset_bindings"]
+    ]
+    monkeypatch.setattr(
+        assignment_runner.pd,
+        "read_parquet",
+        lambda *args, **kwargs: pd.DataFrame({"ts": timestamps}),
+    )
+
+    receipt = assignment_runner.build_overlap_admission_receipt(
+        {
+            "dataset_bindings": bindings,
+            "window_start": start.isoformat(),
+            "window_end": end.isoformat(),
+        }
+    )
+
+    assignment_runner.validate_overlap_admission_receipt(
+        receipt,
+        bindings=bindings,
+        instruments=list(strategy.INSTRUMENTS),
+        window_start=start,
+        window_end=end,
+    )
+    assert receipt["minimum_contiguous_days"] == 365
+
+
+def test_qualification_rejects_missing_minute_in_overlap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start = pd.Timestamp("2023-01-01T00:00:00Z")
+    end = pd.Timestamp("2024-01-01T00:00:00Z")
+    timestamps = pd.date_range(start, end, freq="1min", inclusive="left").delete(100)
+    bindings = [
+        {
+            "instrument": item["instrument"],
+            "dataset_build_id": item["dataset_build_id"],
+            "dataset_digest": item["dataset_digest"],
+            "dataset_path": f"/unused/{item['instrument']}.parquet",
+        }
+        for item in RAW["immutable_contract"]["dataset_bindings"]
+    ]
+    monkeypatch.setattr(
+        assignment_runner.pd,
+        "read_parquet",
+        lambda *args, **kwargs: pd.DataFrame({"ts": timestamps}),
+    )
+
+    with pytest.raises(BridgeError, match="exact UTC minute coverage"):
+        assignment_runner.build_overlap_admission_receipt(
+            {
+                "dataset_bindings": bindings,
+                "window_start": start.isoformat(),
+                "window_end": end.isoformat(),
+            }
+        )
+
+
 def test_evaluator_rejects_unpinned_irregular_and_missing_decision_rows() -> None:
     frame = _attached_frame(decisions=40)
     assert compile_decision_rows(frame, plan_digest="0" * 64).empty

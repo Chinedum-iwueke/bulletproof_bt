@@ -296,7 +296,12 @@ def materialize_execution_panel(
     if combined.duplicated(["ts", "symbol"]).any():
         raise BridgeError("combined basket contains duplicate symbol timestamps")
     if len(panels) > 1:
-        overlap_receipt = assignment.get("overlap_admission_receipt")
+        qualification = assignment.get("qualification")
+        overlap_receipt = assignment.get("overlap_admission_receipt") or (
+            qualification.get("overlap_admission_receipt")
+            if isinstance(qualification, dict)
+            else None
+        )
         if overlap_receipt is not None:
             validate_overlap_admission_receipt(
                 overlap_receipt,
@@ -381,6 +386,67 @@ def validate_overlap_admission_receipt(
         or pd.Timestamp(receipt.get("admitted_end")) < pd.Timestamp(window_end)
     ):
         raise BridgeError("basket overlap admission receipt is invalid or out of scope")
+
+
+def build_overlap_admission_receipt(assignment: dict[str, Any]) -> dict[str, Any]:
+    """Verify and bind exact minute overlap before multi-asset execution approval."""
+    bindings = assignment.get("dataset_bindings") or []
+    instruments = sorted({str(item["instrument"]) for item in bindings})
+    if len(instruments) < 2:
+        raise BridgeError("basket overlap admission requires at least two instruments")
+    start = pd.Timestamp(assignment["window_start"])
+    end = pd.Timestamp(assignment["window_end"])
+    if start.tzinfo is None or end.tzinfo is None or str(start.tz) != "UTC" or str(end.tz) != "UTC":
+        raise BridgeError("basket overlap window must use strict UTC timestamps")
+    expected_rows = int((end - start) / pd.Timedelta(minutes=1))
+    if expected_rows < 365 * 24 * 60:
+        raise BridgeError("basket overlap window is shorter than 365 contiguous days")
+    expected_last = end - pd.Timedelta(minutes=1)
+    for binding in bindings:
+        selected = pd.read_parquet(
+            Path(binding["dataset_path"]),
+            columns=["ts"],
+            filters=[
+                ("ts", ">=", start.to_pydatetime()),
+                ("ts", "<", end.to_pydatetime()),
+            ],
+        )
+        timestamps = selected["ts"] if "ts" in selected else pd.Series(dtype="datetime64[ns, UTC]")
+        if (
+            not isinstance(timestamps.dtype, pd.DatetimeTZDtype)
+            or str(timestamps.dt.tz) != "UTC"
+            or len(timestamps) != expected_rows
+            or timestamps.duplicated().any()
+        ):
+            raise BridgeError(
+                f"basket overlap is not exact UTC minute coverage: {binding['instrument']}"
+            )
+        timestamps = timestamps.sort_values(kind="stable").reset_index(drop=True)
+        if (
+            timestamps.iloc[0] != start
+            or timestamps.iloc[-1] != expected_last
+            or not timestamps.diff().iloc[1:].eq(pd.Timedelta(minutes=1)).all()
+        ):
+            raise BridgeError(
+                f"basket overlap contains a missing or irregular minute: {binding['instrument']}"
+            )
+    document = {
+        "schema_version": "alpha-basket-overlap-admission-v1.0.0",
+        "authority": "DATA-002/003",
+        "dataset_bindings": [
+            {
+                "instrument": item["instrument"],
+                "dataset_build_id": item["dataset_build_id"],
+                "dataset_digest": item["dataset_digest"],
+            }
+            for item in bindings
+        ],
+        "instruments": instruments,
+        "minimum_contiguous_days": expected_rows // (24 * 60),
+        "admitted_start": start.isoformat(),
+        "admitted_end": end.isoformat(),
+    }
+    return {**document, "record_digest": digest(document)}
 
 
 def attach_adaptive_features(
@@ -2819,6 +2885,10 @@ def main() -> int:
             confirmed_at=assignment["card_approval"]["approved_at"],
         )
         qualification = qualify_card(card, repository_root=str(repository))
+        if len(assignment.get("dataset_bindings") or []) > 1:
+            qualification["overlap_admission_receipt"] = (
+                build_overlap_admission_receipt(assignment)
+            )
         result = {
             "disposition": (
                 "strategy_compiled"
