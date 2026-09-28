@@ -102,6 +102,73 @@ def _ci(values: list[float]) -> tuple[float, float]:
     return means[int(1999 * 0.025)], means[int(1999 * 0.975)]
 
 
+def _selection_bias_audit(
+    candidates: list[dict[str, Any]],
+    *,
+    selected_index: int | None,
+    test_open_count: int,
+) -> dict[str, Any]:
+    """Record the preregistered validation-only selection without reopening test data."""
+    candidate_audit = [
+        {
+            "index": index,
+            "parameters": item.get("parameters", {}),
+            "outcome": item.get("outcome"),
+            "passed_validation": bool(item.get("passed", False)),
+            "validation_mean_net_signed_residual_return": item.get(
+                "mean_net_signed_residual_return"
+            ),
+            "record_digest": item.get("record_digest"),
+        }
+        for index, item in enumerate(candidates)
+    ]
+    return {
+        "schema_version": "selection-bias-audit-v1.0.0",
+        "preregistered_variant_count": math.prod(len(values) for values in FROZEN_GRID.values()),
+        "evaluated_variant_count": len(candidates),
+        "selection_partition": "validation",
+        "selection_rule": (
+            "highest_validation_mean_net_signed_residual_return_among_"
+            "fully_passing_preregistered_variants_then_lowest_grid_index"
+        ),
+        "held_out_used_for_selection": False,
+        "selected_index": selected_index,
+        "test_open_count": test_open_count,
+        "candidates": candidate_audit,
+        "audit_digest": _hash(candidate_audit),
+    }
+
+
+def _evaluation_result(
+    *,
+    outcome: str,
+    reason: str,
+    candidates: list[dict[str, Any]],
+    selected_parameters: Mapping[str, Any] | None,
+    selected_index: int | None,
+    test_open_count: int,
+    held_out_evaluation: dict[str, Any],
+) -> dict[str, Any]:
+    result = {
+        "outcome": outcome,
+        "reason": reason,
+        "selection_candidates": candidates,
+        "selected_parameters": (
+            dict(selected_parameters) if selected_parameters is not None else None
+        ),
+        "selected_index": selected_index,
+        "test_open_count": test_open_count,
+        "selection_bias_audit": _selection_bias_audit(
+            candidates,
+            selected_index=selected_index,
+            test_open_count=test_open_count,
+        ),
+        "held_out_evaluation": held_out_evaluation,
+    }
+    result["record_digest"] = _hash(result)
+    return result
+
+
 def compile_decision_rows(frame: pd.DataFrame, *, plan_digest: str) -> pd.DataFrame:
     """Bind exact materialized predictors to contiguous future ETH closes."""
     if plan_digest != EXPECTED_REPRESENTATION_PLAN_DIGEST:
@@ -308,15 +375,21 @@ def sol_to_eth_tail_grid_evaluation(frame: pd.DataFrame, *, parameter_grid: Mapp
     if {str(k): tuple(v) for k, v in parameter_grid.items()} != FROZEN_GRID:
         terminal = _result("invalid", "parameter_grid_differs_from_frozen_contract", {},
                            plan_digest=representation_plan_digest)
-        return {"outcome": "invalid", "reason": terminal["reason"], "selection_candidates": [],
-                "selected_parameters": None, "test_open_count": 0, "held_out_evaluation": terminal}
+        return _evaluation_result(
+            outcome="invalid", reason=terminal["reason"], candidates=[],
+            selected_parameters=None, selected_index=None, test_open_count=0,
+            held_out_evaluation=terminal,
+        )
     rows = compile_decision_rows(frame, plan_digest=representation_plan_digest)
     rows = rows.loc[(rows.decision_ts >= pd.Timestamp(evaluation_start))
                     & (rows.target_exit_ts <= pd.Timestamp(evaluation_end))].reset_index(drop=True) if not rows.empty else rows
     if len(rows) < MINIMUM_HISTORY + 30:
         terminal = _result("invalid", "insufficient_chronological_rows", {}, plan_digest=representation_plan_digest)
-        return {"outcome": "invalid", "reason": terminal["reason"], "selection_candidates": [],
-                "selected_parameters": None, "test_open_count": 0, "held_out_evaluation": terminal}
+        return _evaluation_result(
+            outcome="invalid", reason=terminal["reason"], candidates=[],
+            selected_parameters=None, selected_index=None, test_open_count=0,
+            held_out_evaluation=terminal,
+        )
     history_eligible = (
         rows.solusdt_quote_volume_2h.ge(LIQUIDITY_FLOOR)
         & rows.ethusdt_quote_volume_2h.ge(LIQUIDITY_FLOOR)
@@ -326,8 +399,11 @@ def sol_to_eth_tail_grid_evaluation(frame: pd.DataFrame, *, parameter_grid: Mapp
     if len(eligible_rows) < MINIMUM_HISTORY:
         terminal = _result("invalid", "fewer_than_4000_aligned_liquid_history_observations", {},
                            plan_digest=representation_plan_digest)
-        return {"outcome": "invalid", "reason": terminal["reason"], "selection_candidates": [],
-                "selected_parameters": None, "test_open_count": 0, "held_out_evaluation": terminal}
+        return _evaluation_result(
+            outcome="invalid", reason=terminal["reason"], candidates=[],
+            selected_parameters=None, selected_index=None, test_open_count=0,
+            held_out_evaluation=terminal,
+        )
     purge = pd.Timedelta(hours=4)
     train = eligible_rows.iloc[:MINIMUM_HISTORY].copy()
     history_end = train.iloc[-1].target_exit_ts
@@ -345,14 +421,11 @@ def sol_to_eth_tail_grid_evaluation(frame: pd.DataFrame, *, parameter_grid: Mapp
             {},
             plan_digest=representation_plan_digest,
         )
-        return {
-            "outcome": "invalid",
-            "reason": terminal["reason"],
-            "selection_candidates": [],
-            "selected_parameters": None,
-            "test_open_count": 0,
-            "held_out_evaluation": terminal,
-        }
+        return _evaluation_result(
+            outcome="invalid", reason=terminal["reason"], candidates=[],
+            selected_parameters=None, selected_index=None, test_open_count=0,
+            held_out_evaluation=terminal,
+        )
     partition_size = (len(remaining) - partition_gap) // 2
     validation = remaining.iloc[:partition_size].copy()
     test = remaining.iloc[
@@ -371,19 +444,22 @@ def sol_to_eth_tail_grid_evaluation(frame: pd.DataFrame, *, parameter_grid: Mapp
         outcomes = {item["outcome"] for item in candidates}
         outcome = "failed" if "failed" in outcomes else "invalid" if outcomes == {"invalid"} else "negative"
         terminal = _result(outcome, "no_validation_variant_passed", {}, plan_digest=representation_plan_digest)
-        return {"outcome": outcome, "reason": terminal["reason"], "selection_candidates": candidates,
-                "selected_parameters": None, "test_open_count": 0, "held_out_evaluation": terminal}
+        return _evaluation_result(
+            outcome=outcome, reason=terminal["reason"], candidates=candidates,
+            selected_parameters=None, selected_index=None, test_open_count=0,
+            held_out_evaluation=terminal,
+        )
     index, winner = max(eligible, key=lambda pair: (pair[1]["mean_net_signed_residual_return"], -pair[0]))
     try:
         heldout = _score(test, train, winner["parameters"], "test", representation_plan_digest)
     except Exception as exc:
         heldout = _result("failed", f"heldout_evaluation_failed:{type(exc).__name__}", winner["parameters"],
                           plan_digest=representation_plan_digest)
-    result = {"outcome": heldout["outcome"], "reason": heldout["reason"],
-              "selection_candidates": candidates, "selected_parameters": winner["parameters"],
-              "selected_index": index, "test_open_count": 1, "held_out_evaluation": heldout}
-    result["record_digest"] = _hash(result)
-    return result
+    return _evaluation_result(
+        outcome=heldout["outcome"], reason=heldout["reason"], candidates=candidates,
+        selected_parameters=winner["parameters"], selected_index=index,
+        test_open_count=1, held_out_evaluation=heldout,
+    )
 
 
 @register_strategy("sol_to_eth_2h_tail_return")
