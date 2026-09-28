@@ -199,16 +199,30 @@ def compile_decision_rows(frame: pd.DataFrame, *, plan_digest: str) -> pd.DataFr
     if not required.issubset(frame):
         return pd.DataFrame()
     data = frame.copy()
+    if not isinstance(data["ts"].dtype, pd.DatetimeTZDtype):
+        return pd.DataFrame()
+    if str(data["ts"].dt.tz) != "UTC":
+        return pd.DataFrame()
     data["ts"] = pd.to_datetime(data["ts"], utc=True, errors="coerce")
     if data.ts.isna().any() or data.duplicated(["symbol", "ts"]).any():
+        return pd.DataFrame()
+    frozen_start = pd.Timestamp(EXPECTED_EVALUATION_START)
+    frozen_end = pd.Timestamp(EXPECTED_EVALUATION_END)
+    if not data.ts.ge(frozen_start).all() or not data.ts.lt(frozen_end).all():
         return pd.DataFrame()
     if set(data.symbol.astype(str)) != set(EXPECTED_DATASET_IDENTITIES):
         return pd.DataFrame()
     for symbol, expected_identity in EXPECTED_DATASET_IDENTITIES.items():
         member = data.loc[data.symbol.eq(symbol)]
         if member.empty or any(
-            set(member[field].dropna().astype(str)) != {expected}
+            member[field].isna().any()
+            or not member[field].astype(str).eq(expected).all()
             for field, expected in expected_identity.items()
+        ):
+            return pd.DataFrame()
+        if (
+            member.ts.min() != frozen_start
+            or member.ts.max() != frozen_end - pd.Timedelta(minutes=1)
         ):
             return pd.DataFrame()
     encoded = json.dumps(list(OUTPUT_FIELDS), separators=(",", ":"))
