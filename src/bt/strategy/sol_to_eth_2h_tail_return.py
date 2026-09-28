@@ -39,6 +39,8 @@ MINIMUM_HISTORY = 4000
 MINIMUM_PARTITION_SUPPORT = 30
 LIQUIDITY_FLOOR = 1_000_000.0
 ROUND_TRIP_COST = 0.0009
+EXPECTED_EVALUATION_START = "2023-01-01T00:00:00Z"
+EXPECTED_EVALUATION_END = "2024-01-01T00:00:00Z"
 EXPECTED_REPRESENTATION_PLAN_DIGEST = (
     "da66f342076d9d15600355066237cb17c8470ae133e7ebfce1319c597621dbdb"
 )
@@ -130,7 +132,7 @@ def _selection_bias_audit(
             "index": index,
             "parameters": item.get("parameters", {}),
             "outcome": item.get("outcome"),
-            "passed_validation": bool(item.get("selection_eligible", False)),
+            "eligible_for_selection": bool(item.get("selection_eligible", False)),
             "validation_mean_net_signed_residual_return": item.get(
                 "mean_net_signed_residual_return"
             ),
@@ -145,7 +147,7 @@ def _selection_bias_audit(
         "selection_partition": "validation",
         "selection_rule": (
             "highest_validation_mean_net_signed_residual_return_among_"
-            "fully_passing_preregistered_variants_then_lowest_grid_index"
+            "support_eligible_preregistered_variants_then_lowest_grid_index"
         ),
         "held_out_used_for_selection": False,
         "selected_index": selected_index,
@@ -189,7 +191,8 @@ def compile_decision_rows(frame: pd.DataFrame, *, plan_digest: str) -> pd.DataFr
     """Bind exact materialized predictors to contiguous future ETH closes."""
     if plan_digest != EXPECTED_REPRESENTATION_PLAN_DIGEST:
         return pd.DataFrame()
-    required = {"ts", "symbol", "close", "quote_volume", *OUTPUT_FIELDS,
+    required = {"ts", "symbol", "open", "high", "low", "close", "volume",
+                "quote_volume", *OUTPUT_FIELDS,
                 "source_venue", "source_dataset_build_id", "source_dataset_digest",
                 "prior_only_volatility_source_end_ts", "representation_plan_digest",
                 "representation_output_fields", "representation_decision_ts"}
@@ -400,6 +403,21 @@ def _score(rows: pd.DataFrame, train: pd.DataFrame, params: Mapping[str, Any],
 def sol_to_eth_tail_grid_evaluation(frame: pd.DataFrame, *, parameter_grid: Mapping[str, Any],
                                     evaluation_start: str, evaluation_end: str,
                                     representation_plan_digest: str) -> dict[str, Any]:
+    if (
+        pd.Timestamp(evaluation_start) != pd.Timestamp(EXPECTED_EVALUATION_START)
+        or pd.Timestamp(evaluation_end) != pd.Timestamp(EXPECTED_EVALUATION_END)
+    ):
+        terminal = _result(
+            "invalid",
+            "evaluation_window_differs_from_frozen_contract",
+            {},
+            plan_digest=representation_plan_digest,
+        )
+        return _evaluation_result(
+            outcome="invalid", reason=terminal["reason"], candidates=[],
+            selected_parameters=None, selected_index=None, test_open_count=0,
+            held_out_evaluation=terminal,
+        )
     if {str(k): tuple(v) for k, v in parameter_grid.items()} != FROZEN_GRID:
         terminal = _result("invalid", "parameter_grid_differs_from_frozen_contract", {},
                            plan_digest=representation_plan_digest)
