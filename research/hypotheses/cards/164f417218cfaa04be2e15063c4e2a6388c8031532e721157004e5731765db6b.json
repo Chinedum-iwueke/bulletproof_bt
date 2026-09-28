@@ -10,7 +10,7 @@
   "market_mechanism": "Cross-asset information can arrive asynchronously while common momentum, volatility, and liquidity explain competing effects.",
   "engine_strategy_name": "sol_to_eth_2h_tail_return",
   "engine_hypothesis_template": "research/hypotheses/alpha_003_sol_to_eth_2h_tail_return.yaml",
-  "engine_hypothesis_template_digest": "e973f835057771185c5b913cf3db7f70615f4a3f0bb5262a6c237a08ae590ee6",
+  "engine_hypothesis_template_digest": "43675f92a319440cedd1cd65cc404678257bd124446e54938b212bca6b9075d6",
   "features": [{"id":"solusdt_log_return_2h","source":"adaptive_representation","transform":"identity","lag":0},{"id":"ethusdt_log_return_2h","source":"adaptive_representation","transform":"identity","lag":0},{"id":"ethusdt_realized_volatility_24h","source":"adaptive_representation","transform":"identity","lag":1}],
   "gates": [{"left":"absolute_solusdt_log_return_2h","op":">=","right_param":"sol_return_tail_percentile"},{"left":"solusdt_quote_volume_2h","op":">=","right":1000000},{"left":"ethusdt_quote_volume_2h","op":">=","right":1000000}],
   "entry": {"type":"research_observation","timing":"completed_2h_boundary"},

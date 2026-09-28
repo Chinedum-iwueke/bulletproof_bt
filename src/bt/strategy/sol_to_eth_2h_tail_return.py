@@ -39,6 +39,9 @@ MINIMUM_HISTORY = 4000
 MINIMUM_PARTITION_SUPPORT = 30
 LIQUIDITY_FLOOR = 1_000_000.0
 ROUND_TRIP_COST = 0.0009
+EXPECTED_REPRESENTATION_PLAN_DIGEST = (
+    "da66f342076d9d15600355066237cb17c8470ae133e7ebfce1319c597621dbdb"
+)
 
 
 def _hash(value: Any) -> str:
@@ -101,7 +104,9 @@ def _ci(values: list[float]) -> tuple[float, float]:
 
 def compile_decision_rows(frame: pd.DataFrame, *, plan_digest: str) -> pd.DataFrame:
     """Bind exact materialized predictors to contiguous future ETH closes."""
-    required = {"ts", "symbol", "close", *OUTPUT_FIELDS,
+    if plan_digest != EXPECTED_REPRESENTATION_PLAN_DIGEST:
+        return pd.DataFrame()
+    required = {"ts", "symbol", "close", "quote_volume", *OUTPUT_FIELDS,
                 "prior_only_volatility_source_end_ts", "representation_plan_digest",
                 "representation_output_fields", "representation_decision_ts"}
     if not required.issubset(frame):
@@ -113,6 +118,17 @@ def compile_decision_rows(frame: pd.DataFrame, *, plan_digest: str) -> pd.DataFr
     encoded = json.dumps(list(OUTPUT_FIELDS), separators=(",", ":"))
     decisions = data.loc[data["representation_plan_digest"].notna()].copy()
     if decisions.empty:
+        return pd.DataFrame()
+    decision_times = decisions["ts"].drop_duplicates().sort_values()
+    aligned = (
+        decision_times.dt.minute.eq(0)
+        & decision_times.dt.second.eq(0)
+        & decision_times.dt.microsecond.eq(0)
+        & decision_times.dt.hour.mod(2).eq(0)
+    )
+    if not aligned.all() or not decision_times.diff().dropna().eq(
+        pd.Timedelta(hours=2)
+    ).all():
         return pd.DataFrame()
     valid = (
         decisions["representation_plan_digest"].eq(plan_digest)
@@ -135,6 +151,25 @@ def compile_decision_rows(frame: pd.DataFrame, *, plan_digest: str) -> pd.DataFr
     rows = pd.DataFrame(grouped)
     if rows.empty:
         return rows
+    expected = _recompute_representation(data)
+    expected = expected.loc[expected.decision_ts.isin(set(rows.decision_ts))]
+    if expected.empty or set(rows.decision_ts) != set(expected.decision_ts):
+        return pd.DataFrame()
+    expected = expected.set_index("decision_ts")
+    for row in rows.itertuples(index=False):
+        reference = expected.loc[row.decision_ts]
+        for field in OUTPUT_FIELDS:
+            observed, wanted = getattr(row, field), reference[field]
+            if pd.isna(observed) and pd.isna(wanted):
+                continue
+            if (
+                pd.isna(observed)
+                or pd.isna(wanted)
+                or not math.isclose(
+                    float(observed), float(wanted), rel_tol=1e-12, abs_tol=1e-15
+                )
+            ):
+                return pd.DataFrame()
     eth = data.loc[data.symbol.eq("ETHUSDT"), ["ts", "close"]].sort_values("ts")
     eth_start, eth_end = eth.ts.min(), eth.ts.max()
     eth = eth.set_index("ts").reindex(pd.date_range(eth_start, eth_end, freq="1min", tz="UTC"))
@@ -147,8 +182,60 @@ def compile_decision_rows(frame: pd.DataFrame, *, plan_digest: str) -> pd.DataFr
         and bool(future_complete_at.get(exit_ts, False)) else np.nan
         for ts, exit_ts in zip(rows.decision_ts, rows.target_exit_ts)
     ]
-    rows["sol_lag_return"] = rows.solusdt_log_return_2h.shift(1)
+    sol_by_ts = rows.set_index("decision_ts").solusdt_log_return_2h
+    rows["sol_lag_return"] = [
+        sol_by_ts.get(ts - pd.Timedelta(hours=2), np.nan)
+        for ts in rows.decision_ts
+    ]
     return rows
+
+
+def _recompute_representation(data: pd.DataFrame) -> pd.DataFrame:
+    """Replay the frozen representation directly from complete raw minute bars."""
+    members: dict[str, pd.DataFrame] = {}
+    for symbol in INSTRUMENTS:
+        source = data.loc[
+            data.symbol.eq(symbol), ["ts", "close", "quote_volume"]
+        ].copy()
+        if source.empty or source[["close", "quote_volume"]].isna().any().any():
+            return pd.DataFrame()
+        source = source.sort_values("ts", kind="stable")
+        if not source.ts.dt.floor("1min").eq(source.ts).all():
+            return pd.DataFrame()
+        source["bucket_start"] = source.ts.dt.floor("120min")
+        grouped = source.groupby("bucket_start", sort=True)
+        counts = grouped.ts.count()
+        spans = grouped.ts.agg(["min", "max"])
+        complete = (
+            counts.eq(120)
+            & spans["min"].eq(spans.index)
+            & spans["max"].eq(spans.index + pd.Timedelta(minutes=119))
+        )
+        source = source.loc[source.bucket_start.isin(complete[complete].index)]
+        bars = source.groupby("bucket_start", sort=True).agg(
+            close=("close", "last"), quote_volume=("quote_volume", "sum")
+        )
+        bars["decision_ts"] = bars.index + pd.Timedelta(hours=2)
+        bars[f"{symbol.lower()}_log_return_2h"] = np.log(
+            bars.close.where(bars.close > 0)
+        ).diff()
+        bars = bars.set_index("decision_ts")
+        members[symbol] = bars
+    joined = members["ETHUSDT"].join(
+        members["SOLUSDT"], how="inner", lsuffix="_eth", rsuffix="_sol"
+    )
+    if joined.empty:
+        return pd.DataFrame()
+    eth_returns = joined["ethusdt_log_return_2h"]
+    result = pd.DataFrame(index=joined.index)
+    result["solusdt_log_return_2h"] = joined["solusdt_log_return_2h"]
+    result["ethusdt_log_return_2h"] = eth_returns
+    result["ethusdt_realized_volatility_24h"] = (
+        eth_returns.rolling(12, min_periods=12).std(ddof=0).mul(math.sqrt(12)).shift(1)
+    )
+    result["solusdt_quote_volume_2h"] = joined["quote_volume_sol"]
+    result["ethusdt_quote_volume_2h"] = joined["quote_volume_eth"]
+    return result.reset_index()
 
 
 def _fit_controls(train: pd.DataFrame) -> tuple[float, np.ndarray]:
@@ -235,17 +322,23 @@ def sol_to_eth_tail_grid_evaluation(frame: pd.DataFrame, *, parameter_grid: Mapp
         & rows.ethusdt_quote_volume_2h.ge(LIQUIDITY_FLOOR)
         & rows[[*OUTPUT_FIELDS, "eth_target_4h"]].notna().all(axis=1)
     )
-    eligible_positions = np.flatnonzero(history_eligible.to_numpy())
-    if len(eligible_positions) < MINIMUM_HISTORY:
+    eligible_rows = rows.loc[history_eligible].reset_index(drop=True)
+    if len(eligible_rows) < MINIMUM_HISTORY:
         terminal = _result("invalid", "fewer_than_4000_aligned_liquid_history_observations", {},
                            plan_digest=representation_plan_digest)
         return {"outcome": "invalid", "reason": terminal["reason"], "selection_candidates": [],
                 "selected_parameters": None, "test_open_count": 0, "held_out_evaluation": terminal}
     purge = pd.Timedelta(hours=4)
-    history_end = rows.iloc[int(eligible_positions[MINIMUM_HISTORY - 1])].target_exit_ts
+    train = eligible_rows.iloc[:MINIMUM_HISTORY].copy()
+    history_end = train.iloc[-1].target_exit_ts
     validation_start = history_end + purge
-    remaining = rows.loc[rows.decision_ts >= validation_start]
-    if len(remaining) < 30:
+    remaining = eligible_rows.loc[
+        eligible_rows.decision_ts >= validation_start
+    ].reset_index(drop=True)
+    # After a 4h target closes, three intervening 2h decisions place the next
+    # partition at target_exit + the frozen 4h purge/embargo boundary.
+    partition_gap = 3
+    if len(remaining) < 2 * MINIMUM_PARTITION_SUPPORT + partition_gap:
         terminal = _result(
             "invalid",
             "insufficient_post_history_chronological_rows",
@@ -260,13 +353,11 @@ def sol_to_eth_tail_grid_evaluation(frame: pd.DataFrame, *, parameter_grid: Mapp
             "test_open_count": 0,
             "held_out_evaluation": terminal,
         }
-    test_start = remaining.iloc[len(remaining) // 2].decision_ts
-    train = rows.loc[rows.target_exit_ts <= validation_start - purge]
-    validation = rows.loc[
-        (rows.decision_ts >= validation_start)
-        & (rows.target_exit_ts <= test_start - purge)
-    ]
-    test = rows.loc[rows.decision_ts >= test_start]
+    partition_size = (len(remaining) - partition_gap) // 2
+    validation = remaining.iloc[:partition_size].copy()
+    test = remaining.iloc[
+        partition_size + partition_gap : partition_size * 2 + partition_gap
+    ].copy()
     names, candidates = tuple(FROZEN_GRID), []
     for values in product(*(FROZEN_GRID[name] for name in names)):
         params = dict(zip(names, values))
@@ -304,7 +395,12 @@ class SolToEth2hTailReturnStrategy(Strategy):
     """
 
     def __init__(self, *, adaptive_representation_plan_digest: str = "", **_: Any) -> None:
-        self.expected_plan_digest = adaptive_representation_plan_digest
+        self.expected_plan_digest = (
+            adaptive_representation_plan_digest
+            if adaptive_representation_plan_digest
+            == EXPECTED_REPRESENTATION_PLAN_DIGEST
+            else ""
+        )
 
     def on_bars(self, ts: pd.Timestamp, bars_by_symbol: Mapping[str, Bar],
                 tradeable: set[str], ctx: Mapping[str, Any]) -> list[Signal]:

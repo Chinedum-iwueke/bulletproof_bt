@@ -17,6 +17,7 @@ from bt.governance.alpha_strategy_pipeline import (
 from bt.contracts.research_specs_v2 import canonical_hash
 from bt.hypotheses.contract import HypothesisContract
 from bt.strategy.sol_to_eth_2h_tail_return import (
+    EXPECTED_REPRESENTATION_PLAN_DIGEST,
     FROZEN_GRID,
     OUTPUT_FIELDS,
     QUESTION,
@@ -86,31 +87,47 @@ def _overlap_receipt(assignment: dict) -> dict:
     return {**document, "record_digest": assignment_runner.digest(document)}
 
 
-def _attached_frame(decisions: int = 4050) -> pd.DataFrame:
+def _attached_frame(decisions: int = 4120) -> pd.DataFrame:
     start = pd.Timestamp("2022-01-01T00:00:00Z")
-    minutes = (decisions + 3) * 120
+    minutes = (decisions + 14) * 120
     timestamps = pd.date_range(start, periods=minutes, freq="1min")
-    rows = []
-    encoded = json.dumps(list(OUTPUT_FIELDS), separators=(",", ":"))
-    for symbol in ("ETHUSDT", "SOLUSDT"):
-        for i, ts in enumerate(timestamps):
-            row = {"ts": ts, "symbol": symbol, "close": 100 * np.exp(i * 1e-7)}
-            if i and i % 120 == 0:
-                decision = i // 120
-                values = {
-                    "solusdt_log_return_2h": 0.02 if decision % 10 == 0 else 0.001,
-                    "ethusdt_log_return_2h": 0.0001,
-                    "ethusdt_realized_volatility_24h": 0.01,
-                    "solusdt_quote_volume_2h": 2_000_000.0,
-                    "ethusdt_quote_volume_2h": 2_000_000.0,
+    minute = np.arange(minutes, dtype=float)
+    members = []
+    for symbol, base, phase in (
+        ("ETHUSDT", 1_200.0, 0.7),
+        ("SOLUSDT", 12.0, 0.0),
+    ):
+        close = base * np.exp(
+            0.000001 * minute + 0.003 * np.sin(minute / 120.0 + phase)
+        )
+        members.append(
+            pd.DataFrame(
+                {
+                    "ts": timestamps,
+                    "symbol": symbol,
+                    "close": close,
+                    "quote_volume": 20_000.0,
                 }
-                row.update(values)
-                row.update({"prior_only_volatility_source_end_ts": (ts - pd.Timedelta(hours=2)).isoformat(),
-                            "representation_plan_digest": PLAN_DIGEST,
-                            "representation_output_fields": encoded,
-                            "representation_decision_ts": ts.isoformat()})
-            rows.append(row)
-    return pd.DataFrame(rows)
+            )
+        )
+    frame = pd.concat(members, ignore_index=True)
+    expected = strategy._recompute_representation(frame)
+    encoded = json.dumps(list(OUTPUT_FIELDS), separators=(",", ":"))
+    frame = frame.merge(expected, left_on="ts", right_on="decision_ts", how="left")
+    is_decision = frame.decision_ts.notna()
+    frame["prior_only_volatility_source_end_ts"] = None
+    frame.loc[is_decision, "prior_only_volatility_source_end_ts"] = (
+        frame.loc[is_decision, "ts"] - pd.Timedelta(hours=2)
+    ).map(lambda value: value.isoformat())
+    frame["representation_plan_digest"] = None
+    frame.loc[is_decision, "representation_plan_digest"] = PLAN_DIGEST
+    frame["representation_output_fields"] = None
+    frame.loc[is_decision, "representation_output_fields"] = encoded
+    frame["representation_decision_ts"] = None
+    frame.loc[is_decision, "representation_decision_ts"] = frame.loc[
+        is_decision, "ts"
+    ].map(lambda value: value.isoformat())
+    return frame.drop(columns=["decision_ts"])
 
 
 def test_exact_contract_discovery_digest_and_admission() -> None:
@@ -154,6 +171,7 @@ def test_exact_card_binds_the_final_admitted_representation_plan() -> None:
     assert card["execution_semantics"]["adaptive_representation_plan_digest"] == (
         canonical_hash(RAW["representation_plan"])
     )
+    assert PLAN_DIGEST == EXPECTED_REPRESENTATION_PLAN_DIGEST
 
 
 def test_prior_only_materialization_and_native_causality_gate() -> None:
@@ -202,9 +220,28 @@ def test_evaluator_uses_attached_outputs_and_rejects_provenance_mutation() -> No
     decision_ts = rows.iloc[100].decision_ts
     mutated = frame.copy()
     mutated.loc[mutated.ts.eq(decision_ts), "solusdt_log_return_2h"] = 9.0
-    assert compile_decision_rows(mutated, plan_digest=PLAN_DIGEST).iloc[100].solusdt_log_return_2h == 9.0
+    assert compile_decision_rows(mutated, plan_digest=PLAN_DIGEST).empty
+    mutated = frame.copy()
     mutated.loc[mutated.ts.eq(decision_ts), "representation_plan_digest"] = "0" * 64
     assert compile_decision_rows(mutated, plan_digest=PLAN_DIGEST).empty
+
+
+def test_evaluator_rejects_unpinned_irregular_and_missing_decision_rows() -> None:
+    frame = _attached_frame(decisions=40)
+    assert compile_decision_rows(frame, plan_digest="0" * 64).empty
+
+    decisions = frame.loc[frame.representation_plan_digest.notna(), "ts"].drop_duplicates()
+    irregular = frame.loc[~frame.ts.eq(decisions.iloc[10])].copy()
+    assert compile_decision_rows(irregular, plan_digest=PLAN_DIGEST).empty
+
+    misaligned = frame.copy()
+    source_ts = decisions.iloc[10]
+    mask = misaligned.ts.eq(source_ts)
+    misaligned.loc[mask, "ts"] = source_ts + pd.Timedelta(minutes=1)
+    misaligned.loc[mask, "representation_decision_ts"] = source_ts + pd.Timedelta(
+        minutes=1
+    )
+    assert compile_decision_rows(misaligned, plan_digest=PLAN_DIGEST).empty
 
 
 def test_grid_retains_positive_negative_invalid_and_failed(monkeypatch: pytest.MonkeyPatch) -> None:
