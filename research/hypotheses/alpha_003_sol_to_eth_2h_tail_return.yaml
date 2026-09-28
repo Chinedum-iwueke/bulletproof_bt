@@ -31,21 +31,21 @@ representation_plan:
   candidate_key: sol-to-eth-two-hour-information-diffusion
   instruments: [ETHUSDT, SOLUSDT]
   basket_members:
-    - {instrument: ETHUSDT, legacy_groups: [stable], role: primary, selection_rationale: "Named outcome asset; required for its control, volatility, liquidity, and target."}
-    - {instrument: SOLUSDT, legacy_groups: [stable], role: predictor, selection_rationale: "Named leading asset; no proxy is substituted."}
+    - {instrument: ETHUSDT, legacy_groups: [stable], role: primary, selection_rationale: "Named outcome asset; required to construct its contemporaneous control, volatility state, liquidity gate, and future target."}
+    - {instrument: SOLUSDT, legacy_groups: [stable], role: predictor, selection_rationale: "Named leading asset in the frozen cross-asset information-diffusion question; no additional market proxy is causally necessary."}
   source_timeframe: 1m
   research_timeframe: 2h
   resampling_policy: left_closed_left_labeled_complete_bars
   selection_data_boundary: metadata_predictors_only_no_targets
   outcome_data_consulted: false
-  transformation_rationale: "Exact completed 2h returns, prior-only twelve-bar ETH volatility, and actual completed-bar quote-volume preserve the frozen question."
-  rejected_alternatives: ["BTCUSDT would alter the frozen basket.", "A 1h predictor would alter the question.", "Price levels or fractional differentiation would substitute another predictor.", "Another venue would violate admission."]
+  transformation_rationale: "Two-hour log returns preserve the exact scale-safe return predictor and contemporaneous ETH control. ETH realized volatility uses 12 prior completed 2h returns, matching the frozen 24h lookback. Instrument-qualified quote_volume identities retain the actual USD-liquidity measurements needed to enforce the floor. Tail thresholds, signs, and the one-additional-2h-lag rival remain governed evaluation operations rather than outcome-tuned transformations."
+  rejected_alternatives: ["Adding BTCUSDT as a broad-market control would enlarge the frozen basket and alter the candidate question.", "Using 1h bars would change the named 2h predictor and its information-arrival clock.", "Using price levels or fractional differentiation instead of completed-bar log returns would change the predictor or add unnecessary persistence parameters.", "Selecting Binance panels was rejected because the preregistered venue is Bybit."]
   transformations:
-    - {fit_policy: stateless, input_fields: [SOLUSDT__close], operation: log_return, output_field: solusdt_log_return_2h, parameters: {periods: 1}, rationale: "Named completed SOL 2h return."}
-    - {fit_policy: stateless, input_fields: [ETHUSDT__close], operation: log_return, output_field: ethusdt_log_return_2h, parameters: {periods: 1}, rationale: "Contemporaneous completed ETH control."}
-    - {fit_policy: stateless, input_fields: [ethusdt_log_return_2h], operation: realized_volatility, output_field: ethusdt_realized_volatility_24h, parameters: {window: 12}, rationale: "Twelve completed 2h returns; shifted one full bar before consumption."}
-    - {fit_policy: stateless, input_fields: [SOLUSDT__quote_volume], operation: identity, output_field: solusdt_quote_volume_2h, parameters: {}, rationale: "Actual SOL completed-bar USD liquidity."}
-    - {fit_policy: stateless, input_fields: [ETHUSDT__quote_volume], operation: identity, output_field: ethusdt_quote_volume_2h, parameters: {}, rationale: "Actual ETH completed-bar USD liquidity."}
+    - {fit_policy: stateless, input_fields: [SOLUSDT__close], operation: log_return, output_field: solusdt_log_return_2h, parameters: {periods: 1}, rationale: "Constructs the named completed SOLUSDT 2h log-return predictor from causal completed closes."}
+    - {fit_policy: stateless, input_fields: [ETHUSDT__close], operation: log_return, output_field: ethusdt_log_return_2h, parameters: {periods: 1}, rationale: "Constructs the named contemporaneous ETHUSDT 2h return control."}
+    - {fit_policy: stateless, input_fields: [ethusdt_log_return_2h], operation: realized_volatility, output_field: ethusdt_realized_volatility_24h, parameters: {window: 12}, rationale: "Uses twelve completed 2h return observations for the frozen prior-only 24h ETHUSDT volatility control."}
+    - {fit_policy: stateless, input_fields: [SOLUSDT__quote_volume], operation: identity, output_field: solusdt_quote_volume_2h, parameters: {}, rationale: "Retains completed-bar USD quote turnover for direct enforcement of SOLUSDT's liquidity floor."}
+    - {fit_policy: stateless, input_fields: [ETHUSDT__quote_volume], operation: identity, output_field: ethusdt_quote_volume_2h, parameters: {}, rationale: "Retains completed-bar USD quote turnover for direct enforcement of ETHUSDT's liquidity floor."}
 parameter_grid:
   sol_return_tail_percentile: [0.90, 0.95]
   response_direction: [same]
@@ -68,7 +68,7 @@ execution_semantics:
   tp_update_policy: none
   warmup_observations: 0
   warmup_timeframe: 2h
-  adaptive_representation_plan_digest: ce7881e31f232c97cbc742fd82be8cc8fa86d1344e58f0b51a38c0fdbf83942c
+  adaptive_representation_plan_digest: da66f342076d9d15600355066237cb17c8470ae133e7ebfce1319c597621dbdb
   adaptive_representation_fields: [solusdt_log_return_2h, ethusdt_log_return_2h, ethusdt_realized_volatility_24h, solusdt_quote_volume_2h, ethusdt_quote_volume_2h]
   required_extra_columns: [solusdt_log_return_2h, ethusdt_log_return_2h, ethusdt_realized_volatility_24h, solusdt_quote_volume_2h, ethusdt_quote_volume_2h, prior_only_volatility_source_end_ts, representation_plan_digest, representation_output_fields, representation_decision_ts]
 evaluation:
