@@ -445,7 +445,10 @@ def test_strategy_validates_every_members_ordered_fields_digest_and_causal_times
 def test_runner_binds_both_heldout_boundaries_and_overlap_admission() -> None:
     source = (ROOT / "scripts/run_alpha_research_assignment.py").read_text()
     assert "end=rep.split.test_end" in source
-    assert "verify_contiguous_overlap(combined)" in source
+    assert "verify_contiguous_overlap(" in source
+    assert "minimum_rows=required_rows" in source
+    assert "instruments=tuple(sorted(panels))" in source
+    assert "require_market_fields=False" in source
     assert "cross_sectional_reversal_evaluation" in source
 
 

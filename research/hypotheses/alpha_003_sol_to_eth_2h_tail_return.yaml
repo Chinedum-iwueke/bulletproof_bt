@@ -1,0 +1,106 @@
+metadata:
+  hypothesis_id: ALPHA-003-SOL-TO-ETH-2H-TAIL-RETURN
+  title: SOL-to-ETH delayed information diffusion
+  description: &question "Does a point-in-time completed SOLUSDT 2h tail return predict same-direction ETHUSDT close-to-close log return over the next contiguous 4h after controlling for ETHUSDT's contemporaneous 2h return, prior-only 24h volatility, and both instruments' completed-bar USD liquidity?"
+  research_layer: ALPHA
+  hypothesis_family: sol_to_eth_information_diffusion
+  version: 1.0.0
+hypothesis_id: ALPHA-003-SOL-TO-ETH-2H-TAIL-RETURN
+title: SOL-to-ETH delayed information diffusion
+description: *question
+research_layer: ALPHA
+hypothesis_family: sol_to_eth_information_diffusion
+version: 1.0.0
+status: draft
+immutable_contract:
+  question: *question
+  question_digest: 164f417218cfaa04be2e15063c4e2a6388c8031532e721157004e5731765db6b
+  venue: bybit
+  instruments: [ETHUSDT, SOLUSDT]
+  source_timeframe: 1m
+  research_timeframe: 2h
+  resampling_policy: left_closed_left_labeled_complete_bars
+  window: {start: '2023-01-01T00:00:00Z', end: '2024-01-01T00:00:00Z'}
+  tier: Tier2B
+  required_fields: [ts, open, high, low, close, volume, quote_volume]
+  dataset_bindings:
+    - {instrument: ETHUSDT, dataset_build_id: e1abea55-f597-415b-af85-95e6a12b5a3d, dataset_digest: 17c0dc35d32f3e838f43ba116eb8917f01f08594f14ea2a6c104c3905e4a4473, catalog_digest: debec183dbaead71f96286920a805998c61c5141fe93499efcfb41e72249e031, manifest_digest: 1add98708c8427d7d4daa5f94d05c54920df8ea2bbbd1582f9aa532cd30d639c, producer_receipt_digest: f40db3e88a6ab082091269f99b55d2885ca52c938d25a919783f9b5675aefad6, lake_governance_digest: 3c831d64cad97c076a82700f59e8c2021c8316a711b6c29dfed9a47e0fe003c1, partition_digest: 17c0dc35d32f3e838f43ba116eb8917f01f08594f14ea2a6c104c3905e4a4473}
+    - {instrument: SOLUSDT, dataset_build_id: 233b1bf0-cde2-4eff-a58e-0ff57b7ade1f, dataset_digest: 3921896b9b2be24b0834766a2945e54e89d1223ce5480c83a2a6757b9eaf9a41, catalog_digest: b69af601f8e2c8c76f2692f7186f99069c3ea821975483f4dd4eb0f60ac3c290, manifest_digest: 455beed3cf4e5c80e8f63bb33cf2e4b7beff9b0813063080aae9dfb6e11b4788, producer_receipt_digest: 29c440c17effbb3261262299a23f65a99afabf914b2048c92c64a557b9a1245b, lake_governance_digest: d62fb5a4ed3f9acbdd76cc8896d68ad1ce36d0ca0e72a673042c40b754513b96, partition_digest: 3921896b9b2be24b0834766a2945e54e89d1223ce5480c83a2a6757b9eaf9a41}
+representation_plan:
+  schema_version: adaptive-representation-plan-v1.0.0
+  candidate_key: sol-to-eth-two-hour-information-diffusion
+  instruments: [ETHUSDT, SOLUSDT]
+  basket_members:
+    - {instrument: ETHUSDT, legacy_groups: [stable], role: primary, selection_rationale: "Named outcome asset; required for its control, volatility, liquidity, and target."}
+    - {instrument: SOLUSDT, legacy_groups: [stable], role: predictor, selection_rationale: "Named leading asset; no proxy is substituted."}
+  source_timeframe: 1m
+  research_timeframe: 2h
+  resampling_policy: left_closed_left_labeled_complete_bars
+  selection_data_boundary: metadata_predictors_only_no_targets
+  outcome_data_consulted: false
+  transformation_rationale: "Exact completed 2h returns, prior-only twelve-bar ETH volatility, and actual completed-bar quote-volume preserve the frozen question."
+  rejected_alternatives: ["BTCUSDT would alter the frozen basket.", "A 1h predictor would alter the question.", "Price levels or fractional differentiation would substitute another predictor.", "Another venue would violate admission."]
+  transformations:
+    - {fit_policy: stateless, input_fields: [SOLUSDT__close], operation: log_return, output_field: solusdt_log_return_2h, parameters: {periods: 1}, rationale: "Named completed SOL 2h return."}
+    - {fit_policy: stateless, input_fields: [ETHUSDT__close], operation: log_return, output_field: ethusdt_log_return_2h, parameters: {periods: 1}, rationale: "Contemporaneous completed ETH control."}
+    - {fit_policy: stateless, input_fields: [ethusdt_log_return_2h], operation: realized_volatility, output_field: ethusdt_realized_volatility_24h, parameters: {window: 12}, rationale: "Twelve completed 2h returns; shifted one full bar before consumption."}
+    - {fit_policy: stateless, input_fields: [SOLUSDT__quote_volume], operation: identity, output_field: solusdt_quote_volume_2h, parameters: {}, rationale: "Actual SOL completed-bar USD liquidity."}
+    - {fit_policy: stateless, input_fields: [ETHUSDT__quote_volume], operation: identity, output_field: ethusdt_quote_volume_2h, parameters: {}, rationale: "Actual ETH completed-bar USD liquidity."}
+parameter_grid:
+  sol_return_tail_percentile: [0.90, 0.95]
+  response_direction: [same]
+  volatility_lookback: [12]
+grid_contract: {maximum_parameters: 3, maximum_variants: 2, frozen_before_outcomes: true, stopping_rule: exhaustive}
+entry: {strategy: sol_to_eth_2h_tail_return, signal_timeframe: 2h, authority: research_observation_only}
+exit: {target: next_four_contiguous_hours, time_exit_minutes: 240}
+sizing: {mode: fixed_notional_pct_equity, notional_pct_equity: 0.05}
+risk: {authority: engine, max_positions: 0, pyramiding: false, flips: false}
+costs: {authority: registered_evaluator, taker_fee_bps: 6.0, slippage_bps: 2.0, spread_bps: 1.0, round_trip_bps: 9.0, robustness_multiplier: 2.0}
+execution_semantics:
+  signal_timeframe: 2h
+  base_execution_timeframe: 1m
+  base_data_frequency_expected: 1m
+  exit_monitoring_timeframe: 1m
+  hold_time_unit: four_contiguous_hours
+  atr_source_timeframe: 2h
+  stop_model: not_applicable_research_observation
+  stop_update_policy: none
+  tp_update_policy: none
+  warmup_observations: 0
+  warmup_timeframe: 2h
+  adaptive_representation_plan_digest: ce7881e31f232c97cbc742fd82be8cc8fa86d1344e58f0b51a38c0fdbf83942c
+  adaptive_representation_fields: [solusdt_log_return_2h, ethusdt_log_return_2h, ethusdt_realized_volatility_24h, solusdt_quote_volume_2h, ethusdt_quote_volume_2h]
+  required_extra_columns: [solusdt_log_return_2h, ethusdt_log_return_2h, ethusdt_realized_volatility_24h, solusdt_quote_volume_2h, ethusdt_quote_volume_2h, prior_only_volatility_source_end_ts, representation_plan_digest, representation_output_fields, representation_decision_ts]
+evaluation:
+  required_tiers: [Tier2B]
+  outcome_retention: [positive, negative, invalid, failed]
+  split: {method: chronological_first_4000_jointly_liquid_then_equal_validation_test, train_minimum_liquid_observations: 4000, validation_remainder_fraction: 0.50, test_remainder_fraction: 0.50, purge_seconds: 14400, embargo_seconds: 14400}
+  native_implementation: {path: src/bt/strategy/sol_to_eth_2h_tail_return.py, function: sol_to_eth_tail_grid_evaluation}
+  metrics: [mean_net_signed_residual_return, confidence_interval_95, doubled_cost_mean_net_signed_residual_return, support, selection_bias_audit]
+  confidence_interval: {method: deterministic_circular_block_bootstrap, block_length_observations: 2, resamples: 2000, seed: 20260928}
+falsification_criteria:
+  - Reject unless at least 4000 aligned complete 2h observations remain after both USD 1000000 liquidity floors.
+  - Reject unless validation and held-out evaluation each contain at least 30 qualifying tail events.
+  - Reject unless held-out mean net same-direction ETH 4h residual return has a dependence-aware 95% interval entirely above zero.
+  - Reject if the controlled effect is nonpositive or doubled registered costs make it nonpositive.
+  - Reject if the one-additional-2h-lag SOL predictor is equally good or better on the identical selected timestamps and controls.
+logging:
+  required_fields: [decision_trace, decision_ts, target_exit_ts, outcome, reason, stop_price, representation_plan_digest, representation_output_fields, representation_decision_ts]
+runtime_controls: {enabled: true, max_variants: 2, tags: [alpha-003, classic-only, point-in-time, research-only]}
+truth_contract:
+  version: '1.0'
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  parity_required_for_fast_path: true
+  fast_path_generation: forbidden
+  research_memory_requires_certification: true
+authority: {capital: false, orders: false, production_promotion: false, self_approval: false}
