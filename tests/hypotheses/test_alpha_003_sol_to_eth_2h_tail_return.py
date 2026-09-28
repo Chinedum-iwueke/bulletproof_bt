@@ -14,6 +14,7 @@ from bt.governance.alpha_strategy_pipeline import (
     draft_research_card,
     qualify_card,
 )
+from bt.contracts.research_specs_v2 import canonical_hash
 from bt.hypotheses.contract import HypothesisContract
 from bt.strategy.sol_to_eth_2h_tail_return import (
     FROZEN_GRID,
@@ -128,6 +129,31 @@ def test_exact_contract_discovery_digest_and_admission() -> None:
         "f40db3e88a6ab082091269f99b55d2885ca52c938d25a919783f9b5675aefad6",
         "29c440c17effbb3261262299a23f65a99afabf914b2048c92c64a557b9a1245b",
     ]
+
+
+def test_exact_card_binds_the_final_admitted_representation_plan() -> None:
+    assignment = {
+        "question": QUESTION,
+        "question_digest": RAW["immutable_contract"]["question_digest"],
+        "dataset_build_id": RAW["immutable_contract"]["dataset_bindings"][0][
+            "dataset_build_id"
+        ],
+        "dataset_digest": RAW["immutable_contract"]["dataset_bindings"][0][
+            "dataset_digest"
+        ],
+        "venue": "bybit",
+        "instrument": "ETHUSDT",
+        "timeframe": "1m",
+        "window_start": "2023-01-01T00:00:00Z",
+        "window_end": "2024-01-01T00:00:00Z",
+        "representation_plan": RAW["representation_plan"],
+    }
+
+    card = draft_research_card(assignment, repository_root=str(ROOT))
+
+    assert card["execution_semantics"]["adaptive_representation_plan_digest"] == (
+        canonical_hash(RAW["representation_plan"])
+    )
 
 
 def test_prior_only_materialization_and_native_causality_gate() -> None:
