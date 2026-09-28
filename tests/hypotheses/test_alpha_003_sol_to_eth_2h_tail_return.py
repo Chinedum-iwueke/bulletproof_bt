@@ -716,3 +716,15 @@ def test_trusted_bindings_and_registered_execution_retain_variant_evidence(
             tmp_path / "missing-overlap-output",
             max_workers=1,
         )
+
+
+def test_scientific_projection_retains_complete_dataset_identity() -> None:
+    columns = assignment_runner.scientific_evaluation_columns(
+        "sol_to_eth_information_diffusion",
+        [],
+    )
+
+    assert {
+        "source_venue",
+        *(f"source_{field}" for field in assignment_runner.TRUSTED_BINDING_FIELDS),
+    }.issubset(columns)

@@ -96,6 +96,24 @@ TRUSTED_BINDING_FIELDS = (
 )
 
 
+def scientific_evaluation_columns(
+    hypothesis_family: str, required_extra_columns: list[str]
+) -> list[str]:
+    """Return the bounded evaluation projection without dropping evidence identity."""
+    columns = ["ts", "symbol", "close"]
+    if hypothesis_family in {
+        "cross_sectional_liquidity_dispersion_reversal",
+        "eth_relative_liquidity_reversal",
+        "sol_to_eth_information_diffusion",
+    }:
+        columns.extend(["volume", "quote_volume"])
+    if hypothesis_family == "sol_to_eth_information_diffusion":
+        columns.extend(["open", "high", "low", "source_venue"])
+        columns.extend(f"source_{field}" for field in TRUSTED_BINDING_FIELDS)
+    columns.extend(required_extra_columns)
+    return list(dict.fromkeys(columns))
+
+
 def verify_trusted_dataset_bindings(
     assignment: dict[str, Any], expected_bindings: list[dict[str, Any]]
 ) -> None:
@@ -1671,27 +1689,10 @@ def execute_registered(
             canonical(materialized_payload_receipt) + b"\n"
         )
 
-    lightweight_columns = ["ts", "symbol", "close"]
-    if contract.schema.metadata.hypothesis_family in {
-        "cross_sectional_liquidity_dispersion_reversal",
-        "eth_relative_liquidity_reversal",
-        "sol_to_eth_information_diffusion",
-    }:
-        lightweight_columns.extend(["volume", "quote_volume"])
-    if contract.schema.metadata.hypothesis_family == "sol_to_eth_information_diffusion":
-        lightweight_columns.extend(
-            [
-                "open",
-                "high",
-                "low",
-                "source_venue",
-                "source_dataset_build_id",
-                "source_dataset_digest",
-            ]
-        )
-    for column in contract.schema.execution_semantics.get("required_extra_columns", []):
-        if column not in lightweight_columns:
-            lightweight_columns.append(column)
+    lightweight_columns = scientific_evaluation_columns(
+        contract.schema.metadata.hypothesis_family,
+        list(contract.schema.execution_semantics.get("required_extra_columns", [])),
+    )
     lightweight = pd.read_parquet(execution_data_path, columns=lightweight_columns)
     if assignment.get("window_start") and assignment.get("window_end"):
         lightweight_ts = pd.to_datetime(lightweight["ts"], utc=True, errors="raise")
