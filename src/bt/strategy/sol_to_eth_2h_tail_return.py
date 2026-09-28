@@ -359,6 +359,14 @@ def _recompute_representation(data: pd.DataFrame) -> pd.DataFrame:
         bars = source.groupby("bucket_start", sort=True).agg(
             close=("close", "last"), quote_volume=("quote_volume", "sum")
         )
+        # Preserve the wall-clock grid after incomplete buckets are removed. A
+        # plain diff over the retained rows would silently turn a four-hour gap
+        # into a value labelled as a two-hour return.
+        full_clock = pd.date_range(
+            bars.index.min(), bars.index.max(), freq="2h", tz="UTC"
+        )
+        bars = bars.reindex(full_clock)
+        bars.index.name = "bucket_start"
         bars["decision_ts"] = bars.index + pd.Timedelta(hours=2)
         bars[f"{symbol.lower()}_log_return_2h"] = np.log(
             bars.close.where(bars.close > 0)
@@ -371,6 +379,17 @@ def _recompute_representation(data: pd.DataFrame) -> pd.DataFrame:
     if joined.empty:
         return pd.DataFrame()
     eth_returns = joined["ethusdt_log_return_2h"]
+    clock_step = joined.index.to_series().diff().eq(pd.Timedelta(hours=2))
+    current_returns_contiguous = (
+        clock_step
+        & eth_returns.notna()
+        & joined["solusdt_log_return_2h"].notna()
+    )
+    prior_eth_returns = eth_returns.shift(1)
+    prior_24h_contiguous = (
+        prior_eth_returns.notna().rolling(12, min_periods=12).sum().eq(12)
+        & clock_step.shift(1).fillna(False).rolling(12, min_periods=12).sum().eq(12)
+    )
     result = pd.DataFrame(index=joined.index)
     result["solusdt_log_return_2h"] = joined["solusdt_log_return_2h"]
     result["ethusdt_log_return_2h"] = eth_returns
@@ -379,6 +398,12 @@ def _recompute_representation(data: pd.DataFrame) -> pd.DataFrame:
     )
     result["solusdt_quote_volume_2h"] = joined["quote_volume_sol"]
     result["ethusdt_quote_volume_2h"] = joined["quote_volume_eth"]
+    result.loc[~current_returns_contiguous, [
+        "solusdt_log_return_2h", "ethusdt_log_return_2h"
+    ]] = np.nan
+    result.loc[
+        ~prior_24h_contiguous, "ethusdt_realized_volatility_24h"
+    ] = np.nan
     return result.reset_index()
 
 

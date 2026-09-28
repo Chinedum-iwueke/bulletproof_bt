@@ -237,6 +237,51 @@ def test_evaluator_uses_attached_outputs_and_rejects_provenance_mutation() -> No
     assert compile_decision_rows(mutated, plan_digest=PLAN_DIGEST).empty
 
 
+def test_representation_does_not_bridge_missing_clock_buckets() -> None:
+    panels = _minute_panels(days=4)
+    gap_start = pd.Timestamp("2023-01-02T00:00:00Z")
+    gap_end = gap_start + pd.Timedelta(hours=2)
+    frame = pd.concat(panels.values(), ignore_index=True)
+    frame = frame.loc[
+        ~(
+            frame.symbol.eq("SOLUSDT")
+            & frame.ts.ge(gap_start)
+            & frame.ts.lt(gap_end)
+        )
+    ]
+
+    represented = strategy._recompute_representation(frame).set_index("decision_ts")
+    first_after_gap = gap_end + pd.Timedelta(hours=2)
+
+    assert pd.isna(represented.loc[gap_end, "solusdt_log_return_2h"])
+    assert pd.isna(represented.loc[first_after_gap, "solusdt_log_return_2h"])
+
+
+def test_representation_requires_contiguous_prior_24h_volatility() -> None:
+    panels = _minute_panels(days=4)
+    gap_start = pd.Timestamp("2023-01-02T00:00:00Z")
+    gap_end = gap_start + pd.Timedelta(hours=2)
+    frame = pd.concat(panels.values(), ignore_index=True)
+    frame = frame.loc[
+        ~(
+            frame.symbol.eq("ETHUSDT")
+            & frame.ts.ge(gap_start)
+            & frame.ts.lt(gap_end)
+        )
+    ]
+
+    represented = strategy._recompute_representation(frame).set_index("decision_ts")
+    first_valid_after_gap = gap_end + pd.Timedelta(hours=28)
+
+    assert represented.loc[
+        gap_end:first_valid_after_gap - pd.Timedelta(hours=2),
+        "ethusdt_realized_volatility_24h",
+    ].isna().all()
+    assert pd.notna(
+        represented.loc[first_valid_after_gap, "ethusdt_realized_volatility_24h"]
+    )
+
+
 def test_evaluator_rejects_unpinned_irregular_and_missing_decision_rows() -> None:
     frame = _attached_frame(decisions=40)
     assert compile_decision_rows(frame, plan_digest="0" * 64).empty
