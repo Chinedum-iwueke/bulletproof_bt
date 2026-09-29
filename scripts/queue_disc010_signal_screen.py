@@ -61,18 +61,35 @@ def main() -> int:
     }
     db = ResearchDB(args.db)
     db.init_schema()
-    existing = db.connect().execute(
-        """
+    existing = (
+        db.connect()
+        .execute(
+            """
         SELECT id, status FROM queues
         WHERE queue_name = ? AND item_type = ? AND item_id = ?
           AND status != 'FAILED'
         ORDER BY created_at DESC LIMIT 1
         """,
-        ("approved_backtests", "disc010_signal_screen", assignment_digest),
-    ).fetchone()
+            ("approved_backtests", "disc010_signal_screen", assignment_digest),
+        )
+        .fetchone()
+    )
     if existing:
         db.close()
-        raise RuntimeError("this immutable DISC-010 screen is already queued")
+        print(
+            json.dumps(
+                {
+                    "event": "disc010_signal_screen_already_registered",
+                    "queue_id": existing["id"],
+                    "status": existing["status"],
+                    "workers": workers,
+                    "priority": 10,
+                    "authority": "research_only",
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
     queue_id = db.enqueue(
         queue_name="approved_backtests",
         item_type="disc010_signal_screen",

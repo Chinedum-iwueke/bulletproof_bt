@@ -104,6 +104,31 @@ def test_manifest_only_selection_and_frozen_documents(tmp_path):
     assert len(state["file_digests"]) == 3
 
 
+def test_basket_selection_skips_assets_without_common_pre_oos_overlap():
+    common = [
+        {
+            "instrument": symbol,
+            "first_ts": pd.Timestamp("2024-01-01", tz="UTC"),
+            "last_ts": pd.Timestamp("2026-01-01", tz="UTC"),
+        }
+        for symbol in ("BTCUSDT", "ETHUSDT", "SOLUSDT")
+    ]
+    incompatible = {
+        "instrument": "XRPUSDT",
+        "first_ts": pd.Timestamp("2025-09-01", tz="UTC"),
+        "last_ts": pd.Timestamp("2026-01-01", tz="UTC"),
+    }
+
+    basket = replenisher.select_basket([*common, incompatible], cycle=20, offset=1)
+
+    assert {item["instrument"] for item in basket} == {
+        "BTCUSDT",
+        "ETHUSDT",
+        "SOLUSDT",
+    }
+    assert replenisher.research_window(basket)["sealed_oos_start"]
+
+
 def test_active_screen_count_ignores_terminal_and_other_work(tmp_path):
     db = ResearchDB(tmp_path / "capacity.sqlite", repo_root=tmp_path)
     db.init_schema()

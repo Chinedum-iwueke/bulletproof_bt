@@ -6,8 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from orchestrator.db import ResearchDB
 
 
@@ -49,7 +47,9 @@ def test_disc010_queue_is_deduplicated_and_lower_priority(tmp_path):
     ]
     environment = {**os.environ, "PYTHONPATH": os.fspath(ROOT / "src")}
 
-    first = subprocess.run(command, check=True, capture_output=True, text=True, env=environment)
+    first = subprocess.run(
+        command, check=True, capture_output=True, text=True, env=environment
+    )
     event = json.loads(first.stdout)
     assert event["workers"] == 6
     assert event["priority"] == 10
@@ -63,5 +63,19 @@ def test_disc010_queue_is_deduplicated_and_lower_priority(tmp_path):
     assert payload["max_workers"] == 6
     db.close()
 
-    with pytest.raises(subprocess.CalledProcessError):
-        subprocess.run(command, check=True, capture_output=True, text=True, env=environment)
+    duplicate = subprocess.run(
+        command, check=True, capture_output=True, text=True, env=environment
+    )
+    duplicate_event = json.loads(duplicate.stdout)
+    assert duplicate_event == {
+        "authority": "research_only",
+        "event": "disc010_signal_screen_already_registered",
+        "priority": 10,
+        "queue_id": row["id"],
+        "status": "PENDING",
+        "workers": 6,
+    }
+    db = ResearchDB(database)
+    count = db.connect().execute("SELECT COUNT(*) AS n FROM queues").fetchone()
+    assert count["n"] == 1
+    db.close()
