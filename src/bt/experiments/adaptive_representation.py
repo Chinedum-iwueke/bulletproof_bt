@@ -167,7 +167,8 @@ def _validate_operation(transform: dict[str, Any]) -> None:
         raise AdaptiveRepresentationError("every transformation requires a rationale")
 
 
-def _complete_bars(frame: pd.DataFrame, timeframe: str, instrument: str) -> pd.DataFrame:
+def complete_bars(frame: pd.DataFrame, timeframe: str, instrument: str) -> pd.DataFrame:
+    """Build only causally complete bars from a one-minute instrument panel."""
     required = {"ts", "open", "high", "low", "close", "volume"}
     missing = required - set(frame)
     if missing:
@@ -208,6 +209,10 @@ def _complete_bars(frame: pd.DataFrame, timeframe: str, instrument: str) -> pd.D
     bars.index.name = "bucket_start"
     bars["decision_at"] = bars.index + pd.Timedelta(minutes=minutes)
     return bars.reset_index(drop=False)
+
+
+# Compatibility for callers pinned to the pre-DISC-010 private helper.
+_complete_bars = complete_bars
 
 
 def _fractional_weights(d: float, threshold: float) -> np.ndarray:
@@ -276,7 +281,7 @@ def materialize_adaptive_representation(
     complete_rows: dict[str, int] = {}
     for instrument in instruments:
         source_rows[instrument] = len(panels[instrument])
-        bars = _complete_bars(panels[instrument], plan["research_timeframe"], instrument)
+        bars = complete_bars(panels[instrument], plan["research_timeframe"], instrument)
         complete_rows[instrument] = len(bars)
         rename = {
             column: f"{instrument}__{column}"
