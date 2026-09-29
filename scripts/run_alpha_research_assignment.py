@@ -264,6 +264,12 @@ def materialize_execution_panel(
             "dataset_key": assignment.get("dataset_key", "legacy-single-panel"),
             "instrument": assignment["instrument"],
             "venue": assignment.get("venue"),
+            **{
+                field: assignment[field]
+                for field in TRUSTED_BINDING_FIELDS
+                if field not in {"dataset_build_id", "dataset_digest"}
+                and field in assignment
+            },
         }
     ]
     start = (
