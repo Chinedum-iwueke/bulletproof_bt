@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import itertools
 import json
 import os
 import subprocess
@@ -98,7 +99,14 @@ def select_basket(
             f"{cycle}:{offset}:{item['instrument']}".encode("ascii")
         ).hexdigest(),
     )
-    return ordered[:size]
+    for candidate in itertools.combinations(ordered, size):
+        basket = list(candidate)
+        try:
+            research_window(basket)
+        except ValueError:
+            continue
+        return basket
+    raise ValueError("no metadata-visible basket has the required pre-OOS overlap")
 
 
 def research_window(basket: list[dict[str, Any]]) -> dict[str, str]:
@@ -161,7 +169,12 @@ def build_documents(
     instruments = [item["instrument"] for item in basket]
     identity = hashlib.sha256(
         json.dumps(
-            {"cycle": cycle, "ordinal": ordinal, "timeframe": timeframe, "basket": instruments},
+            {
+                "cycle": cycle,
+                "ordinal": ordinal,
+                "timeframe": timeframe,
+                "basket": instruments,
+            },
             sort_keys=True,
         ).encode("ascii")
     ).hexdigest()[:16]
@@ -213,14 +226,18 @@ def build_documents(
 
 
 def active_screen_count(db: ResearchDB) -> int:
-    row = db.connect().execute(
-        """
+    row = (
+        db.connect()
+        .execute(
+            """
         SELECT COUNT(*) AS n FROM queues
         WHERE queue_name = 'approved_backtests'
           AND item_type = 'disc010_signal_screen'
           AND status IN ('PENDING', 'LOCKED')
         """
-    ).fetchone()
+        )
+        .fetchone()
+    )
     return int(row["n"])
 
 
@@ -238,8 +255,11 @@ def main() -> int:
         raise ValueError("target-active must be 1-3 and max-workers must be 1-8")
     repository = Path(__file__).resolve().parents[1]
     current_commit = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repository, check=True,
-        capture_output=True, text=True,
+        ["git", "rev-parse", "HEAD"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
     if current_commit != args.source_commit:
         raise ValueError("source commit differs from replenisher assignment")
@@ -275,9 +295,12 @@ def main() -> int:
             [
                 sys.executable,
                 str(repository / "scripts" / "queue_disc010_signal_screen.py"),
-                "--db", str(args.db),
-                "--assignment", str(assignment_path),
-                "--repository-root", str(repository),
+                "--db",
+                str(args.db),
+                "--assignment",
+                str(assignment_path),
+                "--repository-root",
+                str(repository),
             ],
             cwd=repository,
             check=True,
