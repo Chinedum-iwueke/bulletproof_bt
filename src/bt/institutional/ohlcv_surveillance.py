@@ -251,6 +251,11 @@ def _trial_result(
     permutations: int,
     seed: int,
 ) -> dict[str, Any]:
+    identity = {
+        "trial_id": trial["trial_id"],
+        "trial_digest": digest(trial),
+        "trial_contract": dict(trial),
+    }
     predictor = _predictor(frame, trial)
     target = frame[f"{trial['target_instrument']}__close"].astype(float)
     horizon = int(trial["target_horizon_bars"])
@@ -276,8 +281,7 @@ def _trial_result(
     minimum_support = int(trial["minimum_support"])
     if len(exploration) < minimum_support or len(validation) < minimum_support:
         return {
-            "trial_id": trial["trial_id"],
-            "trial_digest": digest(trial),
+            **identity,
             "status": "invalid",
             "reason": "insufficient_aligned_observations",
             "exploration_observations": len(exploration),
@@ -290,8 +294,7 @@ def _trial_result(
     validation_support = int(validation_tail.sum())
     if exploration_support < minimum_support or validation_support < minimum_support:
         return {
-            "trial_id": trial["trial_id"],
-            "trial_digest": digest(trial),
+            **identity,
             "status": "invalid",
             "reason": "insufficient_tail_support",
             "exploration_observations": len(exploration),
@@ -311,8 +314,7 @@ def _trial_result(
         seed=seed,
     )
     return {
-        "trial_id": trial["trial_id"],
-        "trial_digest": digest(trial),
+        **identity,
         "status": "evaluated",
         "reason": None,
         "exploration_observations": len(exploration),

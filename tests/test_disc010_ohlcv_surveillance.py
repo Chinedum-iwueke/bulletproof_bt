@@ -97,6 +97,10 @@ def test_cross_asset_signal_is_screened_without_promotion_authority():
     assert verify_receipt(receipt)
     assert receipt.result["question_candidate_digests"]
     assert receipt.result["trials"][0]["question_candidate"] is True
+    assert receipt.result["trials"][0]["trial_contract"] == trial()
+    assert receipt.result["trials"][0]["trial_digest"] == receipt.result[
+        "question_candidate_digests"
+    ][0]
     assert receipt.result["final_oos_opened"] is False
     assert receipt.result["final_oos_metrics"] == {}
     assert receipt.result["strategy_authority"] is False
