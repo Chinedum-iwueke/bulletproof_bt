@@ -52,6 +52,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--specification", required=True, type=Path)
     parser.add_argument("--bindings", required=True, type=Path)
+    parser.add_argument("--data-root", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--max-workers", type=int, default=1)
@@ -73,7 +74,7 @@ def main() -> int:
         "schema_version"
     ] != "disc010-panel-bindings-v1.0.0":
         raise ValueError("panel binding document is malformed")
-    research_root = (repository / "research_data").resolve(strict=True)
+    research_root = args.data_root.resolve(strict=True)
     panels: dict[str, pd.DataFrame] = {}
     descriptors = []
     for binding in bindings["panels"]:

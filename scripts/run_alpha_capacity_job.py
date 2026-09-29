@@ -55,6 +55,7 @@ def main() -> int:
                 str(repository / "scripts/run_disc010_signal_screen.py"),
                 "--specification", str(specification),
                 "--bindings", str(bindings),
+                "--data-root", payload["data_root"],
                 "--output", document["output"],
                 "--source-commit", document["source_commit"],
                 "--max-workers", str(payload["max_workers"]),

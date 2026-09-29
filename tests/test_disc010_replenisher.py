@@ -81,6 +81,7 @@ def test_manifest_only_selection_and_frozen_documents(tmp_path):
         cycle=7,
         ordinal=0,
         output_root=tmp_path / "runs",
+        data_root=data_root,
         source_commit="a" * 40,
         max_workers=6,
         state=state,
@@ -92,6 +93,7 @@ def test_manifest_only_selection_and_frozen_documents(tmp_path):
     bindings = json.loads(Path(assignment["bindings"]).read_text(encoding="utf-8"))
     assert assignment_path.is_file()
     assert assignment["max_workers"] == 6
+    assert assignment["data_root"] == str(data_root.resolve())
     assert len(specification["trials"]) == 8
     assert specification["outcome_data_consulted_during_selection"] is False
     assert specification["sealed_oos_start"] == specification["validation_end"]

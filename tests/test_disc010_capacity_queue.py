@@ -28,6 +28,7 @@ def test_disc010_queue_is_deduplicated_and_lower_priority(tmp_path):
                 "family_id": "cross-asset-v1",
                 "specification": str(specification),
                 "bindings": str(bindings),
+                "data_root": str(tmp_path),
                 "output": str(output),
                 "source_commit": "a" * 40,
                 "max_workers": 6,

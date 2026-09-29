@@ -30,6 +30,7 @@ def main() -> int:
         "family_id",
         "specification",
         "bindings",
+        "data_root",
         "output",
         "source_commit",
         "max_workers",
@@ -43,6 +44,9 @@ def main() -> int:
         raise ValueError("DISC-010 worker budget must be 1-8")
     specification = Path(assignment["specification"]).resolve(strict=True)
     bindings = Path(assignment["bindings"]).resolve(strict=True)
+    data_root = Path(assignment["data_root"]).resolve(strict=True)
+    if not data_root.is_dir():
+        raise ValueError("DISC-010 data root is unavailable")
     assignment_digest = sha256(args.assignment)
     payload = {
         "kind": "disc010_signal_screen",
@@ -52,6 +56,7 @@ def main() -> int:
         "assignment_sha256": assignment_digest,
         "specification_sha256": sha256(specification),
         "bindings_sha256": sha256(bindings),
+        "data_root": str(data_root),
         "repository_root": str(args.repository_root.resolve(strict=True)),
     }
     db = ResearchDB(args.db)
