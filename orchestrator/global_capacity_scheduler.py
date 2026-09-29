@@ -40,6 +40,9 @@ from bt.experiments.resource_controls import MemorySnapshot, memory_snapshot  # 
 from orchestrator.db import ResearchDB  # noqa: E402
 
 
+MANAGED_CAPACITY_KINDS = {"governed_alpha_assignment", "disc010_signal_screen"}
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
@@ -486,7 +489,12 @@ class CapacityScheduler:
             job.completed_at = utc_now_iso()
             if job.queue_id:
                 row = self.db.connect().execute("SELECT status, payload_json FROM queues WHERE id = ?", (job.queue_id,)).fetchone()
-                if row and row["status"] == "LOCKED" and json.loads(row["payload_json"]).get("kind") == "governed_alpha_assignment":
+                if (
+                    row
+                    and row["status"] == "LOCKED"
+                    and json.loads(row["payload_json"]).get("kind")
+                    in MANAGED_CAPACITY_KINDS
+                ):
                     self.db.mark_queue_failed(job.queue_id, "Capacity child exited without a terminal receipt")
             self.logger.info(
                 "job exited: locked_by=%s queue_id=%s name=%s returncode=%s",
@@ -609,7 +617,7 @@ class CapacityScheduler:
             "--queue-id",
             str(row["id"]),
         ]
-        if payload.get("kind") == "governed_alpha_assignment":
+        if payload.get("kind") in MANAGED_CAPACITY_KINDS:
             cmd = [sys.executable, str(PROJECT_ROOT / "scripts/run_alpha_capacity_job.py"),
                    "--db", str(self.db_path), "--queue-id", str(row["id"]),
                    "--locked-by", locked_by, "--queue-name", self.cfg.queue_name]

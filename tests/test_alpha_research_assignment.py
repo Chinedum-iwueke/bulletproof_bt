@@ -45,6 +45,11 @@ def assignment():
         "domain_key": "market-microstructure",
         "dataset_build_id": "33333333-3333-4333-8333-333333333333",
         "dataset_digest": "e" * 64,
+        "catalog_digest": "2" * 64,
+        "manifest_digest": "3" * 64,
+        "producer_receipt_digest": "4" * 64,
+        "lake_governance_digest": "5" * 64,
+        "partition_digest": "6" * 64,
         "instrument": "BTCUSDT",
         "timeframe": "1m",
         "research_context": {
@@ -173,6 +178,11 @@ def test_execution_panel_materializes_every_digest_bound_basket_member(tmp_path)
                 "dataset_key": instrument.lower(),
                 "instrument": instrument,
                 "venue": "bybit",
+                "catalog_digest": f"{position + 2}" * 64,
+                "manifest_digest": f"{position + 4}" * 64,
+                "producer_receipt_digest": f"{position + 6}" * 64,
+                "lake_governance_digest": f"{position + 7}" * 64,
+                "partition_digest": f"{position + 8}" * 64,
             }
         )
     value = assignment() | {

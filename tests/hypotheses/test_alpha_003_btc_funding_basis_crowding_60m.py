@@ -36,7 +36,23 @@ YAML_PATH = ROOT / "research/hypotheses/alpha_003_btc_funding_basis_crowding_60m
 
 
 def _assignment() -> dict:
-    return {"question": QUESTION, "question_digest": DIGEST, "dataset_build_id": "fbb81c42-953b-42fb-8fe1-89c75b45e1aa", "dataset_digest": "9a211d8818c5ab8ec82ad5a7d38957e63eb387ea83d4b00541922a0eeca4aacb", "venue": "bybit", "instrument": "BTCUSDT", "timeframe": "1m", "window_start": "2023-01-01T00:00:00Z", "window_end": "2024-01-01T00:00:00Z", "max_variants": 8}
+    return {
+        "question": QUESTION,
+        "question_digest": DIGEST,
+        "dataset_build_id": "fbb81c42-953b-42fb-8fe1-89c75b45e1aa",
+        "dataset_digest": "9a211d8818c5ab8ec82ad5a7d38957e63eb387ea83d4b00541922a0eeca4aacb",
+        "catalog_digest": "1" * 64,
+        "manifest_digest": "2" * 64,
+        "producer_receipt_digest": "3" * 64,
+        "lake_governance_digest": "4" * 64,
+        "partition_digest": "5" * 64,
+        "venue": "bybit",
+        "instrument": "BTCUSDT",
+        "timeframe": "1m",
+        "window_start": "2023-01-01T00:00:00Z",
+        "window_end": "2024-01-01T00:00:00Z",
+        "max_variants": 8,
+    }
 
 
 def _frame(minutes: int = 70) -> pd.DataFrame:

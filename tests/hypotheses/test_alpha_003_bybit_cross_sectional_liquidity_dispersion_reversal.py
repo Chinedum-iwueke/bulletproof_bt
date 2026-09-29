@@ -485,6 +485,10 @@ def test_execute_registered_materializes_multi_asset_evidence(
             | {
                 "dataset_path": str(paths[binding["instrument"]]),
                 "dataset_key": binding["instrument"].lower(),
+                "manifest_digest": "1" * 64,
+                "producer_receipt_digest": "2" * 64,
+                "lake_governance_digest": "3" * 64,
+                "partition_digest": "4" * 64,
             }
             for binding in raw["immutable_contract"]["dataset_bindings"]
         ],
