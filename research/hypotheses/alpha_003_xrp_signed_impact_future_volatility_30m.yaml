@@ -4,7 +4,7 @@ metadata:
   description: &question Do point-in-time positive and negative XRPUSDT 30m signed return-per-quote_volume shocks predict unequal realized volatility over the next contiguous 3h after controlling for shock magnitude, prior volatility, and completed-bar USD liquidity?
   research_layer: ALPHA
   hypothesis_family: signed_impact_future_volatility
-  version: 1.0.0
+  version: 1.0.1
   author: bulletproof_bt
   created_at: '2026-09-29T00:00:00Z'
 hypothesis_id: *id
@@ -12,7 +12,7 @@ title: *title
 description: *question
 research_layer: ALPHA
 hypothesis_family: signed_impact_future_volatility
-version: 1.0.0
+version: 1.0.1
 status: draft
 immutable_contract:
   question: *question
@@ -66,7 +66,7 @@ representation_plan: &plan
     - {fit_policy: stateless, input_fields: [XRPUSDT__volume], operation: identity, output_field: xrpusdt_volume_30m, parameters: {}, rationale: Retains the candidate-required base-volume measurement as a diagnostic liquidity field without using it to select outcomes.}
     - {fit_policy: stateless, input_fields: [XRPUSDT__close], operation: log_return, output_field: xrpusdt_log_return_30m, parameters: {periods: 1}, rationale: Produces the completed signed 30m close-to-close return using only information available at the decision boundary.}
     - {fit_policy: stateless, input_fields: [xrpusdt_log_return_30m, xrpusdt_quote_volume_30m], operation: ratio, output_field: xrpusdt_signed_impact_30m, parameters: {}, rationale: Implements the named signed return-per-quote_volume predictor; nonpositive or missing quote_volume must yield no decision.}
-    - {fit_policy: stateless, input_fields: [xrpusdt_log_return_30m], operation: realized_volatility, output_field: xrpusdt_realized_volatility_6h, parameters: {window: 12}, rationale: Supplies the preregistered prior-6h volatility control from 12 completed 30m returns; the current decision return is separately available for shock-magnitude control.}
+    - {fit_policy: stateless, input_fields: [xrpusdt_log_return_30m], operation: realized_volatility, output_field: xrpusdt_realized_volatility_6h, parameters: {window: 12, lag: 1}, rationale: Supplies the preregistered prior-6h volatility control from the 12 completed 30m returns ending before the decision bar; the current decision return is separately available for shock-magnitude control.}
 parameter_grid:
   signed_impact_tail_quantile: [0.95, 0.975]
   volatility_control_window_bars: [12, 24]
@@ -98,7 +98,7 @@ execution_semantics:
   tp_update_policy: none
   hold_time_unit: exactly_six_contiguous_completed_30m_bars
   atr_source_timeframe: 30m
-  adaptive_representation_plan_digest: 2cf262ba12d12fd47e5647f48d57ce801d49f111abf041fcfec276381e2c56b9
+  adaptive_representation_plan_digest: a89d2f2889c51af6d87d1b872ca7b7848bd424ed959ddf4d170875082f6582e6
   adaptive_representation_fields: [xrpusdt_quote_volume_30m, xrpusdt_volume_30m, xrpusdt_log_return_30m, xrpusdt_signed_impact_30m, xrpusdt_realized_volatility_6h]
   required_extra_columns: [xrpusdt_quote_volume_30m, xrpusdt_volume_30m, xrpusdt_log_return_30m, xrpusdt_signed_impact_30m, xrpusdt_realized_volatility_6h, representation_plan_digest, representation_output_fields, representation_decision_ts]
   warmup_observations: 1440

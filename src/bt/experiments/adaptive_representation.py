@@ -151,10 +151,12 @@ def _validate_operation(transform: dict[str, Any]) -> None:
         if transform["fit_policy"] != "train_only":
             raise AdaptiveRepresentationError("fractional difference selection must be train-only")
     elif operation in {"rolling_zscore", "realized_volatility"}:
-        if len(inputs) != 1 or set(parameters) != {"window"}:
+        if len(inputs) != 1 or set(parameters) not in ({"window"}, {"window", "lag"}):
             raise AdaptiveRepresentationError(f"{operation} contract is invalid")
         if not 2 <= int(parameters["window"]) <= 100_000:
             raise AdaptiveRepresentationError("rolling window is outside the bounded range")
+        if not 0 <= int(parameters.get("lag", 0)) <= 100_000:
+            raise AdaptiveRepresentationError("rolling lag is outside the bounded range")
     elif operation in {"spread", "ratio"}:
         if len(inputs) != 2 or parameters:
             raise AdaptiveRepresentationError(f"{operation} requires two inputs and no parameters")
@@ -255,10 +257,12 @@ def _apply_transform(frame: pd.DataFrame, transform: dict[str, Any]) -> pd.Serie
         window = int(parameters["window"])
         mean = source.rolling(window, min_periods=window).mean()
         deviation = source.rolling(window, min_periods=window).std(ddof=0)
-        return (source - mean) / deviation.replace(0, np.nan)
+        result = (source - mean) / deviation.replace(0, np.nan)
+        return result.shift(int(parameters.get("lag", 0)))
     if operation == "realized_volatility":
         window = int(parameters["window"])
-        return source.rolling(window, min_periods=window).std(ddof=0) * math.sqrt(window)
+        result = source.rolling(window, min_periods=window).std(ddof=0) * math.sqrt(window)
+        return result.shift(int(parameters.get("lag", 0)))
     if operation == "spread":
         return source - pd.to_numeric(frame[inputs[1]], errors="coerce")
     if operation == "ratio":

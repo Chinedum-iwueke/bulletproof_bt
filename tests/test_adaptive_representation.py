@@ -131,6 +131,51 @@ def test_future_append_does_not_revise_prior_materialized_rows() -> None:
     pd.testing.assert_frame_equal(first, second.iloc[: len(first)].reset_index(drop=True))
 
 
+def test_rolling_transform_lag_is_explicit_and_causal() -> None:
+    value = deepcopy(_plan())
+    value["transformations"].insert(
+        1,
+        {
+            "output_field": "prior_btc_volatility",
+            "operation": "realized_volatility",
+            "input_fields": ["btc_log_return"],
+            "parameters": {"window": 3, "lag": 1},
+            "fit_policy": "stateless",
+            "rationale": "Exclude the decision bar from the prior-state control.",
+        },
+    )
+    result = materialize_adaptive_representation(
+        value,
+        {"BTCUSDT": _panel("BTCUSDT"), "DOGEUSDT": _panel("DOGEUSDT", offset=2)},
+    )
+    expected = (
+        result.frame["btc_log_return"]
+        .rolling(3, min_periods=3)
+        .std(ddof=0)
+        .mul(np.sqrt(3))
+        .shift(1)
+    )
+    pd.testing.assert_series_equal(
+        result.frame["prior_btc_volatility"], expected, check_names=False
+    )
+
+
+def test_rolling_transform_rejects_negative_lag() -> None:
+    value = deepcopy(_plan())
+    value["transformations"].append(
+        {
+            "output_field": "future_leaking_volatility",
+            "operation": "realized_volatility",
+            "input_fields": ["btc_log_return"],
+            "parameters": {"window": 3, "lag": -1},
+            "fit_policy": "stateless",
+            "rationale": "This deliberately invalid transform must be rejected.",
+        }
+    )
+    with pytest.raises(AdaptiveRepresentationError, match="lag is outside"):
+        validate_plan(value)
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [

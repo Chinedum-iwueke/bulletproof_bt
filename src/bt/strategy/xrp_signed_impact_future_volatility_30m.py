@@ -25,7 +25,7 @@ OUTPUT_FIELDS = (
     "xrpusdt_realized_volatility_6h",
 )
 # Updated together with the exact plan embedded in the admitted YAML.
-PLAN_DIGEST = "2cf262ba12d12fd47e5647f48d57ce801d49f111abf041fcfec276381e2c56b9"
+PLAN_DIGEST = "a89d2f2889c51af6d87d1b872ca7b7848bd424ed959ddf4d170875082f6582e6"
 FROZEN_GRID = {
     "signed_impact_tail_quantile": (0.95, 0.975),
     "volatility_control_window_bars": (12, 24),
@@ -76,8 +76,8 @@ def _validated_representation(frame: pd.DataFrame) -> pd.DataFrame:
     data = frame.loc[:, ["ts", *OUTPUT_FIELDS, *PROVENANCE_FIELDS]].copy()
     data["ts"] = pd.DatetimeIndex([_timestamp(value) for value in raw_ts])
     data = data.sort_values("ts", kind="mergesort").reset_index(drop=True)
-    if data["ts"].duplicated().any() or (data["ts"].diff().dropna() != pd.Timedelta(minutes=30)).any():
-        raise ValueError("representation timestamps must be unique contiguous 30m decisions")
+    if data["ts"].duplicated().any():
+        raise ValueError("representation timestamps must be unique")
     for field in OUTPUT_FIELDS:
         data[field] = pd.to_numeric(data[field], errors="coerce")
     decision_ts = data["representation_decision_ts"].map(_timestamp)
@@ -97,20 +97,57 @@ def _validated_representation(frame: pd.DataFrame) -> pd.DataFrame:
     return data
 
 
-def _compile_rows(frame: pd.DataFrame, quantile: float, control_window: int) -> pd.DataFrame:
+def _compile_rows(
+    frame: pd.DataFrame,
+    quantile: float,
+    control_window: int,
+    *,
+    expose_test: bool = True,
+) -> pd.DataFrame:
     if not 0.5 < quantile < 1.0 or control_window not in {12, 24}:
         raise ValueError("parameters differ from frozen grid")
     data = _validated_representation(frame)
     ret = data[OUTPUT_FIELDS[2]]
     # The 12-bar contract consumes the producer's exact RV field. The admitted
     # 24-bar variant consumes the exact return output to form its longer control.
-    prior_vol = (
-        data[OUTPUT_FIELDS[4]].shift(1)
-        if control_window == 12
-        else ret.rolling(24, min_periods=24).std(ddof=0).shift(1) * math.sqrt(24)
-    )
-    future = pd.concat([ret.shift(-step) for step in range(1, 7)], axis=1)
-    data["future_volatility_3h"] = future.std(axis=1, ddof=0) * math.sqrt(6)
+    prior_vol = data[OUTPUT_FIELDS[4]].copy()
+    if control_window == 24:
+        prior_vol = pd.Series(np.nan, index=data.index, dtype=float)
+        for index in range(24, len(data)):
+            prior = data.iloc[index - 24:index]
+            expected = pd.date_range(
+                end=data.loc[index, "ts"] - pd.Timedelta(minutes=30),
+                periods=24,
+                freq="30min",
+            )
+            if (
+                prior["semantic_valid"].all()
+                and prior["ts"].reset_index(drop=True).equals(pd.Series(expected))
+            ):
+                prior_vol.loc[index] = (
+                    prior[OUTPUT_FIELDS[2]].std(ddof=0) * math.sqrt(24)
+                )
+    future_volatility = pd.Series(np.nan, index=data.index, dtype=float)
+    target_complete = pd.Series(False, index=data.index, dtype=bool)
+    target_stop = len(data) if expose_test else int(len(data) * 0.8)
+    for index in range(min(target_stop, len(data))):
+        future = data.iloc[index + 1:index + 7]
+        if len(future) != 6:
+            continue
+        expected = pd.date_range(
+            start=data.loc[index, "ts"] + pd.Timedelta(minutes=30),
+            periods=6,
+            freq="30min",
+        )
+        if (
+            future["semantic_valid"].all()
+            and future["ts"].reset_index(drop=True).equals(pd.Series(expected))
+        ):
+            future_volatility.loc[index] = (
+                future[OUTPUT_FIELDS[2]].std(ddof=0) * math.sqrt(6)
+            )
+            target_complete.loc[index] = True
+    data["future_volatility_3h"] = future_volatility
     data["prior_volatility"] = prior_vol
     categories: list[str | None] = []
     impact = data[OUTPUT_FIELDS[3]]
@@ -120,8 +157,19 @@ def _compile_rows(frame: pd.DataFrame, quantile: float, control_window: int) -> 
         if (
             prior is not None
             and len(prior) == 1440
+            and data.loc[index, "semantic_valid"]
+            and data.iloc[index - 1440:index]["semantic_valid"].all()
             and np.isfinite(prior.to_numpy(dtype=float)).all()
             and math.isfinite(float(value))
+            and data.iloc[index - 1440:index]["ts"].reset_index(drop=True).equals(
+                pd.Series(
+                    pd.date_range(
+                        end=data.loc[index, "ts"] - pd.Timedelta(minutes=30),
+                        periods=1440,
+                        freq="30min",
+                    )
+                )
+            )
         ):
             lower = float(prior.quantile(1.0 - quantile, interpolation="lower"))
             upper = float(prior.quantile(quantile, interpolation="higher"))
@@ -133,7 +181,7 @@ def _compile_rows(frame: pd.DataFrame, quantile: float, control_window: int) -> 
     data["shock_category"] = categories
     data["shock_magnitude"] = ret.abs()
     data["log_liquidity"] = np.log(data[OUTPUT_FIELDS[0]])
-    data["target_complete"] = future.notna().all(axis=1)
+    data["target_complete"] = target_complete
     return data
 
 
@@ -216,7 +264,12 @@ def signed_impact_volatility_evaluation(
     evaluate_test: bool = True,
 ) -> dict[str, Any]:
     try:
-        rows = _compile_rows(frame, float(params["signed_impact_tail_quantile"]), int(params["volatility_control_window_bars"]))
+        rows = _compile_rows(
+            frame,
+            float(params["signed_impact_tail_quantile"]),
+            int(params["volatility_control_window_bars"]),
+            expose_test=evaluate_test,
+        )
         partitions = _split(rows)
         validation = _ols_hac(partitions["validation"])
         test = _ols_hac(partitions["test"]) if evaluate_test else None
@@ -234,7 +287,14 @@ def signed_impact_volatility_evaluation(
         outcome = "positive" if unequal and elevated and stress > 0 else "negative"
         chosen["doubled_cost_minimum_conditional_effect"] = stress
     records = []
-    for row in rows.itertuples():
+    visible_rows = rows if evaluate_test else rows.iloc[: int(len(rows) * 0.8)]
+    for row in visible_rows.itertuples():
+        if not row.semantic_valid or not row.target_complete or _number(row.prior_volatility) is None:
+            terminal_outcome = "invalid"
+        elif row.shock_category is None:
+            terminal_outcome = "no_decision"
+        else:
+            terminal_outcome = outcome
         records.append({
             "decision_ts": row.ts.isoformat(),
             "representation_plan_digest": row.representation_plan_digest,
@@ -249,7 +309,7 @@ def signed_impact_volatility_evaluation(
             "prior_volatility": _number(row.prior_volatility),
             "completed_quote_volume": _number(getattr(row, OUTPUT_FIELDS[0])),
             "future_volatility_3h": _number(row.future_volatility_3h),
-            "terminal_outcome": outcome,
+            "terminal_outcome": terminal_outcome,
         })
     return {"schema_version": "xrp-signed-impact-volatility-evaluation-v1.0.0", "question": QUESTION, "parameters": dict(params), "outcome": outcome, "passed": outcome == "positive", "held_out_evaluated": evaluate_test, "validation": validation, "test": test, "decision_records": records, **(chosen or {})}
 

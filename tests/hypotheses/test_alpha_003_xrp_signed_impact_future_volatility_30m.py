@@ -32,7 +32,10 @@ def _frame(size: int = 1700) -> pd.DataFrame:
     rng = np.random.default_rng(17)
     returns = rng.normal(0.0, .002, size)
     quote = 2_000_000.0 + np.arange(size) * 10.0
-    rv = pd.Series(returns).rolling(12, min_periods=1).std(ddof=0) * np.sqrt(12)
+    rv = (
+        pd.Series(returns).rolling(12, min_periods=12).std(ddof=0).shift(1)
+        * np.sqrt(12)
+    )
     timestamps = pd.date_range("2023-01-01", periods=size, freq="30min", tz="UTC")
     return pd.DataFrame({
         "ts": timestamps,
@@ -87,7 +90,15 @@ def test_invalid_failed_and_negative_outcomes_are_retained_without_mocking() -> 
     observed = signed_impact_volatility_evaluation(_frame(10000), params=params)
     assert observed["outcome"] in {"negative", "positive"}
     assert observed["covariance"] == "Newey-West-HAC-lag-5"
-    assert all(record["terminal_outcome"] == observed["outcome"] for record in observed["decision_records"])
+    tail_records = [
+        record for record in observed["decision_records"]
+        if record["shock_category"] is not None and record["future_volatility_3h"] is not None
+    ]
+    assert tail_records
+    assert all(record["terminal_outcome"] == observed["outcome"] for record in tail_records)
+    assert {record["terminal_outcome"] for record in observed["decision_records"]} >= {
+        "invalid", "no_decision",
+    }
     required = {
         "representation_plan_digest", "representation_output_fields",
         "representation_decision_ts", "shock_category", "shock_magnitude",
@@ -117,8 +128,10 @@ def test_native_adapter_rejects_future_stale_and_semantically_invalid_payloads()
 def test_evaluator_enforces_provenance_complete_targets_and_prior_only_controls() -> None:
     frame = _frame(1700)
     rows = _compile_rows(frame, .95, 12)
-    assert pd.isna(rows.loc[0, "prior_volatility"])
-    assert rows.loc[1, "prior_volatility"] == pytest.approx(frame.loc[0, OUTPUT_FIELDS[4]])
+    assert rows.loc[:11, "prior_volatility"].isna().all()
+    assert rows.loc[12, "prior_volatility"] == pytest.approx(
+        frame.loc[12, OUTPUT_FIELDS[4]]
+    )
 
     missing_future = frame.copy()
     missing_future.loc[1501, OUTPUT_FIELDS[2]] = np.nan
@@ -133,6 +146,56 @@ def test_evaluator_enforces_provenance_complete_targets_and_prior_only_controls(
         bad = frame.copy()
         bad[column] = value
         assert not _compile_rows(bad, .95, 12)["semantic_valid"].any()
+
+
+def test_timestamp_gap_invalidates_only_dependent_windows_then_recovers() -> None:
+    frame = _frame(3200).drop(index=1500).reset_index(drop=True)
+    frame.loc[2941, OUTPUT_FIELDS[2]] = -.1
+    frame.loc[2941, OUTPUT_FIELDS[3]] = (
+        frame.loc[2941, OUTPUT_FIELDS[2]] / frame.loc[2941, OUTPUT_FIELDS[0]]
+    )
+    rows = _compile_rows(frame, .95, 12)
+    assert not bool(rows.loc[1499, "target_complete"])
+    assert rows.loc[1510, "semantic_valid"]
+    assert rows.loc[2941, "shock_category"] == "negative"
+
+
+def test_validation_candidates_cannot_materialize_held_out_targets() -> None:
+    frame = _frame(10000)
+    cutoff = int(len(frame) * .8)
+    test_start = frame.loc[cutoff, "ts"]
+    grid = signed_impact_volatility_grid_evaluation(
+        frame,
+        parameter_grid={
+            "signed_impact_tail_quantile": [.95, .975],
+            "volatility_control_window_bars": [12, 24],
+        },
+    )
+    for candidate in grid["selection_candidates"]:
+        assert candidate["held_out_evaluated"] is False
+        assert candidate["test"] is None
+        assert all(
+            pd.Timestamp(record["decision_ts"]) < test_start
+            for record in candidate["decision_records"]
+            if record["decision_ts"] is not None
+        )
+
+
+def test_invalid_rows_keep_row_level_terminal_outcomes() -> None:
+    frame = _frame(3000)
+    frame.loc[1600, "representation_plan_digest"] = "0" * 64
+    result = signed_impact_volatility_evaluation(
+        frame,
+        params={
+            "signed_impact_tail_quantile": .95,
+            "volatility_control_window_bars": 12,
+        },
+    )
+    record = next(
+        item for item in result["decision_records"]
+        if item["decision_ts"] == frame.loc[1600, "ts"].isoformat()
+    )
+    assert record["terminal_outcome"] == "invalid"
 
 
 def test_evaluator_requires_exact_prior_window_signed_tails_and_frozen_grid() -> None:
