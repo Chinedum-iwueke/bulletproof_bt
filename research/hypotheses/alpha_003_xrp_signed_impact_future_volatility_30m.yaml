@@ -1,0 +1,146 @@
+metadata:
+  hypothesis_id: &id ALPHA-003-XRP-SIGNED-IMPACT-FUTURE-VOLATILITY-30M
+  title: &title XRP signed liquidity-impact asymmetry and future volatility
+  description: &question Do point-in-time positive and negative XRPUSDT 30m signed return-per-quote_volume shocks predict unequal realized volatility over the next contiguous 3h after controlling for shock magnitude, prior volatility, and completed-bar USD liquidity?
+  research_layer: ALPHA
+  hypothesis_family: signed_impact_future_volatility
+  version: 1.0.0
+  author: bulletproof_bt
+  created_at: '2026-09-29T00:00:00Z'
+hypothesis_id: *id
+title: *title
+description: *question
+research_layer: ALPHA
+hypothesis_family: signed_impact_future_volatility
+version: 1.0.0
+status: draft
+immutable_contract:
+  question: *question
+  question_digest: ecde22fe190be03ea9c95d1b99dc1a5b71cc9fc2ff1448e69bfc24af180d592c
+  dataset_key: alpha-bybit-xrpusdt-perp-1m-b20aa54bd75b
+  dataset_build_id: 049294c2-1567-4d98-b0a6-ef798f509abd
+  dataset_digest: b0096582dfaa9fa2aa81b6b39bbad3cc6f4fa3ed8c29dd6eb7d53188a0641b60
+  catalog_id: 00a5c902-549d-40a5-b6a7-9c9171b9b0ce
+  catalog_digest: 84bdc8e95aa667c94b64c1b6d11fd8350df1ba44dd906eef838056c4ebe57791
+  builder_commit: fd0ffae9d04583fcd4300e8308405fe2e32a0571
+  manifest_digest: c5b8914f5d38f591acf27f1ecb1e0fc1e2835fe9d6a1f873a73600bdb0dee267
+  producer_receipt_id: 9cef7071-d124-43e6-bfbe-ee54d9137914
+  producer_receipt_digest: 5fe0eebe48f94da7a368b0fbf9faa0646a3b3147c82ecfa178df57cec0b5608a
+  lake_governance_snapshot_id: 4f5bce8d-42a4-4ea6-926a-344ec00fcc69
+  lake_governance_digest: d8497caa945c08ce26898a2c34b38f33fc3893adb99e27b3832790b994cb9347
+  partition_digests: [b0096582dfaa9fa2aa81b6b39bbad3cc6f4fa3ed8c29dd6eb7d53188a0641b60]
+  output_columns_count: 98
+  output_columns_digest: 88bf693b53fab835b4a5086ab2081f6609b2628205bb726654337c9eda5e3e8e
+  window: {start: '2023-01-01T00:00:00Z', end: '2024-01-01T00:00:00Z'}
+  tier: Tier2B
+  venue: bybit
+  instrument: XRPUSDT
+  source_timeframe: 1m
+  research_timeframe: 30m
+  resampling_policy: left_closed_left_labeled_complete_bars
+  required_fields: [ts, close, quote_volume, volume]
+representation_plan: &plan
+  basket_members:
+    - instrument: XRPUSDT
+      legacy_groups: [stable]
+      role: primary
+      selection_rationale: The raw candidate is single-asset and XRPUSDT alone is causally sufficient for its signed liquidity-impact predictor and future-volatility target; adding market controls would change the frozen question.
+  candidate_key: xrp-30m-signed-illiquidity-future-volatility
+  instruments: [XRPUSDT]
+  outcome_data_consulted: false
+  rejected_alternatives:
+    - BTCUSDT was rejected because substituting the extensively researched BTC instrument would change the supplied XRPUSDT question and duplicate prior liquidity-impact coverage.
+    - Adding BTCUSDT as a broad-market control was rejected because the frozen candidate specifies a single-asset conditional design and the smallest causally sufficient basket is XRPUSDT alone.
+    - 5m and 15m clocks were rejected because they do not match the candidate's 30m information-arrival process and would re-enter overused short-horizon liquidity-impact territory.
+    - 'Raw close levels and fractional differentiation were rejected: log returns are scale-safe and directly match the frozen predictor and target, while persistent price-level memory is not the proposed mechanism.'
+    - Rolling z-score normalization was rejected because the hypothesis requires a past-only tail category governed by the evaluator; replacing it with a z-score would change the predictor.
+    - Simple returns were rejected in favor of additive log returns across the six-bar target horizon.
+  resampling_policy: left_closed_left_labeled_complete_bars
+  research_timeframe: 30m
+  schema_version: adaptive-representation-plan-v1.0.0
+  selection_data_boundary: metadata_predictors_only_no_targets
+  source_timeframe: 1m
+  transformation_rationale: Aggregate only complete left-closed, left-labeled 30m bars. Represent price movement as scale-safe log returns, retain completed quote_volume as the USD-liquidity measurement enforcing the floor, and form signed return per quote_volume directly. The 12-bar realized-volatility control covers the prior 6h on this clock. Tail categorization, shock-sign separation, strict prior-only 30-day ranking, and the six-contiguous-bar future target remain governed evaluator operations because the native graph lacks a time-series rolling-percentile operation.
+  transformations:
+    - {fit_policy: stateless, input_fields: [XRPUSDT__quote_volume], operation: identity, output_field: xrpusdt_quote_volume_30m, parameters: {}, rationale: 'Preserves completed 30m USD quote turnover for the USD 1,000,000 liquidity floor and denominator of the signed-impact predictor.'}
+    - {fit_policy: stateless, input_fields: [XRPUSDT__volume], operation: identity, output_field: xrpusdt_volume_30m, parameters: {}, rationale: Retains the candidate-required base-volume measurement as a diagnostic liquidity field without using it to select outcomes.}
+    - {fit_policy: stateless, input_fields: [XRPUSDT__close], operation: log_return, output_field: xrpusdt_log_return_30m, parameters: {periods: 1}, rationale: Produces the completed signed 30m close-to-close return using only information available at the decision boundary.}
+    - {fit_policy: stateless, input_fields: [xrpusdt_log_return_30m, xrpusdt_quote_volume_30m], operation: ratio, output_field: xrpusdt_signed_impact_30m, parameters: {}, rationale: Implements the named signed return-per-quote_volume predictor; nonpositive or missing quote_volume must yield no decision.}
+    - {fit_policy: stateless, input_fields: [xrpusdt_log_return_30m], operation: realized_volatility, output_field: xrpusdt_realized_volatility_6h, parameters: {window: 12}, rationale: Supplies the preregistered prior-6h volatility control from 12 completed 30m returns; the current decision return is separately available for shock-magnitude control.}
+parameter_grid:
+  signed_impact_tail_quantile: [0.95, 0.975]
+  volatility_control_window_bars: [12, 24]
+grid_contract: {maximum_parameters: 2, maximum_variants: 4, frozen_before_outcomes: true, stopping_rule: exhaustive}
+entry:
+  strategy: xrp_signed_impact_future_volatility_30m
+  signal_timeframe: 30m
+  timeframe: 30m
+  base_execution_timeframe: 1m
+  order_timing: research_observation_only_no_orders
+  direction: none
+  no_pyramiding: true
+  disallow_flip: true
+exit: {target: XRPUSDT realized volatility across exactly six contiguous complete 30m returns after the decision boundary, time_exit_minutes: 180, stop_kind: none_research_observation_only, stop_update_policy: none}
+sizing: {mode: fixed_notional_pct_equity, notional_pct_equity: 0.0}
+risk: {authority: engine, max_positions: 0, max_notional_pct_equity: 0.0, max_gross_notional_pct_equity: 0.0, max_leverage: 0.0, pyramiding: false, flips: false}
+costs: {authority: engine, taker_fee_bps: 6.0, slippage_bps: 2.0, spread_bps: 1.0, delay_bars: 1, robustness_multiplier: 2.0}
+data_availability: {dataset_kind: research_panel, auxiliary_fields_role: required_signal_input, ohlcv_only_fallback: no_decision, missing_auxiliary: no_decision, liquidity_floor_usd: 1000000.0}
+execution_semantics:
+  resampling_interval: left_closed_right_open
+  resampling_label: bucket_start
+  signal_timeframe: 30m
+  base_execution_timeframe: 1m
+  base_data_frequency_expected: 1m
+  exit_monitoring_timeframe: 1m
+  signal_bar_policy: strict_completed_bar_only
+  stop_model: none_research_observation_only
+  stop_update_policy: none
+  tp_update_policy: none
+  hold_time_unit: exactly_six_contiguous_completed_30m_bars
+  atr_source_timeframe: 30m
+  adaptive_representation_plan_digest: 2cf262ba12d12fd47e5647f48d57ce801d49f111abf041fcfec276381e2c56b9
+  adaptive_representation_fields: [xrpusdt_quote_volume_30m, xrpusdt_volume_30m, xrpusdt_log_return_30m, xrpusdt_signed_impact_30m, xrpusdt_realized_volatility_6h]
+  required_extra_columns: [xrpusdt_quote_volume_30m, xrpusdt_volume_30m, xrpusdt_log_return_30m, xrpusdt_signed_impact_30m, xrpusdt_realized_volatility_6h, representation_plan_digest, representation_output_fields, representation_decision_ts]
+  warmup_observations: 1440
+  warmup_timeframe: 30m
+  warmup_required_prior_observations: 1440
+  warmup_required_prior_fields: [xrpusdt_signed_impact_30m]
+  warmup_official_required_fields: [xrpusdt_quote_volume_30m, xrpusdt_volume_30m, xrpusdt_log_return_30m, xrpusdt_signed_impact_30m, xrpusdt_realized_volatility_6h]
+evaluation:
+  required_tiers: [Tier2B]
+  metrics: [asymmetry, confidence_interval_95, positive_effect, negative_effect, doubled_cost_minimum_conditional_effect, support]
+  split: {method: chronological_decision_row_fraction, train_fraction: 0.60, validation_fraction: 0.20, test_fraction: 0.20, boundary_policy: next_row_after_prior_partition, purge_seconds: 10800, embargo_seconds: 10800}
+  selection_metric: validation_absolute_conditional_asymmetry
+  selection_rule: choose_only_highest_validation_absolute_conditional_asymmetry_then_open_test_once
+  confidence_interval_method: Newey-West-HAC-lag-5
+  outcome_retention: [positive, negative, invalid, failed]
+  native_implementation:
+    evaluator: {path: src/bt/strategy/xrp_signed_impact_future_volatility_30m.py, function: signed_impact_volatility_grid_evaluation}
+    strategy: {path: src/bt/strategy/xrp_signed_impact_future_volatility_30m.py, class: XrpSignedImpactFutureVolatility30mStrategy}
+falsification_criteria:
+  - Reject if the held-out association between either preregistered signed-impact shock category and next-3h realized volatility is zero or reverses sign.
+  - Reject the directional-asymmetry mechanism if the conditional positive and negative shock effects are statistically indistinguishable at 95% confidence.
+  - Reject if either effect disappears after jointly controlling for absolute current return, prior volatility, and completed-bar quote_volume.
+  - Exclude decisions lacking six contiguous future 30m bars or USD 1,000,000 completed quote_volume; reject if either shock direction has fewer than 40 held-out observations.
+  - Reject if the minimum conditional shock effect is nonpositive after exactly doubled registered costs.
+expected_failure_modes: [volatility_clustering, broad_market_news, erroneous_quote_volume, informed_flow_alternative, inadequate_directional_support]
+logging:
+  schema_version: '1.0'
+  required_fields: [representation_plan_digest, representation_output_fields, representation_decision_ts, shock_category, shock_magnitude, prior_volatility, completed_quote_volume, future_volatility_3h, terminal_outcome]
+truth_contract:
+  version: '1.0'
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  parity_required_for_fast_path: true
+  fast_path_generation: forbidden
+  research_memory_requires_certification: true
+authority: {capital: false, orders: false, production_promotion: false, self_approval: false}
