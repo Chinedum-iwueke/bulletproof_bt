@@ -62,3 +62,26 @@ def test_catalog_exposes_only_native_registered_contracts_without_authority():
     )
     assert cross_asset["input_mode"] == "aligned_basket"
     assert cross_asset["maximum_instruments"] == 2
+
+    csi = next(
+        item for item in result["capabilities"] if item["hypothesis_id"] == "L7-H1"
+    )
+    research_contract = csi["research_contract"]
+    assert {item["name"] for item in research_contract["csi"]["components"]} == {
+        "funding_pct",
+        "oi_z",
+        "D_t",
+        "S_t",
+    }
+    assert research_contract["data_requirements"]["sources_available"] == [
+        "ohlcv",
+        "mark",
+        "index",
+        "funding",
+        "oi",
+        "volume",
+    ]
+    assert any(
+        "volatility proxy" in item
+        for item in research_contract["notes"]["falsification_criteria"]
+    )

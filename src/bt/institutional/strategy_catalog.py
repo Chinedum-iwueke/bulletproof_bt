@@ -14,8 +14,12 @@ from bt.strategy import STRATEGY_REGISTRY
 
 
 _RESEARCH_CONTRACT_FIELDS = (
+    "market_mechanism",
+    "description",
     "required_indicators",
     "indicator_defaults",
+    "csi",
+    "mechanism_definition",
     "gates",
     "parameter_grid",
     "entry",
@@ -24,10 +28,12 @@ _RESEARCH_CONTRACT_FIELDS = (
     "sizing",
     "risk_controls",
     "data_assumptions",
+    "data_requirements",
     "evaluation",
     "falsification_criteria",
     "truth_contract",
     "expected_failure_modes",
+    "notes",
 )
 
 
