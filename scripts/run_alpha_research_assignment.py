@@ -1941,10 +1941,6 @@ def execute_registered(
         xrp_grid = signed_impact_volatility_grid_evaluation(
             xrp_frame,
             parameter_grid=contract.schema.parameter_grid,
-            cost_bps=sum(
-                float(contract_document["costs"][key])
-                for key in ("taker_fee_bps", "slippage_bps", "spread_bps")
-            ),
         )
         validation = xrp_grid["selection_candidates"]
         for item in validation:

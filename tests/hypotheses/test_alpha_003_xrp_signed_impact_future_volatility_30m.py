@@ -33,11 +33,15 @@ def _frame(size: int = 1700) -> pd.DataFrame:
     returns = rng.normal(0.0, .002, size)
     quote = 2_000_000.0 + np.arange(size) * 10.0
     rv = pd.Series(returns).rolling(12, min_periods=1).std(ddof=0) * np.sqrt(12)
+    timestamps = pd.date_range("2023-01-01", periods=size, freq="30min", tz="UTC")
     return pd.DataFrame({
-        "ts": pd.date_range("2023-01-01", periods=size, freq="30min", tz="UTC"),
+        "ts": timestamps,
         OUTPUT_FIELDS[0]: quote, OUTPUT_FIELDS[1]: 10.0,
         OUTPUT_FIELDS[2]: returns, OUTPUT_FIELDS[3]: returns / quote,
         OUTPUT_FIELDS[4]: rv,
+        "representation_plan_digest": PLAN_DIGEST,
+        "representation_output_fields": json.dumps(list(OUTPUT_FIELDS)),
+        "representation_decision_ts": timestamps,
     })
 
 
@@ -63,8 +67,10 @@ def test_signed_tails_are_not_absolute_impact_proxy_and_grid_opens_test_once() -
     assert rows.loc[1500, "shock_category"] == "negative"
     grid = signed_impact_volatility_grid_evaluation(
         frame,
-        parameter_grid={"signed_impact_tail_quantile": [.95], "volatility_control_window_bars": [12]},
-        minimum_direction_support=1,
+        parameter_grid={
+            "signed_impact_tail_quantile": [.95, .975],
+            "volatility_control_window_bars": [12, 24],
+        },
     )
     assert grid["outcome"] in {"positive", "negative", "invalid", "failed"}
     assert grid["test_open_count"] in {0, 1}
@@ -76,16 +82,20 @@ def test_invalid_failed_and_negative_outcomes_are_retained_without_mocking() -> 
         _frame().assign(ts=lambda x: x.ts.dt.tz_localize(None)), params=params
     )
     assert invalid["outcome"] == "invalid"
-    failed = signed_impact_volatility_evaluation(
-        _frame(2600), params=params, minimum_direction_support=10_000
-    )
+    failed = signed_impact_volatility_evaluation(_frame(2600), params=params)
     assert failed["outcome"] == "failed"
-    observed = signed_impact_volatility_evaluation(
-        _frame(5000), params=params, minimum_direction_support=5
-    )
+    observed = signed_impact_volatility_evaluation(_frame(10000), params=params)
     assert observed["outcome"] in {"negative", "positive"}
     assert observed["covariance"] == "Newey-West-HAC-lag-5"
     assert all(record["terminal_outcome"] == observed["outcome"] for record in observed["decision_records"])
+    required = {
+        "representation_plan_digest", "representation_output_fields",
+        "representation_decision_ts", "shock_category", "shock_magnitude",
+        "prior_volatility", "completed_quote_volume", "future_volatility_3h",
+        "terminal_outcome",
+    }
+    assert required <= observed["decision_records"][0].keys()
+    assert required <= invalid["decision_records"][0].keys()
 
 
 def test_native_adapter_rejects_future_stale_and_semantically_invalid_payloads() -> None:
@@ -95,12 +105,58 @@ def test_native_adapter_rejects_future_stale_and_semantically_invalid_payloads()
     strategy = XrpSignedImpactFutureVolatility30mStrategy()
     bar = Bar(ts, "XRPUSDT", 1., 1., 1., 1., 1., extra)
     signal = strategy.on_bars(ts, {"XRPUSDT": bar}, {"XRPUSDT"}, {})[0]
+    assert signal.side is None
     assert signal.metadata["native_payload_outcome"] == "consumed"
     for bad_ts in (ts + pd.Timedelta(minutes=1), ts - pd.Timedelta(minutes=30)):
         bad = Bar(ts, "XRPUSDT", 1., 1., 1., 1., 1., extra | {"representation_decision_ts": bad_ts.isoformat()})
         assert strategy.on_bars(ts, {"XRPUSDT": bad}, {"XRPUSDT"}, {})[0].metadata["native_payload_outcome"] == "invalid"
     inconsistent = Bar(ts, "XRPUSDT", 1., 1., 1., 1., 1., extra | {OUTPUT_FIELDS[3]: 99.0})
     assert strategy.on_bars(ts, {"XRPUSDT": inconsistent}, {"XRPUSDT"}, {})[0].metadata["native_payload_outcome"] == "invalid"
+
+
+def test_evaluator_enforces_provenance_complete_targets_and_prior_only_controls() -> None:
+    frame = _frame(1700)
+    rows = _compile_rows(frame, .95, 12)
+    assert pd.isna(rows.loc[0, "prior_volatility"])
+    assert rows.loc[1, "prior_volatility"] == pytest.approx(frame.loc[0, OUTPUT_FIELDS[4]])
+
+    missing_future = frame.copy()
+    missing_future.loc[1501, OUTPUT_FIELDS[2]] = np.nan
+    compiled = _compile_rows(missing_future, .95, 12)
+    assert not bool(compiled.loc[1500, "target_complete"])
+
+    for column, value in (
+        ("representation_plan_digest", "0" * 64),
+        ("representation_output_fields", json.dumps(list(reversed(OUTPUT_FIELDS)))),
+        ("representation_decision_ts", frame["ts"] + pd.Timedelta(minutes=30)),
+    ):
+        bad = frame.copy()
+        bad[column] = value
+        assert not _compile_rows(bad, .95, 12)["semantic_valid"].any()
+
+
+def test_evaluator_requires_exact_prior_window_signed_tails_and_frozen_grid() -> None:
+    frame = _frame(1700)
+    frame.loc[100, OUTPUT_FIELDS[3]] = np.nan
+    rows = _compile_rows(frame, .95, 12)
+    assert rows.loc[1440, "shock_category"] is None
+
+    positive_only = _frame(1700)
+    positive_only[OUTPUT_FIELDS[2]] = positive_only[OUTPUT_FIELDS[2]].abs() + 1e-6
+    positive_only[OUTPUT_FIELDS[3]] = (
+        positive_only[OUTPUT_FIELDS[2]] / positive_only[OUTPUT_FIELDS[0]]
+    )
+    categories = _compile_rows(positive_only, .95, 12)["shock_category"]
+    assert "negative" not in set(categories.dropna())
+
+    with pytest.raises(ValueError, match="frozen four-variant"):
+        signed_impact_volatility_grid_evaluation(
+            _frame(1700),
+            parameter_grid={
+                "signed_impact_tail_quantile": [.95],
+                "volatility_control_window_bars": [12, 24],
+            },
+        )
 
 
 def test_native_draft_discovery_does_not_map_question_to_another_template() -> None:
