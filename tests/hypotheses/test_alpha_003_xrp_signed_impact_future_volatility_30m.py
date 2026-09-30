@@ -1,0 +1,119 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+import yaml
+
+from bt.contracts.research_specs_v2 import canonical_hash
+from bt.core.types import Bar
+from bt.governance.alpha_strategy_pipeline import draft_research_card
+from bt.hypotheses.contract import HypothesisContract
+from bt.strategy.xrp_signed_impact_future_volatility_30m import (
+    OUTPUT_FIELDS, PLAN_DIGEST, QUESTION,
+    XrpSignedImpactFutureVolatility30mStrategy,
+    _compile_rows, signed_impact_volatility_evaluation,
+    signed_impact_volatility_grid_evaluation,
+)
+
+
+ROOT = Path(__file__).parents[2]
+YAML = ROOT / "research/hypotheses/alpha_003_xrp_signed_impact_future_volatility_30m.yaml"
+
+
+def _contract() -> dict:
+    return yaml.safe_load(YAML.read_text(encoding="utf-8"))
+
+
+def _frame(size: int = 1700) -> pd.DataFrame:
+    rng = np.random.default_rng(17)
+    returns = rng.normal(0.0, .002, size)
+    quote = 2_000_000.0 + np.arange(size) * 10.0
+    rv = pd.Series(returns).rolling(12, min_periods=1).std(ddof=0) * np.sqrt(12)
+    return pd.DataFrame({
+        "ts": pd.date_range("2023-01-01", periods=size, freq="30min", tz="UTC"),
+        OUTPUT_FIELDS[0]: quote, OUTPUT_FIELDS[1]: 10.0,
+        OUTPUT_FIELDS[2]: returns, OUTPUT_FIELDS[3]: returns / quote,
+        OUTPUT_FIELDS[4]: rv,
+    })
+
+
+def test_exact_card_contract_plan_and_deterministic_compilation() -> None:
+    raw = _contract()
+    contract = HypothesisContract.from_yaml(YAML)
+    assert raw["immutable_contract"]["question"] == QUESTION
+    assert len(contract.to_run_specs()) == 4
+    assert canonical_hash(raw["representation_plan"]) == PLAN_DIGEST
+    assert raw["execution_semantics"]["adaptive_representation_fields"] == list(OUTPUT_FIELDS)
+    one = _compile_rows(_frame(), .95, 12)
+    two = _compile_rows(_frame(), .95, 12)
+    pd.testing.assert_frame_equal(one, two)
+    # Current impact is absent from its own strict prior-only threshold.
+    assert one.loc[:1439, "shock_category"].isna().all()
+
+
+def test_signed_tails_are_not_absolute_impact_proxy_and_grid_opens_test_once() -> None:
+    frame = _frame(2600)
+    frame.loc[1500, OUTPUT_FIELDS[2]] = -.1
+    frame.loc[1500, OUTPUT_FIELDS[3]] = -.1 / frame.loc[1500, OUTPUT_FIELDS[0]]
+    rows = _compile_rows(frame, .975, 12)
+    assert rows.loc[1500, "shock_category"] == "negative"
+    grid = signed_impact_volatility_grid_evaluation(
+        frame,
+        parameter_grid={"signed_impact_tail_quantile": [.95], "volatility_control_window_bars": [12]},
+        minimum_direction_support=1,
+    )
+    assert grid["outcome"] in {"positive", "negative", "invalid", "failed"}
+    assert grid["test_open_count"] in {0, 1}
+
+
+def test_invalid_failed_and_negative_outcomes_are_retained_without_mocking() -> None:
+    params = {"signed_impact_tail_quantile": .95, "volatility_control_window_bars": 12}
+    invalid = signed_impact_volatility_evaluation(
+        _frame().assign(ts=lambda x: x.ts.dt.tz_localize(None)), params=params
+    )
+    assert invalid["outcome"] == "invalid"
+    failed = signed_impact_volatility_evaluation(
+        _frame(2600), params=params, minimum_direction_support=10_000
+    )
+    assert failed["outcome"] == "failed"
+    observed = signed_impact_volatility_evaluation(
+        _frame(5000), params=params, minimum_direction_support=5
+    )
+    assert observed["outcome"] in {"negative", "positive"}
+    assert observed["covariance"] == "Newey-West-HAC-lag-5"
+    assert all(record["terminal_outcome"] == observed["outcome"] for record in observed["decision_records"])
+
+
+def test_native_adapter_rejects_future_stale_and_semantically_invalid_payloads() -> None:
+    ts = pd.Timestamp("2023-02-01T00:00:00Z")
+    values = dict(zip(OUTPUT_FIELDS, [2_000_000.0, 10.0, .02, .02 / 2_000_000.0, .01]))
+    extra = values | {"representation_plan_digest": PLAN_DIGEST, "representation_output_fields": json.dumps(list(OUTPUT_FIELDS)), "representation_decision_ts": ts.isoformat()}
+    strategy = XrpSignedImpactFutureVolatility30mStrategy()
+    bar = Bar(ts, "XRPUSDT", 1., 1., 1., 1., 1., extra)
+    signal = strategy.on_bars(ts, {"XRPUSDT": bar}, {"XRPUSDT"}, {})[0]
+    assert signal.metadata["native_payload_outcome"] == "consumed"
+    for bad_ts in (ts + pd.Timedelta(minutes=1), ts - pd.Timedelta(minutes=30)):
+        bad = Bar(ts, "XRPUSDT", 1., 1., 1., 1., 1., extra | {"representation_decision_ts": bad_ts.isoformat()})
+        assert strategy.on_bars(ts, {"XRPUSDT": bad}, {"XRPUSDT"}, {})[0].metadata["native_payload_outcome"] == "invalid"
+    inconsistent = Bar(ts, "XRPUSDT", 1., 1., 1., 1., 1., extra | {OUTPUT_FIELDS[3]: 99.0})
+    assert strategy.on_bars(ts, {"XRPUSDT": inconsistent}, {"XRPUSDT"}, {})[0].metadata["native_payload_outcome"] == "invalid"
+
+
+def test_native_draft_discovery_does_not_map_question_to_another_template() -> None:
+    raw = _contract()
+    immutable = raw["immutable_contract"]
+    assignment = {
+        "question": QUESTION, "question_digest": immutable["question_digest"],
+        "tier": "Tier2B", "max_variants": 8,
+        "representation_plan": raw["representation_plan"],
+        "dataset_build_id": immutable["dataset_build_id"], "dataset_digest": immutable["dataset_digest"],
+        "instrument": "XRPUSDT", "instruments": ["XRPUSDT"], "venue": "bybit", "timeframe": "1m",
+        "window_start": immutable["window"]["start"], "window_end": immutable["window"]["end"],
+    }
+    card = draft_research_card(assignment, repository_root=str(ROOT))
+    assert card["engine_strategy_name"] == "xrp_signed_impact_future_volatility_30m"
+    assert card["research_question"] == QUESTION

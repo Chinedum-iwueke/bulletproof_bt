@@ -78,6 +78,9 @@ from bt.strategy.eth_relative_liquidity_reversal_6h import (
     relative_liquidity_reversal_grid_evaluation,
 )
 from bt.strategy.sol_to_eth_2h_tail_return import sol_to_eth_tail_grid_evaluation
+from bt.strategy.xrp_signed_impact_future_volatility_30m import (
+    signed_impact_volatility_grid_evaluation,
+)
 
 AUTHORITY = {
     "capital": False,
@@ -1606,6 +1609,42 @@ def execute_registered(
     is_sol_to_eth = (
         contract.schema.metadata.hypothesis_family == "sol_to_eth_information_diffusion"
     )
+    is_xrp_signed_volatility = (
+        contract.schema.metadata.hypothesis_family
+        == "signed_impact_future_volatility"
+    )
+    if is_xrp_signed_volatility:
+        immutable = contract_document["immutable_contract"]
+        binding = (assignment.get("dataset_bindings") or [{}])[0]
+        checks = {
+            "dataset_build_id": assignment.get("dataset_build_id"),
+            "dataset_digest": assignment.get("dataset_digest"),
+            "catalog_digest": binding.get(
+                "catalog_digest", assignment.get("catalog_digest")
+            ),
+            "manifest_digest": binding.get(
+                "manifest_digest", assignment.get("manifest_digest")
+            ),
+            "producer_receipt_digest": binding.get(
+                "producer_receipt_digest",
+                assignment.get("producer_receipt_digest"),
+            ),
+            "lake_governance_digest": binding.get(
+                "lake_governance_digest", assignment.get("lake_governance_digest")
+            ),
+            "partition_digests": binding.get(
+                "partition_digests", assignment.get("partition_digests")
+            ),
+        }
+        mismatched = [
+            key
+            for key, trusted in checks.items()
+            if trusted is None or immutable.get(key) != trusted
+        ]
+        if mismatched:
+            raise BridgeError(
+                f"immutable XRP source evidence is absent or differs: {mismatched}"
+            )
     contract_bindings = list(
         contract_document["immutable_contract"].get("dataset_bindings", [])
     )
@@ -1863,7 +1902,12 @@ def execute_registered(
             (run_dir / "materialized-native-payload-validation.json").write_bytes(
                 canonical(materialized_payload_receipt) + b"\n"
             )
-        if is_cross_sectional or is_eth_relative or is_sol_to_eth:
+        if (
+            is_cross_sectional
+            or is_eth_relative
+            or is_sol_to_eth
+            or is_xrp_signed_volatility
+        ):
             if adaptive_receipt is None:
                 raise BridgeError("scientific execution lacks representation receipt")
             acceptance = native_representation_acceptance(
@@ -1875,6 +1919,8 @@ def execute_registered(
                     if is_sol_to_eth
                     else "eth_relative_representation_validation"
                     if is_eth_relative
+                    else "xrp_signed_volatility_representation_validation"
+                    if is_xrp_signed_volatility
                     else "cross_sectional_representation_validation"
                 ),
             )
@@ -1887,7 +1933,34 @@ def execute_registered(
     liquidity_grid = None
     eth_relative_grid = None
     sol_to_eth_grid = None
-    if is_eth_relative:
+    xrp_grid = None
+    if is_xrp_signed_volatility:
+        if adaptive_receipt is None:
+            raise BridgeError("XRP scientific execution lacks adaptive representation")
+        xrp_frame = materialized.frame.rename(columns={"decision_at": "ts"})
+        xrp_grid = signed_impact_volatility_grid_evaluation(
+            xrp_frame,
+            parameter_grid=contract.schema.parameter_grid,
+            cost_bps=sum(
+                float(contract_document["costs"][key])
+                for key in ("taker_fee_bps", "slippage_bps", "spread_bps")
+            ),
+        )
+        validation = xrp_grid["selection_candidates"]
+        for item in validation:
+            item.pop("record_digest_pending", None)
+            item["record_digest"] = digest(item)
+        selected_parameters = xrp_grid.get("selected_parameters")
+        selected_index = next(
+            (
+                index
+                for index, variant in enumerate(variants)
+                if variant["params"] == selected_parameters
+            ),
+            None,
+        )
+        selection_metric = "validation_absolute_conditional_asymmetry"
+    elif is_eth_relative:
         eth_relative_grid = relative_liquidity_reversal_grid_evaluation(
             source_panels,
             parameter_grid=contract.schema.parameter_grid,
@@ -2047,10 +2120,14 @@ def execute_registered(
         "evaluated_variant_count": len(validation),
         "selection_partition": "validation",
         "selection_metric": selection_metric,
-        "held_out_test_consulted": heldout_test_consulted(
-            is_liquidity_residual=is_liquidity_residual,
-            liquidity_grid=liquidity_grid,
-            eth_relative_grid=eth_relative_grid or sol_to_eth_grid,
+        "held_out_test_consulted": (
+            xrp_grid.get("test_open_count") == 1
+            if is_xrp_signed_volatility and xrp_grid is not None
+            else heldout_test_consulted(
+                is_liquidity_residual=is_liquidity_residual,
+                liquidity_grid=liquidity_grid,
+                eth_relative_grid=eth_relative_grid or sol_to_eth_grid,
+            )
         ),
         "stopping_rule": "exhaustive",
         "selected_variant_index": selected_index,
@@ -2110,6 +2187,7 @@ def execute_registered(
             or is_liquidity_residual
             or is_eth_relative
             or is_sol_to_eth
+            or is_xrp_signed_volatility
         )
         else []
     )
@@ -2125,6 +2203,8 @@ def execute_registered(
         if is_eth_relative
         else sol_to_eth_grid["held_out_evaluation"]
         if is_sol_to_eth
+        else xrp_grid
+        if is_xrp_signed_volatility and selected_index is not None
         else liquidity_grid
         if is_liquidity_residual and selected_index is not None
         else None
@@ -2154,6 +2234,8 @@ def execute_registered(
         if is_eth_relative
         else sol_to_eth_grid["held_out_evaluation"]
         if is_sol_to_eth
+        else xrp_grid
+        if is_xrp_signed_volatility
         else cross_sectional_reversal_evaluation(
             lightweight,
             params=variants[execution_index]["params"],
@@ -2184,8 +2266,15 @@ def execute_registered(
         if is_sol_to_eth
         else "eth_relative_liquidity_reversal_evaluation.json"
         if is_eth_relative
+        else "xrp_signed_impact_volatility_evaluation.json"
+        if is_xrp_signed_volatility
         else "cross_sectional_reversal_evaluation.json"
-        if is_cross_sectional or is_eth_relative or is_sol_to_eth
+        if (
+            is_cross_sectional
+            or is_eth_relative
+            or is_sol_to_eth
+            or is_xrp_signed_volatility
+        )
         else "impact_proxy_evaluation.json"
         if is_impact_proxy
         else "funding_basis_heldout_not_evaluated.json"
@@ -2206,7 +2295,12 @@ def execute_registered(
             )
             for index, _ in enumerate(run_dirs)
         ]
-        if is_cross_sectional or is_eth_relative or is_sol_to_eth
+        if (
+            is_cross_sectional
+            or is_eth_relative
+            or is_sol_to_eth
+            or is_xrp_signed_volatility
+        )
         else [
             required_trade_logging_evaluation(path, card["logging_requirements"])
             for path in run_dirs
@@ -2224,6 +2318,8 @@ def execute_registered(
         if is_sol_to_eth
         else "eth_relative_liquidity_reversal_validation_evaluation.json"
         if is_eth_relative
+        else "xrp_signed_impact_volatility_validation_evaluation.json"
+        if is_xrp_signed_volatility
         else "eth_liquidity_residual_validation_evaluation.json"
         if is_liquidity_residual
         else "funding_basis_validation_evaluation.json"
@@ -2239,7 +2335,13 @@ def execute_registered(
         (candidate_run / "selection_bias_audit.json").write_bytes(
             canonical(selection_audit) + b"\n"
         )
-        if is_funding_basis or is_liquidity_residual or is_eth_relative or is_sol_to_eth:
+        if (
+            is_funding_basis
+            or is_liquidity_residual
+            or is_eth_relative
+            or is_sol_to_eth
+            or is_xrp_signed_volatility
+        ):
             (candidate_run / validation_evaluation_name).write_bytes(
                 canonical(per_variant_evaluations[index]) + b"\n"
             )
@@ -2265,7 +2367,13 @@ def execute_registered(
             search_plan_digest=search.digest,
             evaluation_artifact=(
                 evaluation_artifact_name
-                if not (is_funding_basis or is_liquidity_residual or is_eth_relative or is_sol_to_eth)
+                if not (
+                    is_funding_basis
+                    or is_liquidity_residual
+                    or is_eth_relative
+                    or is_sol_to_eth
+                    or is_xrp_signed_volatility
+                )
                 or index == selected_index
                 else validation_evaluation_name
             ),
@@ -2324,6 +2432,7 @@ def execute_registered(
         if is_cross_sectional
         or is_eth_relative
         or is_sol_to_eth
+        or is_xrp_signed_volatility
         or (is_funding_basis or is_liquidity_residual)
         and selected_index is None
         else held_out_trade_evaluation(run_dir, rep.split.test_start)
@@ -2449,6 +2558,21 @@ def execute_registered(
                 )
             }
         )
+    elif is_xrp_signed_volatility:
+        metrics.update(
+            {
+                key: evaluation_artifact[key]
+                for key in (
+                    "asymmetry",
+                    "confidence_interval_95",
+                    "positive_effect",
+                    "negative_effect",
+                    "doubled_cost_minimum_conditional_effect",
+                    "support",
+                )
+            }
+        )
+        metrics["selection_bias_audit"] = selection_audit
     else:
         metrics["selection_bias_audit"] = selection_audit
     required_metrics = tuple(contract_document.get("evaluation", {}).get("metrics", ()))
@@ -2468,6 +2592,7 @@ def execute_registered(
                 or is_liquidity_residual
                 or is_eth_relative
                 or is_sol_to_eth
+                or is_xrp_signed_volatility
             )
             or (
                 holdout is not None
@@ -2497,6 +2622,7 @@ def execute_registered(
                 or is_liquidity_residual
                 or is_eth_relative
                 or is_sol_to_eth
+                or is_xrp_signed_volatility
             )
             or evaluation_artifact["passed"]
         )
@@ -2509,6 +2635,7 @@ def execute_registered(
             or is_liquidity_residual
             or is_eth_relative
             or is_sol_to_eth
+            or is_xrp_signed_volatility
         )
         else (
             ("oos_trade_support", holdout["adequate_support"]),
@@ -2538,6 +2665,7 @@ def execute_registered(
             or is_liquidity_residual
             or is_eth_relative
             or is_sol_to_eth
+            or is_xrp_signed_volatility
         )
         else None
     )
@@ -2602,9 +2730,11 @@ def execute_registered(
                 is not True
             ):
                 failed_gates.append("sol_to_eth_current_predictor_exceeds_lag_rival")
+        elif is_xrp_signed_volatility and not evaluation_artifact["passed"]:
+            failed_gates.append("xrp_conditional_asymmetry_falsified")
     scientific_observations_complete = (
         logging_report.get("scientific_observation_logging_complete") is True
-        if is_cross_sectional
+        if is_cross_sectional or is_xrp_signed_volatility
         else (
             logging_report.get("scientific_observation_logging_complete") is True
             or logging_report.get("terminal_retention_complete") is True
@@ -2612,7 +2742,12 @@ def execute_registered(
         if is_eth_relative or is_sol_to_eth
         else True
     )
-    if (is_cross_sectional or is_eth_relative or is_sol_to_eth) and not scientific_observations_complete:
+    if (
+        is_cross_sectional
+        or is_eth_relative
+        or is_sol_to_eth
+        or is_xrp_signed_volatility
+    ) and not scientific_observations_complete:
         failed_gates.append("scientific_observation_support_absent")
     scientific_family = (
         is_funding_basis
@@ -2620,6 +2755,7 @@ def execute_registered(
         or is_liquidity_residual
         or is_eth_relative
         or is_sol_to_eth
+        or is_xrp_signed_volatility
     )
     scientific_valid = (
         not scientific_family
@@ -2630,7 +2766,11 @@ def execute_registered(
         scientific_outcome in {"positive", "negative"}
         and scientific_observations_complete
         and (
-            not (is_liquidity_residual or is_sol_to_eth)
+            not (
+                is_liquidity_residual
+                or is_sol_to_eth
+                or is_xrp_signed_volatility
+            )
             or heldout_scientific_evaluated
         )
     )
