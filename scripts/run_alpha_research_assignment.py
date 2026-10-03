@@ -99,6 +99,17 @@ TRUSTED_BINDING_FIELDS = (
 )
 
 
+def observation_only_contract(contract_document: dict[str, Any]) -> bool:
+    """Derive scientific logging mode from the immutable no-order contract."""
+    entry = contract_document.get("entry", {})
+    if not isinstance(entry, dict):
+        return False
+    return any(
+        isinstance(value, str) and value.startswith("research_observation_only")
+        for value in entry.values()
+    )
+
+
 def scientific_evaluation_columns(
     hypothesis_family: str, required_extra_columns: list[str]
 ) -> list[str]:
@@ -1613,6 +1624,7 @@ def execute_registered(
         contract.schema.metadata.hypothesis_family
         == "signed_impact_future_volatility"
     )
+    is_observation_only = observation_only_contract(contract_document)
     if is_xrp_signed_volatility:
         immutable = contract_document["immutable_contract"]
         binding = (assignment.get("dataset_bindings") or [{}])[0]
@@ -2291,12 +2303,7 @@ def execute_registered(
             )
             for index, _ in enumerate(run_dirs)
         ]
-        if (
-            is_cross_sectional
-            or is_eth_relative
-            or is_sol_to_eth
-            or is_xrp_signed_volatility
-        )
+        if is_observation_only
         else [
             required_trade_logging_evaluation(path, card["logging_requirements"])
             for path in run_dirs
@@ -2306,7 +2313,7 @@ def execute_registered(
         required_observation_logging_evaluation(
             evaluation_artifact, card["logging_requirements"]
         )
-        if is_cross_sectional or is_eth_relative or is_sol_to_eth
+        if is_observation_only
         else logging_reports[execution_index]
     )
     validation_evaluation_name = (

@@ -25,12 +25,26 @@ from scripts.run_alpha_research_assignment import (
     hypothesis_identity,
     materialize_execution_panel,
     materialize_causal_feature_frame,
+    observation_only_contract,
     representation,
     record_alpha_memory,
     retain_bundle,
     prepare_execution_output,
     finalize_execution_output,
 )
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"authority": "research_observation_only"},
+        {"order_timing": "research_observation_only_no_orders"},
+        {"atomicity": "research_observation_only_no_independent_order_legs"},
+    ],
+)
+def test_observation_logging_mode_comes_from_immutable_entry_contract(entry):
+    assert observation_only_contract({"entry": entry}) is True
+    assert observation_only_contract({"entry": {"authority": "engine"}}) is False
 
 
 def assignment():

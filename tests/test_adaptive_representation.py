@@ -176,6 +176,71 @@ def test_rolling_transform_rejects_negative_lag() -> None:
         validate_plan(value)
 
 
+def test_cross_sectional_rank_retains_the_named_asset_rank() -> None:
+    value = deepcopy(_plan())
+    value["transformations"].extend(
+        [
+            {
+                "output_field": "btc_identity",
+                "operation": "identity",
+                "input_fields": ["BTCUSDT__close"],
+                "parameters": {},
+                "fit_policy": "stateless",
+                "rationale": "Retain the completed BTC close for cross-sectional ranking.",
+            },
+            {
+                "output_field": "doge_identity",
+                "operation": "identity",
+                "input_fields": ["DOGEUSDT__close"],
+                "parameters": {},
+                "fit_policy": "stateless",
+                "rationale": "Retain the completed DOGE close for cross-sectional ranking.",
+            },
+            {
+                "output_field": "btc_cross_sectional_rank",
+                "operation": "cross_sectional_rank",
+                "input_fields": ["btc_identity", "doge_identity"],
+                "parameters": {"target_index": 0},
+                "fit_policy": "stateless",
+                "rationale": "Retain BTC's asset-specific percentile rank at each decision.",
+            },
+            {
+                "output_field": "doge_cross_sectional_rank",
+                "operation": "cross_sectional_rank",
+                "input_fields": ["btc_identity", "doge_identity"],
+                "parameters": {"target_index": 1},
+                "fit_policy": "stateless",
+                "rationale": "Retain DOGE's asset-specific percentile rank at each decision.",
+            },
+        ]
+    )
+    result = materialize_adaptive_representation(
+        value,
+        {"BTCUSDT": _panel("BTCUSDT"), "DOGEUSDT": _panel("DOGEUSDT", offset=2)},
+    ).frame
+    assert set(result["btc_cross_sectional_rank"].dropna()) == {0.5}
+    assert set(result["doge_cross_sectional_rank"].dropna()) == {1.0}
+
+
+def test_cross_sectional_rank_rejects_ambiguous_or_out_of_range_target() -> None:
+    value = deepcopy(_plan())
+    value["transformations"].append(
+        {
+            "output_field": "ambiguous_rank",
+            "operation": "cross_sectional_rank",
+            "input_fields": ["BTCUSDT__close", "DOGEUSDT__close"],
+            "parameters": {},
+            "fit_policy": "stateless",
+            "rationale": "An aggregate of all ranks cannot retain an asset identity.",
+        }
+    )
+    with pytest.raises(AdaptiveRepresentationError, match="target_index"):
+        validate_plan(value)
+    value["transformations"][-1]["parameters"] = {"target_index": 2}
+    with pytest.raises(AdaptiveRepresentationError, match="outside"):
+        validate_plan(value)
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [

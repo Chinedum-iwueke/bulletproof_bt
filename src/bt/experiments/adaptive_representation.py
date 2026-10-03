@@ -75,8 +75,8 @@ def validate_plan(plan: dict[str, Any]) -> None:
         raise AdaptiveRepresentationError("representation selection must be outcome blind")
     timeframe_minutes(str(plan["research_timeframe"]))
     instruments = plan["instruments"]
-    if not isinstance(instruments, list) or not 1 <= len(instruments) <= 20:
-        raise AdaptiveRepresentationError("representation basket must contain 1-20 assets")
+    if not isinstance(instruments, list) or not 1 <= len(instruments) <= 128:
+        raise AdaptiveRepresentationError("representation basket must contain 1-128 assets")
     if len(instruments) != len(set(instruments)):
         raise AdaptiveRepresentationError("representation basket contains duplicates")
     members = plan["basket_members"]
@@ -93,8 +93,8 @@ def validate_plan(plan: dict[str, Any]) -> None:
     if len([item for item in members if item["role"] == "primary"]) != 1:
         raise AdaptiveRepresentationError("the basket must declare exactly one primary")
     transforms = plan["transformations"]
-    if not isinstance(transforms, list) or not 1 <= len(transforms) <= 30:
-        raise AdaptiveRepresentationError("representation requires 1-30 transformations")
+    if not isinstance(transforms, list) or not 1 <= len(transforms) <= 256:
+        raise AdaptiveRepresentationError("representation requires 1-256 transformations")
     outputs: set[str] = set()
     available = {
         f"{instrument}__{field}"
@@ -161,8 +161,15 @@ def _validate_operation(transform: dict[str, Any]) -> None:
         if len(inputs) != 2 or parameters:
             raise AdaptiveRepresentationError(f"{operation} requires two inputs and no parameters")
     elif operation == "cross_sectional_rank":
-        if len(inputs) < 2 or parameters:
-            raise AdaptiveRepresentationError("cross-sectional rank requires at least two inputs")
+        if len(inputs) < 2 or set(parameters) != {"target_index"}:
+            raise AdaptiveRepresentationError(
+                "cross-sectional rank requires at least two inputs and one target_index"
+            )
+        target_index = int(parameters["target_index"])
+        if not 0 <= target_index < len(inputs):
+            raise AdaptiveRepresentationError(
+                "cross-sectional rank target_index is outside its input list"
+            )
     if transform["fit_policy"] not in {"stateless", "train_only"}:
         raise AdaptiveRepresentationError("unsupported transformation fit policy")
     if not str(transform["rationale"]).strip():
@@ -269,7 +276,8 @@ def _apply_transform(frame: pd.DataFrame, transform: dict[str, Any]) -> pd.Serie
         denominator = pd.to_numeric(frame[inputs[1]], errors="coerce").replace(0, np.nan)
         return source / denominator
     values = frame[inputs].apply(pd.to_numeric, errors="coerce")
-    return values.rank(axis=1, method="average", pct=True).mean(axis=1)
+    ranks = values.rank(axis=1, method="average", pct=True)
+    return ranks.iloc[:, int(parameters["target_index"])]
 
 
 def materialize_adaptive_representation(
