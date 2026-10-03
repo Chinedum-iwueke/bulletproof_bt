@@ -10,7 +10,23 @@ from orchestrator.global_capacity_scheduler import (
     paused_worker_slots,
     should_pause_for_memory,
     should_resume_for_memory,
+    admission_drain_state,
 )
+
+
+def test_admission_drain_state_is_fail_closed_once_configured(tmp_path) -> None:
+    state = tmp_path / "drain.json"
+    assert admission_drain_state(None) == (False, None)
+    paused, reason = admission_drain_state(str(state))
+    assert paused is True
+    assert "unavailable" in str(reason)
+
+    state.write_text(
+        '{"schema_version":"alpha-autonomy-drain-v1.0.0",'
+        '"paused":false,"reason":"Local model ready"}',
+        encoding="utf-8",
+    )
+    assert admission_drain_state(str(state)) == (False, "Local model ready")
 
 
 def test_estimate_worker_slots_counts_parallel_dataset_worker_budget_once() -> None:
