@@ -196,9 +196,14 @@ def complete_bars(frame: pd.DataFrame, timeframe: str, instrument: str) -> pd.Da
     ordered = ordered.assign(_bucket=bucket)
     grouped = ordered.groupby("_bucket", sort=True)
     counts = grouped["ts"].count()
+    constituent_fields = ["open", "high", "low", "close", "volume"]
+    if "quote_volume" in ordered:
+        constituent_fields.append("quote_volume")
+    non_null = grouped[constituent_fields].count().eq(minutes).all(axis=1)
     spans = grouped["ts"].agg(["min", "max"])
     complete = (
         counts.eq(minutes)
+        & non_null
         & spans["min"].eq(spans.index)
         & spans["max"].eq(spans.index + pd.Timedelta(minutes=minutes - 1))
     )

@@ -8,6 +8,7 @@ from bt.evaluation.alpha_research import (
     complete_timeframe_bars,
     held_out_trade_evaluation,
     impact_proxy_evaluation,
+    required_observation_logging_evaluation,
     required_trade_logging_evaluation,
 )
 from bt.governance.research_bridge import BridgeError
@@ -31,6 +32,7 @@ from scripts.run_alpha_research_assignment import (
     retain_bundle,
     prepare_execution_output,
     finalize_execution_output,
+    verify_trusted_dataset_bindings,
 )
 
 
@@ -45,6 +47,47 @@ from scripts.run_alpha_research_assignment import (
 def test_observation_logging_mode_comes_from_immutable_entry_contract(entry):
     assert observation_only_contract({"entry": entry}) is True
     assert observation_only_contract({"entry": {"authority": "engine"}}) is False
+
+
+def test_observation_logging_accepts_canonical_decision_records() -> None:
+    report = required_observation_logging_evaluation(
+        {
+            "decision_records": [
+                {
+                    "decision_ts": "2026-01-01T00:00:00Z",
+                    "decision_trace": {"gate": True},
+                }
+            ]
+        },
+        ["decision_ts", "decision_trace"],
+    )
+
+    assert report["passed"] is True
+    assert report["observation_count"] == 1
+
+
+def test_trusted_binding_rejects_plural_partition_mutation(tmp_path: Path) -> None:
+    panel = tmp_path / "panel.parquet"
+    panel.write_bytes(b"immutable-panel")
+    panel_digest = file_digest(panel)
+    expected = {
+        "instrument": "BTCUSDT",
+        "dataset_digest": panel_digest,
+        "partition_digest": panel_digest,
+        "partition_digests": [panel_digest],
+    }
+    document = {
+        "dataset_bindings": [
+            {
+                **expected,
+                "dataset_path": str(panel),
+                "partition_digests": ["f" * 64],
+            }
+        ]
+    }
+
+    with pytest.raises(BridgeError, match="partition binding mismatch"):
+        verify_trusted_dataset_bindings(document, [expected])
 
 
 def assignment():

@@ -152,6 +152,24 @@ def verify_trusted_dataset_bindings(
             and len(normalized["partition_digests"]) == 1
         ):
             normalized["partition_digest"] = normalized["partition_digests"][0]
+        if "partition_digests" in expected:
+            partitions = normalized.get("partition_digests")
+            if (
+                not isinstance(partitions, list)
+                or partitions != expected["partition_digests"]
+                or not partitions
+                or any(not isinstance(value, str) or not value for value in partitions)
+            ):
+                raise BridgeError(
+                    f"trusted immutable partition binding mismatch: {symbol}"
+                )
+            singular = normalized.get("partition_digest")
+            if singular is not None and (
+                len(partitions) != 1 or singular != partitions[0]
+            ):
+                raise BridgeError(
+                    f"trusted singular/plural partition binding mismatch: {symbol}"
+                )
         required = [key for key in TRUSTED_BINDING_FIELDS if key in expected]
         if any(normalized.get(key) != expected[key] for key in required):
             raise BridgeError(f"trusted immutable evidence binding mismatch: {symbol}")

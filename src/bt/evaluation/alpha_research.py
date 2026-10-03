@@ -114,7 +114,9 @@ def required_observation_logging_evaluation(
         raise BridgeError("required observation logging fields must be non-empty strings")
     if len(declared) != len(set(declared)):
         raise BridgeError("required observation logging fields must be unique")
-    records = evaluation.get("observation_records", [])
+    records = evaluation.get("observation_records")
+    if records is None:
+        records = evaluation.get("decision_records", [])
     if not isinstance(records, list) or any(not isinstance(item, dict) for item in records):
         raise BridgeError("observation_records must be a list of objects")
     missing: dict[str, list[str]] = {}

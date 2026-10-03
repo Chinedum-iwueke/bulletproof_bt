@@ -117,6 +117,18 @@ def test_missing_minute_drops_only_affected_complete_bucket_without_filling() ->
     assert pd.Timestamp("2025-01-01T00:30:00Z") not in set(missing.frame["decision_at"])
 
 
+def test_null_constituent_drops_affected_bucket_instead_of_null_skipping() -> None:
+    doge = _panel("DOGEUSDT", offset=2)
+    doge.loc[20, "quote_volume"] = np.nan
+    result = materialize_adaptive_representation(
+        _plan(), {"BTCUSDT": _panel("BTCUSDT"), "DOGEUSDT": doge}
+    )
+
+    assert pd.Timestamp("2025-01-01T00:30:00Z") not in set(
+        result.frame["decision_at"]
+    )
+
+
 def test_future_append_does_not_revise_prior_materialized_rows() -> None:
     short = {
         "BTCUSDT": _panel("BTCUSDT", periods=120),
