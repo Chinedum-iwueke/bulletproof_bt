@@ -143,6 +143,10 @@ def test_scaffold_is_deterministic_and_idempotent(tmp_path: Path) -> None:
         "__CODEX_REQUIRED__"
         in (root / "src/bt/strategy/alpha_003_sol_eth_diffusion.py").read_text()
     )
+    generated_test = (
+        root / "tests/hypotheses/test_alpha_003_sol_eth_diffusion_scaffold.py"
+    )
+    assert "__CODEX_REQUIRED__" not in generated_test.read_text()
     card_path = root / f"research/hypotheses/cards/{intent.question_digest}.json"
     card = json.loads(card_path.read_text())
     card["gates"][0]["op"] = ">="
