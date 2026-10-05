@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import json
 import math
 import platform
@@ -97,6 +98,88 @@ TRUSTED_BINDING_FIELDS = (
     "lake_governance_digest",
     "partition_digest",
 )
+
+
+def resolve_strategy_intent_evaluator(
+    contract_document: dict[str, Any], repository: Path
+):
+    """Load the single governed evaluator protocol without family-specific routing."""
+    native = contract_document.get("evaluation", {}).get("native_implementation")
+    if (
+        not isinstance(native, dict)
+        or native.get("function") != "evaluate_alpha_intent"
+    ):
+        return None
+    relative = str(native.get("path", ""))
+    if not re.fullmatch(r"src/bt/strategy/[a-z0-9_]+\.py", relative):
+        raise BridgeError(
+            "strategy intent evaluator path is outside the native boundary"
+        )
+    expected = (repository / relative).resolve(strict=True)
+    allowed = (repository / "src" / "bt" / "strategy").resolve(strict=True)
+    if allowed not in expected.parents:
+        raise BridgeError(
+            "strategy intent evaluator path escaped its allowed directory"
+        )
+    module = importlib.import_module(f"bt.strategy.{expected.stem}")
+    evaluator = getattr(module, "evaluate_alpha_intent", None)
+    if not callable(evaluator):
+        raise BridgeError("strategy intent evaluator is not callable")
+    return evaluator
+
+
+def validate_strategy_intent_evaluation(
+    payload: object, variants: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Validate the common result envelope before it can influence selection."""
+    if not isinstance(payload, dict):
+        raise BridgeError("strategy intent evaluator returned a non-object")
+    required = {
+        "selection_candidates",
+        "selected_parameters",
+        "selection_metric",
+        "held_out_evaluation",
+    }
+    if not required.issubset(payload):
+        raise BridgeError("strategy intent evaluator omitted required result fields")
+    candidates = payload["selection_candidates"]
+    expected = [variant["params"] for variant in variants]
+    if (
+        not isinstance(candidates, list)
+        or len(candidates) != len(expected)
+        or [item.get("parameters") for item in candidates if isinstance(item, dict)]
+        != expected
+    ):
+        raise BridgeError(
+            "strategy intent evaluator did not retain every exact variant"
+        )
+    allowed_outcomes = {"positive", "negative", "invalid", "failed", "test_open"}
+    for item in candidates:
+        if (
+            item.get("outcome") not in allowed_outcomes
+            or not isinstance(item.get("passed"), bool)
+            or not isinstance(item.get("metrics"), dict)
+        ):
+            raise BridgeError("strategy intent selection evidence is incomplete")
+    selected = payload["selected_parameters"]
+    if selected is not None and selected not in expected:
+        raise BridgeError("strategy intent selected an undeclared parameter variant")
+    heldout = payload["held_out_evaluation"]
+    if (
+        not isinstance(heldout, dict)
+        or heldout.get("outcome") not in allowed_outcomes
+        or not isinstance(heldout.get("passed"), bool)
+        or not isinstance(heldout.get("held_out_evaluated"), bool)
+        or not isinstance(heldout.get("metrics"), dict)
+        or not isinstance(heldout.get("failed_gates"), list)
+    ):
+        raise BridgeError("strategy intent held-out evidence is incomplete")
+    if (
+        not isinstance(payload["selection_metric"], str)
+        or not payload["selection_metric"]
+    ):
+        raise BridgeError("strategy intent selection metric is absent")
+    return payload
 
 
 def observation_only_contract(contract_document: dict[str, Any]) -> bool:
@@ -452,7 +535,12 @@ def build_overlap_admission_receipt(assignment: dict[str, Any]) -> dict[str, Any
         raise BridgeError("basket overlap admission requires at least two instruments")
     start = pd.Timestamp(assignment["window_start"])
     end = pd.Timestamp(assignment["window_end"])
-    if start.tzinfo is None or end.tzinfo is None or str(start.tz) != "UTC" or str(end.tz) != "UTC":
+    if (
+        start.tzinfo is None
+        or end.tzinfo is None
+        or str(start.tz) != "UTC"
+        or str(end.tz) != "UTC"
+    ):
         raise BridgeError("basket overlap window must use strict UTC timestamps")
     expected_rows = int((end - start) / pd.Timedelta(minutes=1))
     if expected_rows < 365 * 24 * 60:
@@ -467,7 +555,11 @@ def build_overlap_admission_receipt(assignment: dict[str, Any]) -> dict[str, Any
                 ("ts", "<", end.to_pydatetime()),
             ],
         )
-        timestamps = selected["ts"] if "ts" in selected else pd.Series(dtype="datetime64[ns, UTC]")
+        timestamps = (
+            selected["ts"]
+            if "ts" in selected
+            else pd.Series(dtype="datetime64[ns, UTC]")
+        )
         if (
             not isinstance(timestamps.dtype, pd.DatetimeTZDtype)
             or str(timestamps.dt.tz) != "UTC"
@@ -656,13 +748,23 @@ def materialize_causal_feature_frame(materialized: Any) -> pd.DataFrame:
     )
     features["ts"] = pd.to_datetime(features["ts"], utc=True, errors="raise")
     prior_volatility = next(
-        (name for name in ("btc_15m_realized_volatility_96", "ethusdt_realized_volatility_24h")
-         if name in output_fields),
+        (
+            name
+            for name in (
+                "btc_15m_realized_volatility_96",
+                "ethusdt_realized_volatility_24h",
+            )
+            if name in output_fields
+        ),
         None,
     )
     if prior_volatility is not None:
         features[prior_volatility] = features[prior_volatility].shift(1)
-        interval = pd.Timedelta(hours=2) if prior_volatility == "ethusdt_realized_volatility_24h" else pd.Timedelta(minutes=15)
+        interval = (
+            pd.Timedelta(hours=2)
+            if prior_volatility == "ethusdt_realized_volatility_24h"
+            else pd.Timedelta(minutes=15)
+        )
         features["prior_only_volatility_source_end_ts"] = (
             features["ts"] - interval
         ).map(lambda value: value.isoformat())
@@ -675,9 +777,7 @@ def materialize_causal_feature_frame(materialized: Any) -> pd.DataFrame:
         lambda value: value.isoformat()
     )
     causal_provenance = (
-        ["prior_only_volatility_source_end_ts"]
-        if prior_volatility is not None
-        else []
+        ["prior_only_volatility_source_end_ts"] if prior_volatility is not None else []
     )
     return features[
         [
@@ -1639,9 +1739,10 @@ def execute_registered(
         contract.schema.metadata.hypothesis_family == "sol_to_eth_information_diffusion"
     )
     is_xrp_signed_volatility = (
-        contract.schema.metadata.hypothesis_family
-        == "signed_impact_future_volatility"
+        contract.schema.metadata.hypothesis_family == "signed_impact_future_volatility"
     )
+    intent_evaluator = resolve_strategy_intent_evaluator(contract_document, repository)
+    is_strategy_intent = intent_evaluator is not None
     is_observation_only = observation_only_contract(contract_document)
     if is_xrp_signed_volatility:
         immutable = contract_document["immutable_contract"]
@@ -1699,11 +1800,13 @@ def execute_registered(
         warmup_timeframe=warmup_timeframe,
     )
     adaptive_receipt = None
+    adaptive_frame = None
     materialized_payload_receipt = None
     if assignment.get("representation_plan") is not None:
         materialized = materialize_adaptive_representation(
             assignment["representation_plan"], source_panels
         )
+        adaptive_frame = materialized.frame
         materialized.frame.to_parquet(
             output / "adaptive-representation.parquet", index=False
         )
@@ -1890,6 +1993,31 @@ def execute_registered(
         contract.schema.metadata.hypothesis_family
         == "cross_asset_liquidity_transmission"
     )
+    is_scientific_evaluator = any(
+        (
+            is_strategy_intent,
+            is_funding_basis,
+            is_cross_sectional,
+            is_liquidity_residual,
+            is_eth_relative,
+            is_sol_to_eth,
+            is_xrp_signed_volatility,
+        )
+    )
+    has_per_variant_scientific_evidence = any(
+        (
+            is_strategy_intent,
+            is_funding_basis,
+            is_cross_sectional,
+            is_liquidity_residual,
+            is_eth_relative,
+            is_sol_to_eth,
+            is_xrp_signed_volatility,
+        )
+    )
+    writes_per_variant_validation_artifacts = (
+        has_per_variant_scientific_evidence and not is_cross_sectional
+    )
     grid_data_path = execution_data_path
     if is_funding_basis or is_liquidity_residual or is_eth_relative or is_sol_to_eth:
         validation_end = pd.Timestamp(rep.split.validation_end)
@@ -1964,7 +2092,43 @@ def execute_registered(
     eth_relative_grid = None
     sol_to_eth_grid = None
     xrp_grid = None
-    if is_xrp_signed_volatility:
+    intent_grid = None
+    if is_strategy_intent:
+        intent_grid = validate_strategy_intent_evaluation(
+            intent_evaluator(
+                frame=lightweight.copy(),
+                adaptive_frame=(
+                    adaptive_frame.copy() if adaptive_frame is not None else None
+                ),
+                parameter_grid=contract.schema.parameter_grid,
+                validation_start=rep.split.validation_start,
+                validation_end=rep.split.validation_end,
+                test_start=rep.split.test_start,
+                test_end=rep.split.test_end,
+                representation_plan_digest=(
+                    adaptive_receipt.get("plan_digest") if adaptive_receipt else None
+                ),
+                immutable_contract=contract_document["immutable_contract"],
+                costs=contract_document.get("costs", {}),
+            ),
+            variants,
+        )
+        validation = intent_grid["selection_candidates"]
+        for item in validation:
+            item["record_digest"] = digest(
+                {key: value for key, value in item.items() if key != "record_digest"}
+            )
+        selected_parameters = intent_grid["selected_parameters"]
+        selected_index = next(
+            (
+                index
+                for index, variant in enumerate(variants)
+                if variant["params"] == selected_parameters
+            ),
+            None,
+        )
+        selection_metric = intent_grid["selection_metric"]
+    elif is_xrp_signed_volatility:
         if adaptive_receipt is None:
             raise BridgeError("XRP scientific execution lacks adaptive representation")
         xrp_frame = materialized.frame.rename(columns={"decision_at": "ts"})
@@ -2025,7 +2189,9 @@ def execute_registered(
             parameter_grid=contract.schema.parameter_grid,
             evaluation_start=assignment["window_start"],
             evaluation_end=assignment["window_end"],
-            representation_plan_digest=(adaptive_receipt.get("plan_digest") if adaptive_receipt else ""),
+            representation_plan_digest=(
+                adaptive_receipt.get("plan_digest") if adaptive_receipt else ""
+            ),
         )
         validation = sol_to_eth_grid["selection_candidates"]
         if not validation:
@@ -2041,8 +2207,14 @@ def execute_registered(
                 candidate["record_digest"] = digest(candidate)
                 validation.append(candidate)
         selected_parameters = sol_to_eth_grid.get("selected_parameters")
-        selected_index = next((index for index, variant in enumerate(variants)
-                               if variant["params"] == selected_parameters), None)
+        selected_index = next(
+            (
+                index
+                for index, variant in enumerate(variants)
+                if variant["params"] == selected_parameters
+            ),
+            None,
+        )
         selection_metric = "validation_mean_net_signed_residual_return"
     elif is_liquidity_residual:
         liquidity_grid = liquidity_displacement_grid_evaluation(
@@ -2147,7 +2319,9 @@ def execute_registered(
         "selection_partition": "validation",
         "selection_metric": selection_metric,
         "held_out_test_consulted": (
-            xrp_grid.get("test_open_count") == 1
+            intent_grid["held_out_evaluation"]["held_out_evaluated"]
+            if is_strategy_intent
+            else xrp_grid.get("test_open_count") == 1
             if is_xrp_signed_volatility and xrp_grid is not None
             else heldout_test_consulted(
                 is_liquidity_residual=is_liquidity_residual,
@@ -2205,20 +2379,11 @@ def execute_registered(
                 if key != "record_digest"
             }
         )
-    per_variant_evaluations = (
-        validation
-        if (
-            is_funding_basis
-            or is_cross_sectional
-            or is_liquidity_residual
-            or is_eth_relative
-            or is_sol_to_eth
-            or is_xrp_signed_volatility
-        )
-        else []
-    )
+    per_variant_evaluations = validation if has_per_variant_scientific_evidence else []
     heldout_evaluation = (
-        funding_basis_matched_evaluation(
+        intent_grid["held_out_evaluation"]
+        if is_strategy_intent
+        else funding_basis_matched_evaluation(
             lightweight,
             start=rep.split.test_start,
             end=rep.split.test_end,
@@ -2237,7 +2402,7 @@ def execute_registered(
     )
     if heldout_evaluation is not None and not (is_eth_relative or is_sol_to_eth):
         heldout_partition = period_evaluation(
-            run_dirs[selected_index],
+            run_dirs[selected_index if selected_index is not None else execution_index],
             rep.split.test_start,
             rep.split.test_end,
         )
@@ -2256,7 +2421,9 @@ def execute_registered(
             liquidity_grid=liquidity_grid if is_liquidity_residual else None,
         )
     evaluation_artifact = (
-        eth_relative_grid["held_out_evaluation"]
+        intent_grid["held_out_evaluation"]
+        if is_strategy_intent
+        else eth_relative_grid["held_out_evaluation"]
         if is_eth_relative
         else sol_to_eth_grid["held_out_evaluation"]
         if is_sol_to_eth
@@ -2288,7 +2455,9 @@ def execute_registered(
     if "record_digest" not in evaluation_artifact:
         evaluation_artifact["record_digest"] = digest(evaluation_artifact)
     evaluation_artifact_name = (
-        "sol_to_eth_2h_tail_return_evaluation.json"
+        "strategy_intent_evaluation.json"
+        if is_strategy_intent
+        else "sol_to_eth_2h_tail_return_evaluation.json"
         if is_sol_to_eth
         else "eth_relative_liquidity_reversal_evaluation.json"
         if is_eth_relative
@@ -2335,7 +2504,9 @@ def execute_registered(
         else logging_reports[execution_index]
     )
     validation_evaluation_name = (
-        "sol_to_eth_2h_tail_return_validation_evaluation.json"
+        "strategy_intent_validation_evaluation.json"
+        if is_strategy_intent
+        else "sol_to_eth_2h_tail_return_validation_evaluation.json"
         if is_sol_to_eth
         else "eth_relative_liquidity_reversal_validation_evaluation.json"
         if is_eth_relative
@@ -2356,13 +2527,7 @@ def execute_registered(
         (candidate_run / "selection_bias_audit.json").write_bytes(
             canonical(selection_audit) + b"\n"
         )
-        if (
-            is_funding_basis
-            or is_liquidity_residual
-            or is_eth_relative
-            or is_sol_to_eth
-            or is_xrp_signed_volatility
-        ):
+        if writes_per_variant_validation_artifacts:
             (candidate_run / validation_evaluation_name).write_bytes(
                 canonical(per_variant_evaluations[index]) + b"\n"
             )
@@ -2388,13 +2553,7 @@ def execute_registered(
             search_plan_digest=search.digest,
             evaluation_artifact=(
                 evaluation_artifact_name
-                if not (
-                    is_funding_basis
-                    or is_liquidity_residual
-                    or is_eth_relative
-                    or is_sol_to_eth
-                    or is_xrp_signed_volatility
-                )
+                if not writes_per_variant_validation_artifacts
                 or index == selected_index
                 else validation_evaluation_name
             ),
@@ -2450,7 +2609,8 @@ def execute_registered(
     retained_bundle = retained[execution_index]
     holdout = (
         None
-        if is_cross_sectional
+        if is_strategy_intent
+        or is_cross_sectional
         or is_eth_relative
         or is_sol_to_eth
         or is_xrp_signed_volatility
@@ -2496,6 +2656,9 @@ def execute_registered(
         metrics["matched_return_shock_control"] = evaluation_artifact[
             "matched_return_shock_control"
         ]
+    elif is_strategy_intent:
+        metrics.update(evaluation_artifact["metrics"])
+        metrics["selection_bias_audit"] = selection_audit
     elif is_funding_basis:
         metrics.update(
             {
@@ -2607,14 +2770,7 @@ def execute_registered(
     independent_review_complete = governed_review_verified(assignment, qualification)
     passed_edge = bool(
         (
-            (
-                is_funding_basis
-                or is_cross_sectional
-                or is_liquidity_residual
-                or is_eth_relative
-                or is_sol_to_eth
-                or is_xrp_signed_volatility
-            )
+            is_scientific_evaluator
             or (
                 holdout is not None
                 and holdout["adequate_support"]
@@ -2636,28 +2792,11 @@ def execute_registered(
                 ]
             )
         )
-        and (
-            not (
-                is_funding_basis
-                or is_cross_sectional
-                or is_liquidity_residual
-                or is_eth_relative
-                or is_sol_to_eth
-                or is_xrp_signed_volatility
-            )
-            or evaluation_artifact["passed"]
-        )
+        and (not is_scientific_evaluator or evaluation_artifact["passed"])
     )
     classic_pnl_gates = (
         ()
-        if (
-            is_funding_basis
-            or is_cross_sectional
-            or is_liquidity_residual
-            or is_eth_relative
-            or is_sol_to_eth
-            or is_xrp_signed_volatility
-        )
+        if is_scientific_evaluator
         else (
             ("oos_trade_support", holdout["adequate_support"]),
             ("positive_oos_net_edge", holdout["positive_net_edge"]),
@@ -2679,16 +2818,7 @@ def execute_registered(
         if not evaluation_artifact["direction_balance"]["balanced_positive_reversal"]:
             failed_gates.append("positive_reversal_in_both_directions")
     scientific_outcome = (
-        evaluation_artifact["outcome"]
-        if (
-            is_funding_basis
-            or is_cross_sectional
-            or is_liquidity_residual
-            or is_eth_relative
-            or is_sol_to_eth
-            or is_xrp_signed_volatility
-        )
-        else None
+        evaluation_artifact["outcome"] if is_scientific_evaluator else None
     )
     heldout_scientific_evaluated = (
         sol_to_eth_grid.get("test_open_count") == 1
@@ -2697,7 +2827,8 @@ def execute_registered(
         else bool(evaluation_artifact.get("held_out_evaluated", True))
     )
     if (
-        is_funding_basis
+        is_strategy_intent
+        or is_funding_basis
         or is_cross_sectional
         or is_liquidity_residual
         or is_eth_relative
@@ -2707,6 +2838,10 @@ def execute_registered(
             failed_gates.append("point_in_time_scientific_sample_invalid")
         elif scientific_outcome == "failed":
             failed_gates.append("matched_control_support_inadequate")
+        elif is_strategy_intent and not evaluation_artifact["passed"]:
+            failed_gates.extend(
+                str(item) for item in evaluation_artifact["failed_gates"]
+            )
         elif is_funding_basis and not evaluation_artifact["passed"]:
             if evaluation_artifact["confidence_interval_95"]["upper"] >= 0:
                 failed_gates.append("matched_funding_basis_95pct_upper_bound")
@@ -2742,7 +2877,12 @@ def execute_registered(
         elif is_sol_to_eth and not evaluation_artifact["passed"]:
             if evaluation_artifact.get("confidence_interval_95", (0.0, 0.0))[0] <= 0:
                 failed_gates.append("sol_to_eth_dependence_aware_95pct_lower_bound")
-            if evaluation_artifact.get("doubled_cost_mean_net_signed_residual_return", 0.0) <= 0:
+            if (
+                evaluation_artifact.get(
+                    "doubled_cost_mean_net_signed_residual_return", 0.0
+                )
+                <= 0
+            ):
                 failed_gates.append("sol_to_eth_double_cost_stress")
             if (
                 evaluation_artifact.get("gates", {}).get(
@@ -2755,7 +2895,7 @@ def execute_registered(
             failed_gates.append("xrp_conditional_asymmetry_falsified")
     scientific_observations_complete = (
         logging_report.get("scientific_observation_logging_complete") is True
-        if is_cross_sectional or is_xrp_signed_volatility
+        if is_strategy_intent or is_cross_sectional or is_xrp_signed_volatility
         else (
             logging_report.get("scientific_observation_logging_complete") is True
             or logging_report.get("terminal_retention_complete") is True
@@ -2764,20 +2904,14 @@ def execute_registered(
         else True
     )
     if (
-        is_cross_sectional
+        is_strategy_intent
+        or is_cross_sectional
         or is_eth_relative
         or is_sol_to_eth
         or is_xrp_signed_volatility
     ) and not scientific_observations_complete:
         failed_gates.append("scientific_observation_support_absent")
-    scientific_family = (
-        is_funding_basis
-        or is_cross_sectional
-        or is_liquidity_residual
-        or is_eth_relative
-        or is_sol_to_eth
-        or is_xrp_signed_volatility
-    )
+    scientific_family = is_scientific_evaluator
     scientific_valid = (
         not scientific_family
         or scientific_outcome != "invalid"
@@ -2788,7 +2922,8 @@ def execute_registered(
         and scientific_observations_complete
         and (
             not (
-                is_liquidity_residual
+                is_strategy_intent
+                or is_liquidity_residual
                 or is_sol_to_eth
                 or is_xrp_signed_volatility
             )

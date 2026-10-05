@@ -28,11 +28,13 @@ from scripts.run_alpha_research_assignment import (
     materialize_causal_feature_frame,
     observation_only_contract,
     representation,
+    resolve_strategy_intent_evaluator,
     record_alpha_memory,
     retain_bundle,
     prepare_execution_output,
     finalize_execution_output,
     verify_trusted_dataset_bindings,
+    validate_strategy_intent_evaluation,
 )
 
 
@@ -64,6 +66,50 @@ def test_observation_logging_accepts_canonical_decision_records() -> None:
 
     assert report["passed"] is True
     assert report["observation_count"] == 1
+
+
+def test_strategy_intent_evaluator_rejects_paths_outside_native_boundary(
+    tmp_path: Path,
+) -> None:
+    document = {
+        "evaluation": {
+            "native_implementation": {
+                "path": "scripts/run_alpha_research_assignment.py",
+                "function": "evaluate_alpha_intent",
+            }
+        }
+    }
+    with pytest.raises(BridgeError, match="outside the native boundary"):
+        resolve_strategy_intent_evaluator(document, tmp_path)
+
+
+def test_strategy_intent_result_retains_exact_variants_and_heldout_boundary() -> None:
+    variants = [{"params": {"threshold": 0.9}}, {"params": {"threshold": 0.95}}]
+    payload = {
+        "selection_candidates": [
+            {
+                "parameters": variant["params"],
+                "outcome": "negative",
+                "passed": False,
+                "metrics": {"support": 10},
+            }
+            for variant in variants
+        ],
+        "selected_parameters": variants[0]["params"],
+        "selection_metric": "validation_net_effect",
+        "held_out_evaluation": {
+            "outcome": "negative",
+            "passed": False,
+            "held_out_evaluated": True,
+            "metrics": {"net_effect": -0.01},
+            "failed_gates": ["net_effect_nonpositive"],
+        },
+    }
+
+    assert validate_strategy_intent_evaluation(payload, variants) is payload
+    payload["selection_candidates"].pop()
+    with pytest.raises(BridgeError, match="retain every exact variant"):
+        validate_strategy_intent_evaluation(payload, variants)
 
 
 def test_trusted_binding_rejects_plural_partition_mutation(tmp_path: Path) -> None:
@@ -132,26 +178,32 @@ def test_explicit_registered_identity_is_only_taken_from_typed_marker() -> None:
 
 
 def test_adaptive_fields_are_attached_only_at_their_decision_timestamp(tmp_path):
-    source = pd.DataFrame({
-        "ts": pd.to_datetime([
-            "2025-01-01T00:14:00Z",
-            "2025-01-01T00:15:00Z",
-        ]),
-        "symbol": ["BTCUSDT", "BTCUSDT"],
-        "open": [1.0, 1.0],
-        "high": [1.0, 1.0],
-        "low": [1.0, 1.0],
-        "close": [1.0, 1.0],
-        "volume": [1.0, 1.0],
-    })
+    source = pd.DataFrame(
+        {
+            "ts": pd.to_datetime(
+                [
+                    "2025-01-01T00:14:00Z",
+                    "2025-01-01T00:15:00Z",
+                ]
+            ),
+            "symbol": ["BTCUSDT", "BTCUSDT"],
+            "open": [1.0, 1.0],
+            "high": [1.0, 1.0],
+            "low": [1.0, 1.0],
+            "close": [1.0, 1.0],
+            "volume": [1.0, 1.0],
+        }
+    )
     source_path = tmp_path / "source.parquet"
     source.to_parquet(source_path, index=False)
     materialized = SimpleNamespace(
         receipt={"output_fields": ["btc_log_return"]},
-        frame=pd.DataFrame({
-            "decision_at": pd.to_datetime(["2025-01-01T00:15:00Z"]),
-            "btc_log_return": [0.02],
-        }),
+        frame=pd.DataFrame(
+            {
+                "decision_at": pd.to_datetime(["2025-01-01T00:15:00Z"]),
+                "btc_log_return": [0.02],
+            }
+        ),
     )
 
     result_path = attach_adaptive_features(
@@ -211,7 +263,9 @@ def test_interrupted_execution_is_preserved_and_completed_retry_is_idempotent(
     assert prepare_execution_output(output, value) == result
 
 
-def test_execution_panel_materializes_every_digest_bound_basket_member(tmp_path) -> None:
+def test_execution_panel_materializes_every_digest_bound_basket_member(
+    tmp_path,
+) -> None:
     timestamps = pd.date_range("2025-01-01T00:00:00Z", periods=10, freq="1min")
     bindings = []
     for position, instrument in enumerate(("BTCUSDT", "ETHUSDT")):
@@ -229,7 +283,8 @@ def test_execution_panel_materializes_every_digest_bound_basket_member(tmp_path)
         ).to_parquet(path, index=False)
         bindings.append(
             {
-                "dataset_build_id": f"{position + 3}" * 8 + "-3333-4333-8333-333333333333",
+                "dataset_build_id": f"{position + 3}" * 8
+                + "-3333-4333-8333-333333333333",
                 "dataset_digest": file_digest(path),
                 "dataset_path": str(path),
                 "dataset_key": instrument.lower(),
@@ -625,7 +680,9 @@ def test_held_out_membership_uses_decision_not_entry_fill(tmp_path: Path) -> Non
     assert report["trade_count"] == 0
 
 
-def test_required_trade_logging_fails_closed_on_null_risk_fields(tmp_path: Path) -> None:
+def test_required_trade_logging_fails_closed_on_null_risk_fields(
+    tmp_path: Path,
+) -> None:
     complete = {
         "identity_ts_signal": ["2026-01-01T00:00:00Z"],
         "requested_risk_amount": [100.0],
@@ -679,12 +736,8 @@ def test_required_trade_logging_enforces_complete_declared_contract(
 def test_representation_applies_horizon_aware_split_gaps() -> None:
     import pandas as pd
 
-    timestamps = pd.date_range(
-        "2026-01-01T00:00:00Z", periods=240, freq="1min"
-    )
-    frame = pd.DataFrame(
-        {"ts": timestamps, "symbol": "BTCUSDT", "close": 100.0}
-    )
+    timestamps = pd.date_range("2026-01-01T00:00:00Z", periods=240, freq="1min")
+    frame = pd.DataFrame({"ts": timestamps, "symbol": "BTCUSDT", "close": 100.0})
     contract, report = representation(
         assignment(),
         frame,
@@ -694,8 +747,12 @@ def test_representation_applies_horizon_aware_split_gaps() -> None:
     )
     split = contract.split
     assert pd.Timestamp(split.train_start) == timestamps[0] + pd.Timedelta(minutes=1)
-    assert pd.Timestamp(split.validation_start) - pd.Timestamp(split.train_end) > pd.Timedelta(minutes=30)
-    assert pd.Timestamp(split.test_start) - pd.Timestamp(split.validation_end) > pd.Timedelta(minutes=30)
+    assert pd.Timestamp(split.validation_start) - pd.Timestamp(
+        split.train_end
+    ) > pd.Timedelta(minutes=30)
+    assert pd.Timestamp(split.test_start) - pd.Timestamp(
+        split.validation_end
+    ) > pd.Timedelta(minutes=30)
     assert split.purge_seconds == 1800
     assert split.embargo_seconds == 1800
     assert report["status"] == "certified"
@@ -728,10 +785,16 @@ def test_representation_uses_complete_five_minute_decision_rows() -> None:
         }
     )
     contract, _ = representation(
-        assignment(), frame, "f" * 64,
-        purge_seconds=1800, embargo_seconds=1800, decision_timeframe="5m",
+        assignment(),
+        frame,
+        "f" * 64,
+        purge_seconds=1800,
+        embargo_seconds=1800,
+        decision_timeframe="5m",
     )
-    assert pd.Timestamp(contract.split.train_start) == timestamps[0] + pd.Timedelta(minutes=5)
+    assert pd.Timestamp(contract.split.train_start) == timestamps[0] + pd.Timedelta(
+        minutes=5
+    )
 
 
 def test_incomplete_five_minute_bucket_is_excluded_from_decision_row_splits() -> None:
@@ -745,12 +808,20 @@ def test_incomplete_five_minute_bucket_is_excluded_from_decision_row_splits() ->
         }
     )
     complete, _ = representation(
-        assignment(), frame, "f" * 64,
-        purge_seconds=1800, embargo_seconds=1800, decision_timeframe="5m",
+        assignment(),
+        frame,
+        "f" * 64,
+        purge_seconds=1800,
+        embargo_seconds=1800,
+        decision_timeframe="5m",
     )
     missing, _ = representation(
-        assignment(), frame.drop(index=100), "f" * 64,
-        purge_seconds=1800, embargo_seconds=1800, decision_timeframe="5m",
+        assignment(),
+        frame.drop(index=100),
+        "f" * 64,
+        purge_seconds=1800,
+        embargo_seconds=1800,
+        decision_timeframe="5m",
     )
     assert missing.split != complete.split
     assert pd.Timestamp(missing.split.train_end) == (
@@ -924,9 +995,7 @@ def test_structural_reconstruction_rejects_partial_quote_volume_bucket() -> None
             "ts": pd.date_range(start, periods=10, freq="1min"),
             "symbol": "BTCUSDT",
             "close": range(10),
-            "quote_volume": [1_000_000.0] * 4
-            + [float("nan")]
-            + [1_000_000.0] * 5,
+            "quote_volume": [1_000_000.0] * 4 + [float("nan")] + [1_000_000.0] * 5,
         }
     )
 

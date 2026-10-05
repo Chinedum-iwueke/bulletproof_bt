@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 from hashlib import sha256
+import importlib
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 import yaml
@@ -80,6 +82,42 @@ class ResearchSpecV2Error(ValueError):
     def __init__(self, errors: list[str]):
         self.errors = errors
         super().__init__(";".join(errors))
+
+
+def load_governed_native_strategy(
+    engine_yaml: dict[str, Any], *, repo_root: str | Path = "."
+) -> str | None:
+    """Load a reviewed native strategy without editing the shared registry module."""
+    evaluation = engine_yaml.get("evaluation")
+    native = (
+        evaluation.get("native_implementation")
+        if isinstance(evaluation, dict)
+        else None
+    )
+    if native is None:
+        return None
+    if not isinstance(native, dict):
+        raise ResearchSpecV2Error(["native_implementation_invalid"])
+    relative = str(native.get("path", ""))
+    function = str(native.get("function", ""))
+    if function != "evaluate_alpha_intent":
+        return None
+    if not re.fullmatch(r"src/bt/strategy/[a-z0-9_]+\.py", relative):
+        raise ResearchSpecV2Error(["native_implementation_boundary_invalid"])
+    root = Path(repo_root).resolve()
+    path = (root / relative).resolve()
+    allowed = (root / "src" / "bt" / "strategy").resolve()
+    if allowed not in path.parents or not path.is_file():
+        raise ResearchSpecV2Error(["native_implementation_path_invalid"])
+    strategy_name = engine_yaml.get("entry", {}).get("strategy")
+    if strategy_name != path.stem:
+        raise ResearchSpecV2Error(["native_implementation_strategy_mismatch"])
+    module = importlib.import_module(f"bt.strategy.{path.stem}")
+    if not callable(getattr(module, function, None)):
+        raise ResearchSpecV2Error(["native_implementation_evaluator_missing"])
+    if strategy_name not in STRATEGY_REGISTRY:
+        raise ResearchSpecV2Error(["native_implementation_registration_missing"])
+    return str(strategy_name)
 
 
 def canonical_json(payload: Any) -> str:
@@ -628,6 +666,7 @@ def build_artifact_bundle(
     ir = normalize_card(card)
     hypothesis = build_hypothesis_spec_v2(ir)
     engine_yaml = build_engine_hypothesis_yaml(ir, repo_root=repo_root)
+    load_governed_native_strategy(engine_yaml, repo_root=repo_root)
     strategy = build_strategy_spec_v2(ir)
     readiness = compile_readiness(strategy, available_datasets=available_datasets)
     bundle = {
