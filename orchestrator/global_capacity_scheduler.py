@@ -63,6 +63,7 @@ class CapacitySchedulerConfig:
     child_log_dir: str = "logs/research_capacity_scheduler_jobs"
     estimated_worker_ram_gb: float = 2.0
     max_job_attempts: int = 2
+    drain_state_path: str | None = None
 
 
 @dataclass
@@ -142,6 +143,11 @@ def load_capacity_config(daemon_config: dict[str, Any], args: argparse.Namespace
         max_job_attempts=int(
             block.get("max_job_attempts", daemon_config.get("max_job_attempts", 2))
         ),
+        drain_state_path=(
+            str(block["drain_state_path"])
+            if block.get("drain_state_path")
+            else None
+        ),
     )
     if cfg.target_workers <= 0:
         raise ValueError("target_workers must be positive")
@@ -156,6 +162,26 @@ def load_capacity_config(daemon_config: dict[str, Any], args: argparse.Namespace
     if cfg.pause_free_ram_gb >= cfg.resume_free_ram_gb:
         raise ValueError("pause_free_ram_gb must be lower than resume_free_ram_gb")
     return cfg
+
+
+def admission_drain_state(path: str | None) -> tuple[bool, str | None]:
+    """Return the fail-closed native admission state.
+
+    A missing path means this deployment has not enabled coordinated drain
+    control. Once configured, a missing or malformed state file blocks new
+    launches so a control-plane outage cannot silently re-enable autonomy.
+    Running jobs are deliberately unaffected.
+    """
+    if path is None:
+        return False, None
+    state_path = Path(path)
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return True, f"native drain state unavailable: {type(exc).__name__}"
+    if payload.get("schema_version") != "alpha-autonomy-drain-v1.0.0":
+        return True, "native drain state schema is invalid"
+    return bool(payload.get("paused", True)), str(payload.get("reason") or "") or None
 
 
 def configure_logging(path: Path) -> logging.Logger:
@@ -431,6 +457,9 @@ class CapacityScheduler:
 
     def _write_state(self) -> None:
         snap = memory_snapshot()
+        drain_paused, drain_reason = admission_drain_state(
+            self.cfg.drain_state_path
+        )
         payload: dict[str, Any] = {
             "updated_at": utc_now_iso(),
             "hostname": socket.gethostname(),
@@ -445,6 +474,12 @@ class CapacityScheduler:
             },
             "jobs": [asdict(job) | {"rss_gb": process_tree_rss_gb(job.pid)} for job in self.jobs],
             "startup_recovery": self.startup_recovery,
+            "admission": {
+                "paused": drain_paused,
+                "mode": "drain" if drain_paused else "active",
+                "reason": drain_reason,
+                "running_jobs_allowed_to_finish": True,
+            },
         }
         if snap is not None:
             payload["memory"] = asdict(snap)
@@ -687,6 +722,16 @@ class CapacityScheduler:
                 snap = memory_snapshot()
         self._refresh_managed_locks()
         self._resume_jobs_if_possible(snap)
+        drain_paused, drain_reason = admission_drain_state(
+            self.cfg.drain_state_path
+        )
+        if drain_paused:
+            self.logger.info(
+                "admission drain active; no new job will launch: %s",
+                drain_reason or "operator pause",
+            )
+            self._write_state()
+            return
         launched = True
         while launched and not should_pause_for_memory(snap, self.cfg):
             launched = self._launch_next_if_capacity(snap)

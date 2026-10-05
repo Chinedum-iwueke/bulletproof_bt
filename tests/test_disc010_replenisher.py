@@ -18,6 +18,23 @@ replenisher = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(replenisher)
 
 
+def test_replenisher_drain_state_is_fail_closed(tmp_path) -> None:
+    state = tmp_path / "drain.json"
+    paused, reason = replenisher.admission_drain_state(state)
+    assert paused is True
+    assert "unavailable" in str(reason)
+
+    state.write_text(
+        '{"schema_version":"alpha-autonomy-drain-v1.0.0",'
+        '"paused":true,"reason":"Engineering maintenance"}',
+        encoding="utf-8",
+    )
+    assert replenisher.admission_drain_state(state) == (
+        True,
+        "Engineering maintenance",
+    )
+
+
 def create_lake(tmp_path: Path) -> Path:
     root = tmp_path / "research_data"
     records = []

@@ -21,6 +21,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from orchestrator.db import ResearchDB  # noqa: E402
 
 
+def admission_drain_state(path: Path | None) -> tuple[bool, str | None]:
+    if path is None:
+        return False, None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return True, f"native drain state unavailable: {type(exc).__name__}"
+    if payload.get("schema_version") != "alpha-autonomy-drain-v1.0.0":
+        return True, "native drain state schema is invalid"
+    return bool(payload.get("paused", True)), str(payload.get("reason") or "") or None
+
+
 def atomic_json(path: Path, document: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with tempfile.NamedTemporaryFile(
@@ -250,6 +262,7 @@ def main() -> int:
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--target-active", type=int, default=3)
     parser.add_argument("--max-workers", type=int, default=6)
+    parser.add_argument("--drain-state", type=Path)
     args = parser.parse_args()
     if not 1 <= args.target_active <= 3 or not 1 <= args.max_workers <= 8:
         raise ValueError("target-active must be 1-3 and max-workers must be 1-8")
@@ -263,6 +276,20 @@ def main() -> int:
     ).stdout.strip()
     if current_commit != args.source_commit:
         raise ValueError("source commit differs from replenisher assignment")
+    paused, reason = admission_drain_state(args.drain_state)
+    if paused:
+        print(
+            json.dumps(
+                {
+                    "event": "disc010_replenishment_drained",
+                    "queued": 0,
+                    "reason": reason or "operator pause",
+                    "running_work_allowed_to_finish": True,
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
     state = (
         json.loads(args.state.read_text(encoding="utf-8"))
         if args.state.exists()
