@@ -30,6 +30,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     plans = {}
+    successor_proposal = None
     try:
         evidence = json.loads(args.evidence.read_text(encoding="utf-8"))
         source_commit = subprocess.check_output(
@@ -38,6 +39,23 @@ def main() -> int:
             text=True,
         ).strip()
         plans = preflight_evidence(evidence, source_commit=source_commit)
+        successor_context = evidence.get("coverage_successor_context")
+        if plans["scientific"]["status"] == "deferred" and successor_context is not None:
+            from bt.governance.coverage_successor import plan_coverage_successor
+
+            package = evidence["validation_requirements"]
+            successor_proposal = plan_coverage_successor(
+                frozen_inputs={
+                    "requirements": package["requirements"], "coverage": package["coverage"],
+                    "dataset_bindings": evidence["dataset_bindings"],
+                    "instruments": evidence["discovery_candidate"]["data"]["instruments"],
+                    "source_commit": source_commit, "approved_window": evidence["window"],
+                    "variants": evidence["discovery_candidate"]["parameter_budget"]["maximum_variants"],
+                    "maximum_history_days": package["maximum_history_days"],
+                    "maximum_bar_variant_work": package["maximum_bar_variant_work"],
+                },
+                parent_plan=plans["scientific"], **successor_context,
+            )
         if any(plan["status"] != "ready" for plan in plans.values()):
             raise RequirementsError(
                 "requirements_preflight_deferred: "
@@ -63,6 +81,7 @@ def main() -> int:
             "success": False,
             "reason": str(exc),
             "validation_plans": plans,
+            "coverage_successor_proposal": successor_proposal,
             "retryable": False,
             "authority": {"capital": False, "orders": False},
         }

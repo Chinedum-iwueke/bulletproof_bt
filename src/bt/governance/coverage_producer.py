@@ -8,7 +8,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from bt.experiments.adaptive_representation import materialize_adaptive_representation
+from bt.experiments.adaptive_representation import (
+    _materialize_completed_representation,
+    complete_bars,
+    validate_plan,
+)
 from bt.data.resample import timeframe_minutes
 from bt.governance.data_requirements import coverage_receipt, fingerprint, instant
 
@@ -20,6 +24,8 @@ def produce_coverage(
     receipts: list[dict],
     required_fields: dict[str, list[str]],
     maximum_source_rows: int = 2_000_000,
+    chunk_source_rows: int | None = None,
+    maximum_research_rows: int = 2_000_000,
 ) -> dict:
     """Read only content-addressed recovery copies within the authorized window.
 
@@ -29,12 +35,26 @@ def produce_coverage(
     start, end = instant(window["start"]), instant(window["end"])
     if start >= end:
         raise ValueError("coverage window must be nonempty")
+    validate_plan(plan)
     symbols = plan["instruments"]
+    minutes = timeframe_minutes(plan["research_timeframe"])
+    if type(maximum_research_rows) is not int or maximum_research_rows < 1:
+        raise ValueError("coverage needs a positive research-row budget")
+    if chunk_source_rows is not None and (
+        type(chunk_source_rows) is not int or chunk_source_rows < minutes
+    ):
+        raise ValueError("coverage chunk must hold at least one complete research bar")
     if type(maximum_source_rows) is not int or maximum_source_rows < 1:
         raise ValueError("coverage needs a positive source-row resource budget")
     if (end - start).total_seconds() / 60 * len(symbols) > maximum_source_rows:
         raise ValueError(
             "coverage source-row resource budget exceeded before reading panels"
+        )
+    if (end - start).total_seconds() / (60 * minutes) * len(
+        symbols
+    ) > maximum_research_rows:
+        raise ValueError(
+            "coverage research-row resource budget exceeded before reading panels"
         )
     if set(required_fields) != set(symbols) or len(receipts) != len(symbols):
         raise ValueError("coverage requires the exact selected basket")
@@ -86,32 +106,69 @@ def produce_coverage(
             raise ValueError(
                 "coverage needs a field-specific availability verifier for non-OHLCV fields"
             )
-        panel = pd.read_parquet(
-            path, columns=fields, filters=[("ts", ">=", start), ("ts", "<", end)]
-        )
-        timestamps = pd.to_datetime(panel["ts"], utc=True, errors="raise")
-        if not timestamps.is_monotonic_increasing or timestamps.duplicated().any():
-            raise ValueError("coverage source clock must be unique and ordered")
-        if not timestamps.eq(timestamps.dt.floor("min")).all():
-            raise ValueError("coverage requires exact minute boundaries")
-        numeric = [field for field in fields if field not in {"ts", "symbol"}]
-        values = panel[numeric].apply(pd.to_numeric, errors="coerce")
-        valid = np.isfinite(values.to_numpy()).all(axis=1)
-        valid &= (panel[["open", "high", "low", "close"]] > 0).all(axis=1)
-        valid &= panel["volume"].ge(0)
-        valid &= panel["high"].ge(panel[["open", "close", "low"]].max(axis=1))
-        valid &= panel["low"].le(panel[["open", "close"]].min(axis=1))
-        if "quote_volume" in panel:
-            valid &= panel["quote_volume"].ge(0)
-        panels[symbol] = panel.loc[valid].copy()
+        cursor, pieces = pd.Timestamp(start), []
+        source_rows = eligible_rows = 0
+        previous = None
+        while cursor < pd.Timestamp(end):
+            finish = pd.Timestamp(end)
+            if chunk_source_rows is not None:
+                finish = min(
+                    finish,
+                    cursor.floor(f"{minutes}min")
+                    + pd.Timedelta(minutes=(chunk_source_rows // minutes) * minutes),
+                )
+            panel = pd.read_parquet(
+                path,
+                columns=fields,
+                filters=[("ts", ">=", cursor), ("ts", "<", finish)],
+            )
+            if len(panel) > (chunk_source_rows or maximum_source_rows):
+                raise ValueError("coverage actual source rows exceeded chunk budget")
+            timestamps = pd.to_datetime(panel["ts"], utc=True, errors="raise")
+            if (
+                not timestamps.is_monotonic_increasing
+                or timestamps.duplicated().any()
+                or (
+                    previous is not None
+                    and len(timestamps)
+                    and timestamps.iloc[0] <= previous
+                )
+            ):
+                raise ValueError("coverage source clock must be unique and ordered")
+            if not timestamps.eq(timestamps.dt.floor("min")).all():
+                raise ValueError("coverage requires exact minute boundaries")
+            if len(timestamps):
+                previous = timestamps.iloc[-1]
+            numeric = [field for field in fields if field not in {"ts", "symbol"}]
+            values = panel[numeric].apply(pd.to_numeric, errors="coerce")
+            valid = np.isfinite(values.to_numpy()).all(axis=1)
+            valid &= (panel[["open", "high", "low", "close"]] > 0).all(axis=1)
+            valid &= panel["volume"].ge(0)
+            valid &= panel["high"].ge(panel[["open", "close", "low"]].max(axis=1))
+            valid &= panel["low"].le(panel[["open", "close"]].min(axis=1))
+            if "quote_volume" in panel:
+                valid &= panel["quote_volume"].ge(0)
+            source_rows += len(panel)
+            eligible_rows += int(valid.sum())
+            # Chunk boundaries align with the native bar clock, so no partial
+            # bar is synthesized or carried into a later causal bucket.
+            pieces.append(
+                complete_bars(panel.loc[valid], plan["research_timeframe"], symbol, allow_empty=True)
+            )
+            cursor = finish
+        panels[symbol] = pd.concat(pieces, ignore_index=True)
         identities[symbol] = {
             "panel_digest": result["panel_sha256"],
             "admission_digest": fingerprint(receipt),
             "required_fields": required_fields[symbol],
-            "source_rows": len(panel),
-            "eligible_source_rows": int(valid.sum()),
+            "source_rows": source_rows,
+            "eligible_source_rows": eligible_rows,
         }
-    materialized = materialize_adaptive_representation(plan, panels)
+    materialized = _materialize_completed_representation(
+        plan,
+        panels,
+        {symbol: identities[symbol]["eligible_source_rows"] for symbol in symbols},
+    )
     fields = materialized.receipt["output_fields"]
     frame = materialized.frame
     eligible = np.isfinite(frame[fields].to_numpy(dtype=float)).all(axis=1)
@@ -142,3 +199,17 @@ def produce_coverage(
     evidence["intervals"] = intervals
     evidence["research_bar_minutes"] = timeframe_minutes(plan["research_timeframe"])
     return evidence | {"evidence_digest": fingerprint(evidence)}
+
+
+def produce_bounded_coverage(**kwargs) -> dict:
+    """Stream at most 100k minute rows at once; retain bounded research bars.
+
+    Total scan budget permits a 100-asset, three-year envelope. The separate
+    retained-row limit can still defer high-frequency large baskets safely.
+    """
+    return produce_coverage(
+        **kwargs,
+        maximum_source_rows=160_000_000,
+        chunk_source_rows=100_000,
+        maximum_research_rows=2_000_000,
+    )

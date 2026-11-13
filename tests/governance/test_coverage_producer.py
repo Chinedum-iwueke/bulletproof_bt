@@ -96,6 +96,35 @@ def test_predictor_clock_does_not_claim_membership_or_authority(tmp_path):
     )
 
 
+@pytest.mark.parametrize("chunk", [5, 7, 10, 11, 30])
+def test_chunked_coverage_equals_single_read_including_digest(tmp_path, chunk):
+    args = fixture(tmp_path)
+    args["plan"]["transformations"][0] = {
+        "output_field": "lagged",
+        "operation": "log_return",
+        "input_fields": ["BTCUSDT__close"],
+        "parameters": {"periods": 2},
+        "fit_policy": "stateless",
+        "rationale": "Retain lag state across chunk boundaries without future fill",
+    }
+    assert produce_coverage(**args, chunk_source_rows=chunk) == produce_coverage(**args)
+
+
+def test_research_memory_budget_checked_before_read(tmp_path, monkeypatch):
+    args = fixture(tmp_path)
+    monkeypatch.setattr(
+        pd, "read_parquet", lambda *a, **kw: pytest.fail("must reject before reading")
+    )
+    with pytest.raises(ValueError, match="research-row"):
+        produce_coverage(**args, maximum_research_rows=1)
+
+
+def test_empty_and_partial_chunks_do_not_invalidate_older_usable_history(tmp_path):
+    args = fixture(tmp_path)
+    args["window"] = {"start": "2024-12-31T23:45:00Z", "end": "2025-01-01T00:32:00Z"}
+    assert produce_coverage(**args, chunk_source_rows=10) == produce_coverage(**args)
+
+
 def test_changed_bytes_rejected_before_materialization(tmp_path):
     args = fixture(tmp_path)
     (tmp_path / "BTCUSDT.parquet").write_bytes(b"changed")

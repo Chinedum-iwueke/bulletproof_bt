@@ -176,7 +176,7 @@ def _validate_operation(transform: dict[str, Any]) -> None:
         raise AdaptiveRepresentationError("every transformation requires a rationale")
 
 
-def complete_bars(frame: pd.DataFrame, timeframe: str, instrument: str) -> pd.DataFrame:
+def complete_bars(frame: pd.DataFrame, timeframe: str, instrument: str, *, allow_empty: bool = False) -> pd.DataFrame:
     """Build only causally complete bars from a one-minute instrument panel."""
     required = {"ts", "open", "high", "low", "close", "volume"}
     missing = required - set(frame)
@@ -189,7 +189,7 @@ def complete_bars(frame: pd.DataFrame, timeframe: str, instrument: str) -> pd.Da
     ordered = ordered.sort_values("ts", kind="stable")
     if ordered["ts"].duplicated().any():
         raise AdaptiveRepresentationError(f"{instrument} contains duplicate timestamps")
-    if "symbol" in ordered and set(ordered["symbol"].astype(str)) != {instrument}:
+    if "symbol" in ordered and not ordered.empty and set(ordered["symbol"].astype(str)) != {instrument}:
         raise AdaptiveRepresentationError(f"{instrument} panel identity is inconsistent")
     minutes = timeframe_minutes(timeframe)
     bucket = ordered["ts"].dt.floor(f"{minutes}min")
@@ -209,6 +209,12 @@ def complete_bars(frame: pd.DataFrame, timeframe: str, instrument: str) -> pd.Da
     )
     selected = ordered[ordered["_bucket"].isin(complete[complete].index)]
     if selected.empty:
+        if allow_empty:
+            return pd.DataFrame({
+                "bucket_start": pd.Series(dtype="datetime64[ns, UTC]"),
+                **{field: pd.Series(dtype=float) for field in constituent_fields},
+                "decision_at": pd.Series(dtype="datetime64[ns, UTC]"),
+            })
         raise AdaptiveRepresentationError(f"{instrument} has no complete {timeframe} bars")
     aggregations: dict[str, str] = {
         "open": "first",
@@ -293,12 +299,26 @@ def materialize_adaptive_representation(
     instruments = plan["instruments"]
     if set(panels) != set(instruments):
         raise AdaptiveRepresentationError("panel identities differ from the frozen basket")
+    source_rows = {instrument: len(panels[instrument]) for instrument in instruments}
+    completed = {
+        instrument: complete_bars(panels[instrument], plan["research_timeframe"], instrument)
+        for instrument in instruments
+    }
+    return _materialize_completed_representation(plan, completed, source_rows)
+
+
+def _materialize_completed_representation(
+    plan: dict[str, Any], completed: dict[str, pd.DataFrame], source_rows: dict[str, int]
+) -> MaterializedRepresentation:
+    """Internal path for producers that already validated and completed raw bars."""
+    validate_plan(plan)
+    instruments = plan["instruments"]
+    if set(completed) != set(instruments) or set(source_rows) != set(instruments):
+        raise AdaptiveRepresentationError("completed panels differ from the frozen basket")
     aligned: pd.DataFrame | None = None
-    source_rows: dict[str, int] = {}
     complete_rows: dict[str, int] = {}
     for instrument in instruments:
-        source_rows[instrument] = len(panels[instrument])
-        bars = complete_bars(panels[instrument], plan["research_timeframe"], instrument)
+        bars = completed[instrument]
         complete_rows[instrument] = len(bars)
         rename = {
             column: f"{instrument}__{column}"

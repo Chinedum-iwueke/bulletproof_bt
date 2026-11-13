@@ -16,8 +16,8 @@ def build_batch(assignment: dict) -> dict:
     source_commit = assignment["source_commit"]
     backup_root = Path(assignment["backup_root"])
     assets = assignment["assets"]
-    if not 1 <= len(assets) <= 20:
-        raise ValueError("selected-panel admission requires 1-20 assets")
+    if not 1 <= len(assets) <= 128:
+        raise ValueError("selected-panel admission requires 1-128 assets")
     identities = [
         (item["venue"], item["instrument"], item.get("timeframe", "1m"))
         for item in assets
@@ -62,9 +62,9 @@ def build_batch(assignment: dict) -> dict:
         "capital_or_order_authority": False,
     }
     if assignment.get("representation_plan") is not None:
-        from bt.governance.coverage_producer import produce_coverage
+        from bt.governance.coverage_producer import produce_bounded_coverage
 
-        document["predictor_coverage_evidence"] = produce_coverage(
+        document["predictor_coverage_evidence"] = produce_bounded_coverage(
             plan=assignment["representation_plan"],
             window=assignment["coverage_window"],
             receipts=receipts,
