@@ -105,9 +105,12 @@ class StrategyIntent:
     authority: dict[str, bool]
     unresolved_authoring: list[str]
     evidence_digest: str
+    validation_requirements: dict[str, Any] | None = None
 
     def document(self) -> dict[str, Any]:
         value = asdict(self)
+        if value["validation_requirements"] is None:
+            del value["validation_requirements"]
         value["intent_digest"] = digest(value)
         return value
 
@@ -296,6 +299,7 @@ def compile_strategy_intent(evidence: dict[str, Any]) -> StrategyIntent:
             "focused_runner_integration_tests",
         ],
         evidence_digest=digest(evidence),
+        validation_requirements=evidence.get("validation_requirements"),
     )
 
 
@@ -524,6 +528,18 @@ def scaffold_strategy_package(
     strategy = f'''"""Native implementation for intent {intent_digest}."""\n\nfrom __future__ import annotations\n\nfrom typing import Any\n\nfrom bt.strategy import register_strategy\nfrom bt.strategy.base import Strategy\n\nSTRATEGY_INTENT_DIGEST = "{intent_digest}"\nQUESTION = {intent.question!r}\nINSTRUMENTS = {tuple(intent.instruments)!r}\n\n\ndef evaluate_alpha_intent(**context: Any) -> dict[str, Any]:\n    """Return retained positive, negative, invalid or failed native evidence."""\n    raise NotImplementedError("__CODEX_REQUIRED__: implement exact governed signal estimand")\n\n\n@register_strategy("{name}")\nclass {class_name}(Strategy):\n    def on_bars(self, ts, bars_by_symbol, tradeable, ctx):\n        raise NotImplementedError("__CODEX_REQUIRED__: implement causal classic-engine signals")\n'''
     documentation = f"""# {intent.question}\n\nIntent digest: `{intent_digest}`\n\n## Frozen scientific contract\n\n- Predictor: {intent.predictor}\n- Target: {intent.target}\n- Horizon: {intent.horizon}\n- Direction: {intent.predicted_direction}\n- Research timeframe: {intent.research_timeframe}\n- Instruments: {", ".join(intent.instruments)}\n- Authority: research only; no capital, orders, promotion or self-approval\n\n## Authoring boundary\n\nCodex must implement only the unresolved signal, bounded parameter values, native evaluator and focused tests. Dataset identities, representation, clocks, question and authority are immutable.\n"""
     test = f'''from pathlib import Path\n\n\ndef test_generated_package_has_no_unresolved_placeholders():\n    root = Path(__file__).resolve().parents[2]\n    placeholder = "__CODEX_" + "REQUIRED__"\n    paths = [\n        root / "research/hypotheses/cards/{intent.question_digest}.json",\n        root / "research/hypotheses/{name}.yaml",\n        root / "src/bt/strategy/{name}.py",\n    ]\n    for path in paths:\n        assert placeholder not in path.read_text(encoding="utf-8")\n\n\ndef test_generated_package_retains_intent_digest():\n    root = Path(__file__).resolve().parents[2]\n    expected = "{intent_digest}"\n    assert expected in (root / "research/hypotheses/cards/{intent.question_digest}.json").read_text(encoding="utf-8")\n    assert expected in (root / "research/hypotheses/{name}.yaml").read_text(encoding="utf-8")\n    assert expected in (root / "src/bt/strategy/{name}.py").read_text(encoding="utf-8")\n'''
+    test += '''\n\nimport pytest\n\n\ndef test_native_runner_smoke(tmp_path):\n    # run_native_case exercises the real <=31-day commissioning runner.\n    # Insufficient scientific history is an expected smoke outcome, not alpha.\n    raise NotImplementedError("Construct an exact native smoke fixture")\n\n\n@pytest.mark.parametrize("outcome", ["positive", "negative", "invalid", "failed"])\ndef test_scientific_terminal_case(tmp_path, outcome):\n    # run_scientific_case uses independently planned full-length synthetic data.\n    # Preserve reviewed minimum training support; do not shrink to smoke duration.\n    raise NotImplementedError("Construct the requirements-aware scientific fixture")\n'''
+    if intent.validation_requirements is not None:
+        from bt.governance.data_requirements import DataRequirements
+        requirements = DataRequirements.parse(intent.validation_requirements["requirements"])
+        yaml_document["execution_semantics"].update(
+            warmup_observations=requirements.feature_warmup_bars,
+            warmup_timeframe=intent.research_timeframe,
+        )
+        yaml_document["evaluation"]["split"] = {
+            "purge_seconds": max(requirements.purge_bars, requirements.target_horizon_bars) * requirements.research_bar_minutes * 60,
+            "embargo_seconds": requirements.embargo_bars * requirements.research_bar_minutes * 60,
+        }
     statuses = {
         str(intent_path.relative_to(root)): _write_new_or_verify(
             intent_path,

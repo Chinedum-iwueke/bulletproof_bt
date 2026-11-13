@@ -136,6 +136,60 @@ def test_trusted_binding_rejects_plural_partition_mutation(tmp_path: Path) -> No
         verify_trusted_dataset_bindings(document, [expected])
 
 
+@pytest.mark.parametrize("field", [
+    "catalog_id", "producer_receipt_id", "lake_governance_snapshot_id",
+    "builder_commit", "admission_source_commit", "dataset_key", "evidence_class",
+    "rows", "output_columns_count", "output_columns_digest", "relevant_output_columns",
+])
+def test_trusted_binding_checks_every_declared_identity(tmp_path: Path, field: str) -> None:
+    path = tmp_path / "fixture.parquet"
+    path.write_bytes(b"standalone-fixture")
+    expected = {"instrument": "BTCUSDT", "dataset_digest": file_digest(path), field: "frozen"}
+    actual = expected | {"dataset_path": str(path)}
+    verify_trusted_dataset_bindings({"dataset_bindings": [actual]}, [expected])
+    actual[field] = "changed"
+    with pytest.raises(BridgeError, match="immutable evidence binding mismatch"):
+        verify_trusted_dataset_bindings({"dataset_bindings": [actual]}, [expected])
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_trusted_binding_accepts_equivalent_single_asset_forms(tmp_path, reverse):
+    path = tmp_path / "fixture.parquet"
+    path.write_bytes(b"singleton-binding")
+    common = {"dataset_digest": file_digest(path)}
+    singular = common | {"instrument": "TRBUSDT"}
+    plural = common | {"instruments": ["TRBUSDT"]}
+    expected, actual = (singular, plural) if reverse else (plural, singular)
+    verify_trusted_dataset_bindings(
+        {"dataset_bindings": [actual | {"dataset_path": str(path)}]}, [expected]
+    )
+
+
+@pytest.mark.parametrize("identity", [
+    {"instruments": ["TRBUSDT", "BTCUSDT"]},
+    {"instrument": "TRBUSDT", "instruments": ["BTCUSDT"]},
+    {"instruments": []},
+])
+def test_trusted_binding_rejects_ambiguous_asset_forms(tmp_path, identity):
+    path = tmp_path / "fixture.parquet"
+    path.write_bytes(b"singleton-binding")
+    expected = {"instruments": ["TRBUSDT"], "dataset_digest": file_digest(path)}
+    actual = identity | {"dataset_digest": file_digest(path), "dataset_path": str(path)}
+    with pytest.raises(BridgeError, match="basket identity mismatch"):
+        verify_trusted_dataset_bindings({"dataset_bindings": [actual]}, [expected])
+
+
+def test_trusted_binding_rejects_duplicate_symbols_before_dictionary_collapse(tmp_path):
+    path = tmp_path / "fixture.parquet"
+    path.write_bytes(b"singleton-binding")
+    expected = {"instruments": ["TRBUSDT"], "dataset_digest": file_digest(path)}
+    actual = expected | {"dataset_path": str(path)}
+    with pytest.raises(BridgeError, match="basket identity mismatch"):
+        verify_trusted_dataset_bindings(
+            {"dataset_bindings": [actual, actual]}, [expected, expected]
+        )
+
+
 def assignment():
     return {
         "base_ref": "a" * 40,
@@ -755,6 +809,20 @@ def test_representation_applies_horizon_aware_split_gaps() -> None:
     ) > pd.Timedelta(minutes=30)
     assert split.purge_seconds == 1800
     assert split.embargo_seconds == 1800
+    assert report["status"] == "certified"
+
+
+def test_representation_uses_frozen_requirements_partitions_instead_of_percentages():
+    timestamps = pd.date_range("2026-01-01T00:00:00Z", periods=240, freq="1min")
+    frame = pd.DataFrame({"ts": timestamps, "symbol": "BTCUSDT", "close": 100.0})
+    partitions = {
+        "training": {"start": "2026-01-01T00:01:00Z", "end": "2026-01-01T02:00:00Z"},
+        "validation": {"start": "2026-01-01T02:05:00Z", "end": "2026-01-01T03:00:00Z"},
+        "test": {"start": "2026-01-01T03:05:00Z", "end": "2026-01-01T04:00:00Z"},
+    }
+    contract, report = representation(assignment(), frame, "f"*64, planned_partitions=partitions)
+    assert contract.split.train_end == partitions["training"]["end"]
+    assert contract.split.test_start == partitions["test"]["start"]
     assert report["status"] == "certified"
 
 

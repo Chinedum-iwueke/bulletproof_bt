@@ -218,8 +218,27 @@ def verify_trusted_dataset_bindings(
     bindings = assignment.get("dataset_bindings")
     if not isinstance(bindings, list) or len(bindings) != len(expected_bindings):
         raise BridgeError("execution requires every trusted dataset binding")
-    actual = {item.get("instrument"): item for item in bindings}
-    expected_by_symbol = {item.get("instrument"): item for item in expected_bindings}
+    def indexed(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        result = {}
+        for original in items:
+            item = dict(original)
+            symbol = item.get("instrument")
+            plural = item.get("instruments")
+            if symbol is None and isinstance(plural, list) and len(plural) == 1:
+                symbol = plural[0]
+            if (
+                not isinstance(symbol, str) or not symbol
+                or (plural is not None and plural != [symbol])
+                or symbol in result
+            ):
+                raise BridgeError("trusted dataset basket identity mismatch")
+            item["instrument"] = symbol
+            item["instruments"] = [symbol]
+            result[symbol] = item
+        return result
+
+    actual = indexed(bindings)
+    expected_by_symbol = indexed(expected_bindings)
     if (
         None in actual
         or None in expected_by_symbol
@@ -253,7 +272,9 @@ def verify_trusted_dataset_bindings(
                 raise BridgeError(
                     f"trusted singular/plural partition binding mismatch: {symbol}"
                 )
-        required = [key for key in TRUSTED_BINDING_FIELDS if key in expected]
+        # Paths are host-local; every other declared identity is immutable,
+        # including producer IDs, builder commits and output-schema evidence.
+        required = [key for key in expected if key != "dataset_path"]
         if any(normalized.get(key) != expected[key] for key in required):
             raise BridgeError(f"trusted immutable evidence binding mismatch: {symbol}")
         path = Path(str(normalized.get("dataset_path", "")))
@@ -1247,6 +1268,7 @@ def representation(
     purge_seconds: int = 60,
     embargo_seconds: int = 60,
     decision_timeframe: str = "1m",
+    planned_partitions: dict[str, Any] | None = None,
 ) -> tuple[RepresentationContract, dict[str, Any]]:
     ordered = frame.copy()
     ordered["ts"] = pd.to_datetime(ordered["ts"], utc=True, errors="raise")
@@ -1284,7 +1306,7 @@ def representation(
     test_index = decisions.searchsorted(
         split_two + pd.Timedelta(seconds=embargo_seconds), side="right"
     )
-    if validation_index >= len(decisions) or test_index >= len(decisions):
+    if planned_partitions is None and (validation_index >= len(decisions) or test_index >= len(decisions)):
         raise BridgeError(
             "evaluation window is too short for its purge/embargo contract"
         )
@@ -1296,6 +1318,26 @@ def representation(
         observed_at=audit_decisions,
         available_at=audit_decisions,
     )
+    if planned_partitions is not None:
+        training = planned_partitions["training"]
+        validation = planned_partitions["validation"]
+        test = planned_partitions["test"]
+        selected_split = EvaluationSplit(
+            train_start=training["start"], train_end=training["end"],
+            validation_start=validation["start"], validation_end=validation["end"],
+            test_start=test["start"], test_end=test["end"],
+            fit_start=training["start"], fit_end=training["end"],
+            purge_seconds=purge_seconds, embargo_seconds=embargo_seconds,
+        )
+    else:
+        selected_split = EvaluationSplit(
+            train_start=first.isoformat(), train_end=split_one.isoformat(),
+            validation_start=decisions.iloc[validation_index].isoformat(),
+            validation_end=split_two.isoformat(),
+            test_start=decisions.iloc[test_index].isoformat(), test_end=last.isoformat(),
+            fit_start=first.isoformat(), fit_end=split_one.isoformat(),
+            purge_seconds=purge_seconds, embargo_seconds=embargo_seconds,
+        )
     contract = RepresentationContract(
         contract_id=f"alpha002-{assignment['question_digest'][:16]}",
         dataset_snapshot_id=assignment["dataset_build_id"],
@@ -1322,18 +1364,7 @@ def representation(
                 fit_policy="stateless",
             ),
         ),
-        split=EvaluationSplit(
-            train_start=first.isoformat(),
-            train_end=split_one.isoformat(),
-            validation_start=decisions.iloc[validation_index].isoformat(),
-            validation_end=split_two.isoformat(),
-            test_start=decisions.iloc[test_index].isoformat(),
-            test_end=last.isoformat(),
-            fit_start=first.isoformat(),
-            fit_end=split_one.isoformat(),
-            purge_seconds=purge_seconds,
-            embargo_seconds=embargo_seconds,
-        ),
+        split=selected_split,
     )
     return contract, certify_representation_frame(contract, audit)
 
@@ -1562,6 +1593,20 @@ def execution_scope(
     if end <= start:
         raise BridgeError("execution window must be positive")
     if execution_class == "qualification":
+        artifact = qualification.get("artifact_bundle", {})
+        immutable = artifact.get("engine_hypothesis_yaml", {}).get("immutable_contract", {})
+        if immutable.get("validation_requirements") is not None:
+            from bt.governance.data_requirements import verify_execution_plan, RequirementsError
+            try:
+                plan = verify_execution_plan(assignment, immutable)
+            except (RequirementsError, KeyError, TypeError, ValueError) as exc:
+                raise BridgeError(f"reviewed validation plan is invalid: {exc}") from exc
+            if (artifact.get("validation_plan") != plan
+                    or start < reviewed_start or end > reviewed_end
+                    or immutable.get("window") != reviewed):
+                raise BridgeError("scientific validation plan is not bound into reviewed artifacts")
+            return {"execution_class": execution_class, "qualification_authority": True,
+                    "validation_plan_digest": plan["plan_digest"]}
         if start != reviewed_start or end != reviewed_end:
             raise BridgeError("qualification execution window differs from review")
         return {
@@ -1779,13 +1824,26 @@ def execute_registered(
     contract_bindings = list(
         contract_document["immutable_contract"].get("dataset_bindings", [])
     )
-    if contract_bindings and all(
-        all(field in binding for field in TRUSTED_BINDING_FIELDS)
+    if is_strategy_intent and not contract_bindings:
+        raise BridgeError("strategy intent requires immutable dataset bindings")
+    if is_strategy_intent or (contract_bindings and all(
+        all(field in binding for field in TRUSTED_BINDING_FIELDS if field != "partition_digest")
+        and ("partition_digest" in binding or "partition_digests" in binding)
         for binding in contract_bindings
-    ):
+    )):
         verify_trusted_dataset_bindings(assignment, contract_bindings)
 
     execution_semantics = contract.schema.execution_semantics
+    from bt.governance.data_requirements import verify_execution_plan, RequirementsError
+    try:
+        validation_plan = verify_execution_plan(assignment, contract_document["immutable_contract"])
+    except (RequirementsError, KeyError, TypeError, ValueError) as exc:
+        raise BridgeError(f"requirements-aware execution blocked: {exc}") from exc
+    if validation_plan is not None:
+        requirements = contract_document["immutable_contract"]["validation_requirements"]["requirements"]
+        if execution_semantics.get("warmup_observations") != requirements["feature_warmup_bars"]:
+            raise BridgeError("feature warmup differs from reviewed data requirements")
+        (output / "validation-plan.json").write_bytes(canonical(validation_plan) + b"\n")
     warmup_bars = int(execution_semantics.get("warmup_observations", 0))
     warmup_timeframe = str(
         execution_semantics.get(
@@ -1889,6 +1947,8 @@ def execute_registered(
         decision_timeframe=str(
             contract.schema.execution_semantics.get("signal_timeframe", "1m")
         ),
+        planned_partitions=(validation_plan["partitions"]
+                            if validation_plan and validation_plan["mode"] == "scientific" else None),
     )
     execution_delay_bars = int(contract_document.get("costs", {}).get("delay_bars", 1))
     model = declared_classic_bundle(
@@ -2768,6 +2828,19 @@ def execute_registered(
     started_at = datetime.fromtimestamp(run_dir.stat().st_mtime, tz=UTC)
     ended_at = datetime.now(UTC)
     independent_review_complete = governed_review_verified(assignment, qualification)
+    requirements_support_met = True
+    if validation_plan is not None:
+        from bt.governance.data_requirements import assess_event_support
+        declared_counts = validation_plan["event_support"]["required"]
+        actual_metrics = evaluation_artifact.get("metrics", {})
+        observed = {name: actual_metrics[name] for name in declared_counts if name in actual_metrics}
+        try:
+            support = assess_event_support(validation_plan, observed)
+        except RequirementsError as exc:
+            raise BridgeError(f"invalid observed requirements support: {exc}") from exc
+        requirements_support_met = support["status"] == "support_met"
+        metrics["requirements_support"] = support
+        (output / "requirements-support.json").write_bytes(canonical(support) + b"\n")
     passed_edge = bool(
         (
             is_scientific_evaluator
@@ -2781,6 +2854,7 @@ def execute_registered(
         and independent_review_complete
         and logging_report["passed"]
         and scope["qualification_authority"]
+        and requirements_support_met
         and (
             not is_impact_proxy
             or (
@@ -2804,6 +2878,8 @@ def execute_registered(
         )
     )
     failed_gates = [name for name, passed in classic_pnl_gates if not passed]
+    if not requirements_support_met:
+        failed_gates.append("declared_event_support_insufficient")
     if not independent_review_complete:
         failed_gates.append("independent_specification_review")
     if not logging_report["passed"]:
@@ -2918,6 +2994,8 @@ def execute_registered(
         and scientific_observations_complete
     )
     scientific_supported = not scientific_family or (
+        requirements_support_met
+        and
         scientific_outcome in {"positive", "negative"}
         and scientific_observations_complete
         and (
