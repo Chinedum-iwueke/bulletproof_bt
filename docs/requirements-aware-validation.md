@@ -101,3 +101,19 @@ Before activation: produce and review genuine requirements/coverage packages for
 the two commissioning candidates, bind the resulting plans through qualification
 and execution, run both test modes, and obtain independent review plus real-data
 BT-009 evidence. Do not start the full queue merely because unit tests pass.
+
+### Producer commissioning, 2026-11-13
+
+`bt.governance.coverage_producer.produce_coverage` now checks selected recovery
+bytes and produces bounded OHLCV predictor-availability evidence. Selected-panel
+admission can invoke it with an explicit representation and approved window.
+It refuses unsupported non-OHLCV availability assumptions and excessive source
+row budgets, and reports point-in-time membership as unverified. This is not yet
+the final engineering coverage receipt and must not be used to bypass review.
+
+Read-only probes of the genuine TRB and XTZ/RENDER/BTC candidates observed 26122
+20-minute and 27066 15-minute usable decisions respectively. Neither covers the
+entire frozen requested year. The current canonical panels also end before the
+requested endpoint (BTC ends May 18, 2026). Successor windows or new admission,
+independent requirement review, membership verification and final plan handoff
+remain necessary. No new BT-009 certification is claimed.

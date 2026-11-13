@@ -53,7 +53,7 @@ def build_batch(assignment: dict) -> dict:
                 f"required fields: {', '.join(missing)}"
             )
         receipts.append(receipt)
-    return {
+    document = {
         "schema_version": "alpha007-selected-panel-admission-batch-v1.0.0",
         "candidate_id": assignment["candidate_id"],
         "candidate_digest": assignment["candidate_digest"],
@@ -61,6 +61,16 @@ def build_batch(assignment: dict) -> dict:
         "receipts": receipts,
         "capital_or_order_authority": False,
     }
+    if assignment.get("representation_plan") is not None:
+        from bt.governance.coverage_producer import produce_coverage
+
+        document["predictor_coverage_evidence"] = produce_coverage(
+            plan=assignment["representation_plan"],
+            window=assignment["coverage_window"],
+            receipts=receipts,
+            required_fields={item["instrument"]: item["required_fields"] for item in assets},
+        )
+    return document
 
 
 def main() -> int:
