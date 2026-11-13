@@ -247,6 +247,35 @@ def _fractional_weights(d: float, threshold: float) -> np.ndarray:
     return np.asarray(weights[::-1], dtype=float)
 
 
+def feature_history(plan: dict[str, Any]) -> dict[str, int]:
+    """Prior completed bars required by each composed output, not just its last operator.
+
+    This is a structural lower bound. Missing/zero inputs can still make a
+    feature undefined; availability and observed event support remain separate.
+    """
+    validate_plan(plan)
+    history = {
+        f"{instrument}__{field}": 0
+        for instrument in plan["instruments"]
+        for field in ("open", "high", "low", "close", "volume", "quote_volume")
+    }
+    outputs = {}
+    for transform in plan["transformations"]:
+        operation, parameters = transform["operation"], transform["parameters"]
+        extra = 0
+        if operation in {"simple_return", "log_return"}:
+            extra = int(parameters["periods"])
+        elif operation in {"rolling_zscore", "realized_volatility"}:
+            extra = int(parameters["window"]) - 1 + int(parameters.get("lag", 0))
+        elif operation == "fractional_difference":
+            extra = len(_fractional_weights(float(parameters["d"]), float(parameters["weight_threshold"]))) - 1
+        elif operation not in {"identity", "spread", "ratio", "cross_sectional_rank"}:
+            raise AdaptiveRepresentationError("Feature history is undefined for this operation")
+        depth = max(history[name] for name in transform["input_fields"]) + extra
+        history[transform["output_field"]] = outputs[transform["output_field"]] = depth
+    return outputs
+
+
 def _apply_transform(frame: pd.DataFrame, transform: dict[str, Any]) -> pd.Series:
     inputs = transform["input_fields"]
     parameters = transform["parameters"]
