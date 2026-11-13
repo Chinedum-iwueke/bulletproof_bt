@@ -117,3 +117,19 @@ entire frozen requested year. The current canonical panels also end before the
 requested endpoint (BTC ends May 18, 2026). Successor windows or new admission,
 independent requirement review, membership verification and final plan handoff
 remain necessary. No new BT-009 certification is claimed.
+
+### Native planning before paid review
+
+`plan_alpha_requirements.py` checks composed representation history and both
+validation modes before independent requirements review. Coverage-only failures
+can now produce a bounded `coverage_successor_proposal` using the mandate's
+historical envelope and complete governed exposure ledger. The original plan
+stays deferred, and neither scientific requirements nor original inputs change.
+Separate successor smoke/scientific plans accompany the proposal. The control
+plane must validate custody and obtain independent approval before materializing
+an engineering task against the successor window. No model is called to choose
+dates, and no observed outcomes influence interval selection.
+
+Retained SPX/BTC input replay produces ready successor plans spanning May 14,
+2025 through May 18, 2026, including warmup and split gaps. This offline replay
+does not certify production review, authoring, execution or a BT-009 outcome.
