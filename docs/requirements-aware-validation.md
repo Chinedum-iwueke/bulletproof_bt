@@ -48,6 +48,12 @@ three; the tail does not increase the decision budget. The execution window
 ends at the tail boundary so final decisions can resolve inside admitted data.
 This planning reservation is not proof that an implementation correctly excludes
 tail rows from signal decisions; runner and evaluator tests must verify that.
+The assignment runner now computes its smoke representation splits and leakage
+audit only from completed decisions inside the frozen smoke interval. It retains
+the caller's complete frame for outcome construction. Regression tests cover
+one-, four- and twelve-bar tails. This does not yet prove every native strategy
+suppresses new signals during the tail; full commissioning still requires that
+runner-level evidence.
 It establishes runner integration, representation consumption and artifact
 retention. Insufficient scientific support can be an expected result. Smoke never
 qualifies a strategy or replaces full scientific evaluation.

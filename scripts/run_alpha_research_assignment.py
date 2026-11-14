@@ -1297,6 +1297,18 @@ def representation(
         )
         audit_rows = complete_rows
         audit_decisions = complete_rows["ts"] + interval
+    if planned_partitions is not None and "smoke" in planned_partitions:
+        smoke = planned_partitions["smoke"]
+        begin, end = pd.Timestamp(smoke["start"]), pd.Timestamp(smoke["end"])
+        # Retain label-tail data in the caller, but never count it as a
+        # decision opportunity in commissioning splits or leakage audits.
+        decisions = decisions.loc[(decisions >= begin) & (decisions < end)].reset_index(drop=True)
+        selected = (audit_decisions >= begin) & (audit_decisions < end)
+        audit_rows = audit_rows.loc[selected].copy()
+        audit_decisions = audit_decisions.loc[selected]
+        if len(decisions) < 5:
+            raise BridgeError("smoke decision interval is too short for evaluation splits")
+        planned_partitions = None
     first, last = decisions.iloc[0], decisions.iloc[-1]
     split_one = decisions.iloc[len(decisions) * 6 // 10]
     split_two = decisions.iloc[len(decisions) * 8 // 10]
@@ -1947,8 +1959,7 @@ def execute_registered(
         decision_timeframe=str(
             contract.schema.execution_semantics.get("signal_timeframe", "1m")
         ),
-        planned_partitions=(validation_plan["partitions"]
-                            if validation_plan and validation_plan["mode"] == "scientific" else None),
+        planned_partitions=validation_plan["partitions"] if validation_plan else None,
     )
     execution_delay_bars = int(contract_document.get("costs", {}).get("delay_bars", 1))
     model = declared_classic_bundle(

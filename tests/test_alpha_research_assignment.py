@@ -826,6 +826,23 @@ def test_representation_uses_frozen_requirements_partitions_instead_of_percentag
     assert report["status"] == "certified"
 
 
+@pytest.mark.parametrize("horizon", [1, 4, 12])
+def test_smoke_split_excludes_outcome_tail_without_discarding_label_data(horizon):
+    timestamps = pd.date_range("2026-01-01T00:00:00Z", periods=300 + horizon, freq="1min")
+    frame = pd.DataFrame({"ts": timestamps, "symbol": "BTCUSDT", "close": 100.0})
+    original = frame.copy(deep=True)
+    partitions = {
+        "smoke": {"start": "2026-01-01T00:01:00Z", "end": "2026-01-01T05:01:00Z"},
+        "target_tail": {"start": "2026-01-01T05:01:00Z", "end": (timestamps[-1] + pd.Timedelta(minutes=1)).isoformat()},
+    }
+    contract, report = representation(assignment(), frame, "f" * 64, planned_partitions=partitions)
+    reference, _ = representation(assignment(), frame.iloc[:300], "f" * 64)
+    assert contract.split == reference.split
+    assert pd.Timestamp(contract.split.test_end) < pd.Timestamp(partitions["target_tail"]["start"])
+    pd.testing.assert_frame_equal(frame, original)
+    assert report["status"] == "certified"
+
+
 def test_representation_sorts_source_and_rejects_duplicate_minutes() -> None:
     frame = pd.DataFrame(
         {
