@@ -42,7 +42,12 @@ invent eligibility receipts, observed event support or permission budgets.
 
 ## Two Validation Modes
 
-**Smoke** has feature warmup and a bounded execution interval, at most 31 days.
+**Smoke** has feature warmup, a bounded decision interval of at most 31 days,
+and a separate target-horizon tail. Required coverage and compute include all
+three; the tail does not increase the decision budget. The execution window
+ends at the tail boundary so final decisions can resolve inside admitted data.
+This planning reservation is not proof that an implementation correctly excludes
+tail rows from signal decisions; runner and evaluator tests must verify that.
 It establishes runner integration, representation consumption and artifact
 retention. Insufficient scientific support can be an expected result. Smoke never
 qualifies a strategy or replaces full scientific evaluation.

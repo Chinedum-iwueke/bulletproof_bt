@@ -100,6 +100,53 @@ def test_31_days_never_passes_scientific_support_but_can_smoke():
     assert not plan["partitions"]
 
 
+@pytest.mark.parametrize("horizon", [1, 4, 12])
+def test_smoke_reserves_outcomes_without_extending_decision_budget(horizon):
+    args = inputs()
+    args["requirements"]["target_horizon_bars"] = horizon
+    plan = plan_validation(**args, mode="smoke")
+    parts = plan["partitions"]
+    parse = datetime.fromisoformat
+    step = timedelta(minutes=20)
+    assert parse(parts["smoke"]["end"]) == parse(parts["target_tail"]["start"])
+    assert (parse(parts["smoke"]["end"]) - parse(parts["smoke"]["start"])) / step == 288
+    assert (parse(parts["target_tail"]["end"]) - parse(parts["target_tail"]["start"])) / step == horizon
+    assert plan["required_bars_per_asset"] == 144 + 288 + horizon
+    assert plan["bar_variant_work"] == (144 + 288 + horizon) * 4
+    assert parse(parts["target_tail"]["end"]) <= parse(args["approved_window"]["end"])
+
+
+def test_smoke_defers_when_only_warmup_and_decisions_fit():
+    args = inputs()
+    receipt = args["coverage"][0]
+    start = datetime.fromisoformat(receipt["intervals"][0]["start"])
+    receipt["intervals"] = [{"start": start.isoformat(), "end": (start + timedelta(minutes=20 * 432)).isoformat()}]
+    receipt["receipt_digest"] = fingerprint({k: v for k, v in receipt.items() if k != "receipt_digest"})
+    plan = plan_validation(**args, mode="smoke")
+    assert plan["status"] == "deferred"
+    assert plan["bar_shortfall"] == 4
+    assert not plan["partitions"]
+
+
+def test_smoke_execution_window_includes_frozen_outcome_tail():
+    args = inputs()
+    plan = plan_validation(**args, mode="smoke")
+    immutable = {
+        "dataset_bindings": args["dataset_bindings"], "instruments": args["instruments"],
+        "window": args["approved_window"], "maximum_variants": args["variants"],
+        "validation_requirements": {key: args[key] for key in (
+            "requirements", "coverage", "maximum_history_days", "maximum_bar_variant_work")},
+    }
+    assignment = {
+        "base_ref": args["source_commit"], "execution_class": "commissioning",
+        "validation_plan": plan, "window_start": plan["partitions"]["smoke"]["start"],
+        "window_end": plan["partitions"]["target_tail"]["end"],
+    }
+    assert verify_execution_plan(assignment, immutable) == plan
+    with pytest.raises(RequirementsError, match="execution window differs"):
+        verify_execution_plan(assignment | {"window_end": plan["partitions"]["smoke"]["end"]}, immutable)
+
+
 def test_budget_shortfalls_do_not_expand_authority():
     args = inputs()
     args.update(maximum_history_days=31, maximum_bar_variant_work=100)

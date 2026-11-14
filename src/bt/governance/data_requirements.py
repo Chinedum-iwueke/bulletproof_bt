@@ -248,7 +248,8 @@ def plan_validation(
         math.ceil(req.minimum_scientific_window_days * 1440 / req.research_bar_minutes),
     )
     evaluation = req.smoke_bars if mode == "smoke" else scientific_min
-    required = warmup + evaluation
+    # Smoke decisions need future observations too; these are not extra decisions.
+    required = warmup + evaluation + (req.target_horizon_bars if mode == "smoke" else 0)
     work = required * len(instruments) * variants
     duration = required * step
     reasons = []
@@ -301,7 +302,9 @@ def plan_validation(
 
         partitions = {"feature_warmup": interval(begin, evaluation_start)}
         if mode == "smoke":
-            partitions["smoke"] = interval(evaluation_start, finish)
+            smoke_end = finish - req.target_horizon_bars * step
+            partitions["smoke"] = interval(evaluation_start, smoke_end)
+            partitions["target_tail"] = interval(smoke_end, finish)
         else:
             test_end = finish - req.target_horizon_bars * step
             test_start = test_end - req.minimum_test_bars * step
@@ -387,7 +390,7 @@ def verify_execution_plan(
         )
     parts = plan["partitions"]
     begin = parts["smoke" if mode == "smoke" else "training"]["start"]
-    end = parts["smoke" if mode == "smoke" else "target_tail"]["end"]
+    end = parts["target_tail"]["end"]
     if instant(assignment["window_start"]) != instant(begin) or instant(
         assignment["window_end"]
     ) != instant(end):
