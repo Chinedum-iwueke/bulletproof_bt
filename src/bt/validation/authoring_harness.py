@@ -460,6 +460,7 @@ def run_scientific_case(
     payload = runner.validate_strategy_intent_evaluation(
         evaluator(
             frame=frame,
+            decision_frame=runner.evaluator_decision_frame(features, frame),
             adaptive_frame=representation.frame,
             parameter_grid=contract.schema.parameter_grid,
             validation_start=partitions["validation"]["start"],

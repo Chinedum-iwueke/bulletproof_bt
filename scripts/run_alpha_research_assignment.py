@@ -812,6 +812,38 @@ def materialize_causal_feature_frame(materialized: Any) -> pd.DataFrame:
     ]
 
 
+def evaluator_decision_frame(
+    feature_frame: pd.DataFrame, execution_frame: pd.DataFrame
+) -> pd.DataFrame:
+    """Keep the authoritative research clock separate from the execution clock.
+
+    Use the same shifted features and provenance attached to the engine, once per
+    decision rather than once per asset-minute. Retain missing feature values and
+    clock gaps so the evaluator can reject them; never forward-fill or resample.
+    """
+    if feature_frame.empty or execution_frame.empty:
+        raise BridgeError("evaluator decision frame requires non-empty inputs")
+    features = feature_frame.copy()
+    decisions = pd.to_datetime(features["ts"], utc=True, errors="raise")
+    execution = pd.to_datetime(execution_frame["ts"], utc=True, errors="raise")
+    provenance = pd.to_datetime(
+        features["representation_decision_ts"], utc=True, errors="raise"
+    )
+    if (
+        decisions.isna().any()
+        or execution.isna().any()
+        or decisions.duplicated().any()
+        or not decisions.is_monotonic_increasing
+        or not decisions.eq(provenance).all()
+    ):
+        raise BridgeError("evaluator decision clock is invalid or misbound")
+    selected = decisions.between(execution.min(), execution.max())
+    if not selected.any() or not decisions.loc[selected].isin(execution).all():
+        raise BridgeError("evaluator decisions are absent from the execution panel")
+    features["ts"] = decisions
+    return features.loc[selected].reset_index(drop=True)
+
+
 def causal_warmup_receipt(
     feature_frame: pd.DataFrame,
     *,
@@ -2208,6 +2240,10 @@ def execute_registered(
         intent_grid = validate_strategy_intent_evaluation(
             intent_evaluator(
                 frame=lightweight.copy(),
+                decision_frame=(
+                    evaluator_decision_frame(causal_features, lightweight)
+                    if adaptive_frame is not None else None
+                ),
                 adaptive_frame=(
                     adaptive_frame.copy() if adaptive_frame is not None else None
                 ),

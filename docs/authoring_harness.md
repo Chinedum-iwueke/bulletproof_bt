@@ -45,6 +45,35 @@ for independent scientific review, real-data smoke execution or one-year BT-009.
 
 ## Detection Boundaries
 
+### Evaluator Clocks
+
+Native `evaluate_alpha_intent(**context)` receives three distinct inputs:
+
+- `frame`: the execution panel, usually one-minute rows for each basket member.
+- `adaptive_frame`: the raw representation materialization, before any runner
+  compatibility shifts; it is not interchangeable with the attached engine feed.
+- `decision_frame`: the authoritative causal feature frame, with attached-engine
+  provenance and one row per research decision. It is bounded to the evaluator's
+  execution interval, including available outcome-tail rows but excluding earlier
+  warmup. Both native execution and `run_scientific_case` use the same builder.
+
+Use `decision_frame` for research-bar positional lags and targets. Never apply a
+four-hour positional lag to one-minute `frame` rows. The builder does not fill
+gaps, drop NaN features, or infer valid targets: the evaluator must still verify
+exact time deltas, support, partition boundaries and decision/tail separation.
+Test against a dense minute panel as well as decision-only unit fixtures. This
+interface does not automatically repair previously authored evaluators or confer
+scientific certification.
+
+Offline diagnostic on the retained SPX/BTC attempt (2026-11-16): its compiler
+produced 18 valid two-bar targets from 20 four-hour observations, but zero from
+the same observations embedded in 4,561 one-minute rows. Selecting the new
+authoritative decision frame restored exact compiler-frame equality and all 18
+targets. This verifies the clock boundary only; the candidate still needs a
+source-bound implementation correction, four-outcome harness tests, independent
+review and real-data execution. The new interface is locally tested, not yet
+released into the mandate's pinned Bulletproof source.
+
 - The worker observes actual native-runner returns, one completed smoke helper,
   and four completed `run_scientific_case` outcomes before independent review.
 - The harness rejects copied production provenance, altered fixture bytes, lowered

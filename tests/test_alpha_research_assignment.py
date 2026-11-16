@@ -18,6 +18,7 @@ from scripts.run_alpha_research_assignment import (
     attach_adaptive_features,
     causal_warmup_receipt,
     engineering_required,
+    evaluator_decision_frame,
     execute_registered,
     execution_scope,
     downstream_reuse_manifest,
@@ -38,6 +39,48 @@ from scripts.run_alpha_research_assignment import (
     verify_trusted_dataset_bindings,
     validate_strategy_intent_evaluation,
 )
+
+
+def test_evaluator_decision_frame_preserves_research_clock_and_invalid_values():
+    ts = pd.date_range("2026-01-01", periods=5, freq="4h", tz="UTC")
+    features = pd.DataFrame({
+        "ts": ts, "signal": [0.0, 1.0, float("nan"), 3.0, 4.0],
+        "representation_decision_ts": ts,
+        "representation_plan_digest": ["a" * 64] * 5,
+    })
+    # Two assets on a minute clock, excluding warmup but including outcome tail.
+    minute = pd.date_range(ts[1], ts[-1], freq="1min")
+    execution = pd.DataFrame({"ts": list(minute) * 2})
+    result = evaluator_decision_frame(features, execution)
+    assert list(result.ts) == list(ts[1:])
+    assert len(result) == 4
+    assert pd.isna(result.signal.iloc[1])
+    assert result.representation_plan_digest.eq("a" * 64).all()
+    assert len(features) == 5
+
+
+@pytest.mark.parametrize("corruption", ["duplicate", "order", "provenance", "missing_execution"])
+def test_evaluator_decision_frame_rejects_clock_corruption(corruption):
+    ts = pd.date_range("2026-01-01", periods=3, freq="4h", tz="UTC")
+    features = pd.DataFrame({"ts": ts, "representation_decision_ts": ts})
+    execution = pd.DataFrame({"ts": ts})
+    if corruption == "duplicate":
+        features = pd.concat([features, features.iloc[[0]]], ignore_index=True)
+    elif corruption == "order":
+        features = features.iloc[::-1]
+    elif corruption == "provenance":
+        features.loc[1, "representation_decision_ts"] = ts[0]
+    else:
+        execution = execution.iloc[[0, 2]]
+    with pytest.raises(BridgeError, match="evaluator decision"):
+        evaluator_decision_frame(features, execution)
+
+
+def test_evaluator_decision_frame_does_not_fill_research_gaps():
+    ts = pd.date_range("2026-01-01", periods=4, freq="4h", tz="UTC")
+    features = pd.DataFrame({"ts": ts, "representation_decision_ts": ts}).iloc[[0, 2, 3]]
+    result = evaluator_decision_frame(features, pd.DataFrame({"ts": ts}))
+    assert list(result.ts) == list(ts[[0, 2, 3]])
 
 
 @pytest.mark.parametrize(
