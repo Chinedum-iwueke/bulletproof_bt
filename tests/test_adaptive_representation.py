@@ -25,6 +25,18 @@ def test_natural_log_level_domain_and_temporal_semantics():
     assert returns.iloc[2] == pytest.approx(1.)
 
 
+def test_log1p_preserves_zero_volume_and_rejects_undefined_domain():
+    from bt.experiments.adaptive_representation import _apply_transform, feature_history
+    frame = pd.DataFrame({"x": [0., 1., -.5, -1., -2., np.inf, -np.inf, np.nan]})
+    transform = {"output_field": "log_volume", "operation": "log1p", "input_fields": ["x"], "parameters": {}, "fit_policy": "stateless", "rationale": "Completed volume expressed in natural log one-plus units."}
+    actual = _apply_transform(frame, transform)
+    np.testing.assert_allclose(actual.iloc[:3], [0., np.log(2), np.log(.5)])
+    assert actual.iloc[3:].isna().all()
+    plan = _plan()
+    plan["transformations"] = [transform | {"input_fields": ["BTCUSDT__volume"]}]
+    assert feature_history(plan) == {"log_volume": 0}
+
+
 def test_natural_log_range_materialization_has_no_extra_history_or_future_dependence():
     from bt.experiments.adaptive_representation import feature_history
     plan = _plan()

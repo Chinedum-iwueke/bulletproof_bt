@@ -169,6 +169,9 @@ bar requirement beyond its input's history. Composing `ratio(high, low)` with
 `natural_log` expresses a completed-bar log range. `log_return` is deliberately
 unchanged: it differences log levels across time and cannot substitute for this
 control. Likewise `simple_return` is relative change, not an arithmetic `spread`.
+`log1p` separately computes same-bar `ln(1+x)` for finite inputs greater than
+minus one, preserving zero-volume observations. It is stateless with no added
+history; raw volume and temporal log returns are not substitutes for it.
 
 This operation is tested locally across native materialization and the control
 plane/worker contracts, but is not yet released into an approved source-bound
