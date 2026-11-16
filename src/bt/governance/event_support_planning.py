@@ -17,11 +17,14 @@ def assess_event_support(specification, requirements, scientific_plan):
         gate, partition = design["gate"], design["partition"]
         if (gate not in requirements["minimum_event_support"]
                 or partition not in {"training", "validation", "test"}
-                or design["threshold_policy"] != "fixed_training_linear_strict_upper_tail"
+                or design["threshold_policy"] not in {
+                    "fixed_training_linear_strict_upper_tail",
+                    "fixed_training_linear_strict_lower_tail",
+                }
                 or type(design["quantile"]) not in {int, float}
                 or not 0 < design["quantile"] < 1):
             raise RequirementsError("invalid quantile support design")
-        key = (gate, partition, design["quantile"])
+        key = (gate, partition, design["quantile"], design["threshold_policy"])
         if key in seen:
             raise RequirementsError("duplicate quantile support design")
         seen.add(key)
@@ -31,10 +34,11 @@ def assess_event_support(specification, requirements, scientific_plan):
         bounds = parts[partition]
         rows = int((instant(bounds["end"]) - instant(bounds["start"])).total_seconds() / (60 * requirements["research_bar_minutes"]))
         q = Decimal(str(design["quantile"]))
-        nominal = Decimal(rows) * (1 - q)
-        # A strict exceedance of the linear empirical quantile cannot select more
+        tail_mass = q if design["threshold_policy"].endswith("lower_tail") else 1 - q
+        nominal = Decimal(rows) * tail_mass
+        # A strict tail of the linear empirical quantile cannot select more
         # than this many fit-population rows. Ties/exclusions can only reduce it.
-        hard_cap = int((Decimal(max(0, rows - 1)) * (1 - q)).to_integral_value(rounding=ROUND_CEILING)) if partition == "training" else None
+        hard_cap = int((Decimal(max(0, rows - 1)) * tail_mass).to_integral_value(rounding=ROUND_CEILING)) if partition == "training" else None
         required = requirements["minimum_event_support"][gate]
         impossible = hard_cap is not None and hard_cap < required
         if impossible:

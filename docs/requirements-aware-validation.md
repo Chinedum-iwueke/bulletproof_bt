@@ -183,9 +183,13 @@ are prose. A 95th-percentile event has nominal rate 0.05: 1,460 training rows im
 73 nominal observations before exclusions, compared with a requirement of 80.
 This is not a measured count or a probability guarantee. The local typed
 `scientific_specification.quantile_support_plan` now binds each gate, partition
-and quantile to `fixed_training_linear_strict_upper_tail`. Native preflight
+and quantile to `fixed_training_linear_strict_upper_tail` or
+`fixed_training_linear_strict_lower_tail`. Native preflight
 checks the strict in-sample upper bound `ceil((N - 1) * (1 - q))` for linear
-empirical quantiles. Ties or later exclusions can only reduce that capacity.
+empirical quantiles. For strict lower tails the bound is `ceil((N - 1) * q)`
+and nominal rate is `q`, not `1 - q`. Ties or later exclusions can only reduce
+that capacity. Both policies retain the original quantile, not a transformed
+percentile. Review must verify the declared tail against the event inequality.
 Held-out nominal rates remain review warnings, not hard bounds. Coverage
 successors cannot bypass an in-sample capacity rejection. Missing designs make
 no capacity claim, and rolling/refitted or inclusive threshold policies are not
@@ -193,3 +197,11 @@ covered by this contract. Independent review must check applicability and
 completeness; implementation and observed counts still require verification.
 Do not lower required counts,
 relabel missing support as success, or infer qualification from calendar coverage.
+
+R12 commissioning ended as a zero-trial native feasibility deferral: the corrected
+6h BTC/SPX rare-tail design required more common history than the approved envelope.
+This verifies early rejection, not strategy engineering or backtest certification.
+Its frozen representation incorrectly labeled lower-tail support as upper-tail;
+the explicit lower-tail contract repair does not alter that immutable run.
+A new source-bound proposal must not reuse those incorrect
+support declarations or retry the infeasible design unchanged.
