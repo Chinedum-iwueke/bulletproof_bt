@@ -116,10 +116,12 @@ wall-time estimate; the runtime capacity director must still admit the job.
 
 ## Migration and Certification Status
 
-Implemented locally with deterministic planner, runner and worker regressions.
-Not deployed or certified for unattended operation. Existing candidate producers
-do not yet supply this full reviewed package and eligible-coverage receipt.
-Their old handoffs deliberately fail preflight on the new scaffold revision.
+Native requirements planning and candidate-specific coverage production have
+been deployed at pinned source `9ad04de`. R10's SPX/BTC candidate reached both
+independent requirements reviewers on November 16, 2026. Both rejected its
+scientific specification; no engineering task or real-data backtest followed.
+This demonstrates the handoff and rejection boundary, not end-to-end certification.
+Historical handoffs missing the full reviewed package still fail preflight.
 
 Before activation: produce and review genuine requirements/coverage packages for
 the two commissioning candidates, bind the resulting plans through qualification
@@ -157,3 +159,34 @@ dates, and no observed outcomes influence interval selection.
 Retained SPX/BTC input replay produces ready successor plans spanning May 14,
 2025 through May 18, 2026, including warmup and split gaps. This offline replay
 does not certify production review, authoring, execution or a BT-009 outcome.
+
+### Representation semantics repair, not scientific approval
+
+The next local revision adds an explicit stateless `natural_log` operation with
+one input and no parameters. It computes the same-bar natural logarithm only for
+positive finite values, retaining undefined values as missing. It adds no prior
+bar requirement beyond its input's history. Composing `ratio(high, low)` with
+`natural_log` expresses a completed-bar log range. `log_return` is deliberately
+unchanged: it differences log levels across time and cannot substitute for this
+control. Likewise `simple_return` is relative change, not an arithmetic `spread`.
+
+This operation is tested locally across native materialization and the control
+plane/worker contracts, but is not yet released into an approved source-bound
+candidate. Existing source-pinned tasks and rejected records remain unchanged.
+
+R10 also exposed a separate support-planning gap. Named event counts are typed,
+but the threshold and selection-rate assumptions relating them to partitions
+are prose. A 95th-percentile event has nominal rate 0.05: 1,460 training rows imply
+73 nominal observations before exclusions, compared with a requirement of 80.
+This is not a measured count or a probability guarantee. The local typed
+`scientific_specification.quantile_support_plan` now binds each gate, partition
+and quantile to `fixed_training_linear_strict_upper_tail`. Native preflight
+checks the strict in-sample upper bound `ceil((N - 1) * (1 - q))` for linear
+empirical quantiles. Ties or later exclusions can only reduce that capacity.
+Held-out nominal rates remain review warnings, not hard bounds. Coverage
+successors cannot bypass an in-sample capacity rejection. Missing designs make
+no capacity claim, and rolling/refitted or inclusive threshold policies are not
+covered by this contract. Independent review must check applicability and
+completeness; implementation and observed counts still require verification.
+Do not lower required counts,
+relabel missing support as success, or infer qualification from calendar coverage.

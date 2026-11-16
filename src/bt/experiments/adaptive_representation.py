@@ -37,6 +37,7 @@ _OPERATIONS = {
     "identity",
     "simple_return",
     "log_return",
+    "natural_log",
     "fractional_difference",
     "rolling_zscore",
     "realized_volatility",
@@ -133,14 +134,16 @@ def _validate_operation(transform: dict[str, Any]) -> None:
     parameters = transform["parameters"]
     if not isinstance(parameters, dict):
         raise AdaptiveRepresentationError("transformation parameters must be an object")
-    if operation in {"identity", "simple_return", "log_return"}:
+    if operation in {"identity", "natural_log", "simple_return", "log_return"}:
         if len(inputs) != 1:
             raise AdaptiveRepresentationError(f"{operation} requires one input")
-        expected = set() if operation == "identity" else {"periods"}
+        expected = set() if operation in {"identity", "natural_log"} else {"periods"}
         if set(parameters) != expected:
             raise AdaptiveRepresentationError(f"{operation} parameters are invalid")
-        if operation != "identity" and not 1 <= int(parameters["periods"]) <= 10_000:
+        if operation in {"simple_return", "log_return"} and not 1 <= int(parameters["periods"]) <= 10_000:
             raise AdaptiveRepresentationError("return periods are outside the bounded range")
+        if operation == "natural_log" and transform["fit_policy"] != "stateless":
+            raise AdaptiveRepresentationError("natural_log is stateless")
     elif operation == "fractional_difference":
         if len(inputs) != 1 or set(parameters) != {"d", "weight_threshold"}:
             raise AdaptiveRepresentationError("fractional_difference contract is invalid")
@@ -269,7 +272,7 @@ def feature_history(plan: dict[str, Any]) -> dict[str, int]:
             extra = int(parameters["window"]) - 1 + int(parameters.get("lag", 0))
         elif operation == "fractional_difference":
             extra = len(_fractional_weights(float(parameters["d"]), float(parameters["weight_threshold"]))) - 1
-        elif operation not in {"identity", "spread", "ratio", "cross_sectional_rank"}:
+        elif operation not in {"identity", "natural_log", "spread", "ratio", "cross_sectional_rank"}:
             raise AdaptiveRepresentationError("Feature history is undefined for this operation")
         depth = max(history[name] for name in transform["input_fields"]) + extra
         history[transform["output_field"]] = outputs[transform["output_field"]] = depth
@@ -283,6 +286,8 @@ def _apply_transform(frame: pd.DataFrame, transform: dict[str, Any]) -> pd.Serie
     source = pd.to_numeric(frame[inputs[0]], errors="coerce")
     if operation == "identity":
         return source
+    if operation == "natural_log":
+        return np.log(source.where((source > 0) & np.isfinite(source)))
     if operation == "simple_return":
         return source.pct_change(int(parameters["periods"]), fill_method=None)
     if operation == "log_return":

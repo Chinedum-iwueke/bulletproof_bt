@@ -13,6 +13,41 @@ from bt.experiments.adaptive_representation import (
 )
 
 
+def test_natural_log_level_domain_and_temporal_semantics():
+    from bt.experiments.adaptive_representation import _apply_transform
+    frame = pd.DataFrame({"x": [1., np.e, np.e ** 2, 0., -1., np.inf, np.nan]})
+    transform = {"operation": "natural_log", "input_fields": ["x"], "parameters": {}}
+    actual = _apply_transform(frame, transform)
+    np.testing.assert_allclose(actual.iloc[:3], [0., 1., 2.])
+    assert actual.iloc[3:].isna().all()
+    returns = _apply_transform(frame, transform | {"operation": "log_return", "parameters": {"periods": 1}})
+    assert pd.isna(returns.iloc[0])
+    assert returns.iloc[2] == pytest.approx(1.)
+
+
+def test_natural_log_range_materialization_has_no_extra_history_or_future_dependence():
+    from bt.experiments.adaptive_representation import feature_history
+    plan = _plan()
+    plan["transformations"] = [
+        {"output_field": "range_ratio", "operation": "ratio", "input_fields": ["BTCUSDT__high", "BTCUSDT__low"], "parameters": {}, "fit_policy": "stateless", "rationale": "Completed research bar high divided by its low."},
+        {"output_field": "log_range", "operation": "natural_log", "input_fields": ["range_ratio"], "parameters": {}, "fit_policy": "stateless", "rationale": "Natural logarithm of the same completed bar range ratio."},
+    ]
+    assert feature_history(plan) == {"range_ratio": 0, "log_range": 0}
+    def run(periods):
+        return materialize_adaptive_representation(plan, {
+            "BTCUSDT": _panel("BTCUSDT", periods=periods),
+            "DOGEUSDT": _panel("DOGEUSDT", offset=2, periods=periods),
+        }).frame
+    short, long = run(120), run(180)
+    np.testing.assert_allclose(short["log_range"], np.log(short["range_ratio"]))
+    np.testing.assert_allclose(short["log_range"], long["log_range"].iloc[:len(short)])
+    for change in ({"parameters": {"periods": 1}}, {"input_fields": ["range_ratio", "BTCUSDT__close"]}, {"fit_policy": "train_only"}):
+        invalid = deepcopy(plan)
+        invalid["transformations"][-1].update(change)
+        with pytest.raises(AdaptiveRepresentationError):
+            validate_plan(invalid)
+
+
 def _panel(symbol: str, *, offset: float = 0.0, periods: int = 180) -> pd.DataFrame:
     ts = pd.date_range("2025-01-01T00:00:00Z", periods=periods, freq="1min")
     close = 100 + offset + np.arange(periods) * 0.01

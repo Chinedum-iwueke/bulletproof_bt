@@ -5,6 +5,7 @@ from copy import deepcopy
 from bt.experiments.adaptive_representation import feature_history
 from bt.governance.data_requirements import fingerprint, preflight_evidence
 from bt.governance.coverage_successor import plan_coverage_successor
+from bt.governance.event_support_planning import assess_event_support
 
 
 def plan_requirements(evidence, *, source_commit):
@@ -44,6 +45,11 @@ def plan_requirements(evidence, *, source_commit):
         successor["window"] = {"start": parts["feature_warmup"]["start"], "end": parts["target_tail"]["end"]}
         successor["validation_requirements"]["coverage"] = proposal["planning_inputs"]["coverage"]
         successor_plans = preflight_evidence(successor, source_commit=source_commit)
+    support = assess_event_support(
+        evidence["discovery_candidate"].get("scientific_specification", {}),
+        requirements, (successor_plans or plans)["scientific"],
+    )
+    reasons.extend(support["blockers"])
     report = {
         "schema_version": "native-requirements-feasibility-v1",
         "input_digest": fingerprint(evidence),
@@ -59,6 +65,7 @@ def plan_requirements(evidence, *, source_commit):
         "coverage_successor_proposal": proposal,
         "successor_validation_plans": successor_plans,
         "event_support": "must_be_measured_after_execution_not_inferred_from_coverage",
+        "event_support_planning": support,
         "scientific_certification": False,
         "execution_authority": False,
     }
