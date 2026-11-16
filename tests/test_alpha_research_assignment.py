@@ -28,6 +28,8 @@ from scripts.run_alpha_research_assignment import (
     materialize_causal_feature_frame,
     observation_only_contract,
     representation,
+    smoke_signal_generation_end,
+    verify_smoke_callback_boundary,
     resolve_strategy_intent_evaluator,
     record_alpha_memory,
     retain_bundle,
@@ -841,6 +843,31 @@ def test_smoke_split_excludes_outcome_tail_without_discarding_label_data(horizon
     assert pd.Timestamp(contract.split.test_end) < pd.Timestamp(partitions["target_tail"]["start"])
     pd.testing.assert_frame_equal(frame, original)
     assert report["status"] == "certified"
+
+
+def test_smoke_callback_boundary_uses_source_clock_not_research_clock():
+    plan = {"mode": "smoke", "partitions": {"smoke": {"end": "2026-01-02T00:00:00Z"}}}
+    assert smoke_signal_generation_end(plan) == "2026-01-01T23:59:00+00:00"
+    assert smoke_signal_generation_end(None) is None
+    assert smoke_signal_generation_end({"mode": "scientific"}) is None
+
+
+@pytest.mark.parametrize("change", [
+    {"signal_generation_end_ts": None}, {"outcome_tail_bar_count": 0},
+    {"strategy_callback_count": 0}, {"strategy_callback_count": True},
+    {"last_strategy_callback_ts": "2026-01-02T00:00:00+00:00"},
+    {"last_strategy_callback_ts": "NaT"},
+    {"last_strategy_callback_ts": "invalid"},
+    {"last_strategy_callback_ts": "2026-01-01T23:59:00"},
+])
+def test_smoke_receipt_rejects_missing_or_violated_runtime_boundary(tmp_path, change):
+    import json
+    summary = {"signal_generation_end_ts": "2026-01-02T00:00:00+00:00",
+               "outcome_tail_bar_count": 4, "strategy_callback_count": 100,
+               "last_strategy_callback_ts": "2026-01-01T23:59:00+00:00"}
+    (tmp_path / "decision_logging_summary.json").write_text(json.dumps(summary | change))
+    with pytest.raises(BridgeError, match="boundary was not observed"):
+        verify_smoke_callback_boundary(tmp_path, "2026-01-02T00:00:00+00:00")
 
 
 def test_representation_sorts_source_and_rejects_duplicate_minutes() -> None:

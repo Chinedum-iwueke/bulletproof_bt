@@ -1260,6 +1260,38 @@ def available_fields(path: Path) -> tuple[str, ...]:
     return tuple(sorted(fields))
 
 
+def smoke_signal_generation_end(plan: dict[str, Any] | None) -> str | None:
+    """Native panels are left-labelled one-minute source bars.
+
+    The final minute closing at the exclusive decision boundary must not call
+    strategy code. Research resampling does not change this source clock.
+    """
+    if not plan or plan["mode"] != "smoke":
+        return None
+    return (pd.Timestamp(plan["partitions"]["smoke"]["end"]) - pd.Timedelta(minutes=1)).isoformat()
+
+
+def verify_smoke_callback_boundary(run_dir: Path, boundary: str) -> dict[str, Any]:
+    summary = json.loads((run_dir / "decision_logging_summary.json").read_text())
+    count = summary.get("strategy_callback_count")
+    tail = summary.get("outcome_tail_bar_count")
+    last = summary.get("last_strategy_callback_ts")
+    try:
+        last_ts, boundary_ts = pd.Timestamp(last), pd.Timestamp(boundary)
+        valid_timestamps = all(not pd.isna(ts) and ts.tzinfo is not None for ts in (last_ts, boundary_ts))
+    except (ValueError, TypeError):
+        valid_timestamps = False
+    if (summary.get("signal_generation_end_ts") != boundary
+            or type(count) is not int or count < 1
+            or type(tail) is not int or tail < 1
+            or not valid_timestamps or last_ts >= boundary_ts):
+        raise BridgeError("native smoke callback boundary was not observed")
+    return {"schema_version": "native-smoke-callback-boundary-v1",
+            "signal_generation_end_ts": boundary, "strategy_callback_count": count,
+            "last_strategy_callback_ts": last, "outcome_tail_bar_count": tail,
+            "summary_digest": digest(summary), "scientific_certification": False}
+
+
 def representation(
     assignment: dict[str, Any],
     frame: pd.DataFrame,
@@ -2016,6 +2048,11 @@ def execute_registered(
                 "required_extra_columns must preserve ordered adaptive outputs and provenance"
             )
     execution_overrides: list[str] = []
+    signal_end = smoke_signal_generation_end(validation_plan)
+    if signal_end is not None:
+        boundary_path = output / "smoke-decision-boundary.yaml"
+        boundary_path.write_text(yaml.safe_dump({"data": {"signal_generation_end_ts": signal_end}}), encoding="utf-8")
+        execution_overrides.append(str(boundary_path))
     if warmup_bars:
         if not assignment.get("window_start") or not assignment.get("window_end"):
             raise BridgeError("causal warmup requires an immutable execution window")
@@ -2116,6 +2153,9 @@ def execute_registered(
     ]
     for result in execute_variant_grid(jobs, max_workers):
         run_dir = Path(result["run_dir"])
+        if signal_end is not None:
+            boundary_receipt = verify_smoke_callback_boundary(run_dir, signal_end)
+            (run_dir / "smoke-callback-boundary.json").write_bytes(canonical(boundary_receipt) + b"\n")
         for name, document in (
             ("market_model_bundle.json", model.document()),
             ("representation_contract.json", rep.document()),

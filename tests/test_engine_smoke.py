@@ -5,6 +5,7 @@ from pathlib import Path
 import json
 
 import pandas as pd
+import pytest
 
 from bt.core.engine import BacktestEngine
 from bt.data.feed import HistoricalDataFeed
@@ -137,3 +138,49 @@ def test_engine_warmup_suppresses_pre_start_trading_and_equity(tmp_path: Path) -
     equity = pd.read_csv(tmp_path / "equity.csv")
     assert not equity.empty
     assert pd.to_datetime(equity["ts"], utc=True).min() >= official_start
+
+
+@pytest.mark.parametrize("bounded", [False, True])
+def test_outcome_tail_does_not_invoke_strategy_but_accounting_continues(tmp_path, bounded):
+    class RecordingStrategy(CoinFlipStrategy):
+        def __init__(self):
+            super().__init__(seed=7, p_trade=1.0, cooldown_bars=0)
+            self.calls = []
+
+        def on_bars(self, ts, bars_by_symbol, tradeable, ctx):
+            self.calls.append(ts)
+            if ts != pd.Timestamp("2024-01-03T00:00:00Z"):
+                return []
+            return super().on_bars(ts, bars_by_symbol, tradeable, ctx)
+
+    strategy = RecordingStrategy()
+    end = pd.Timestamp("2024-01-04T00:00:00Z")
+    engine = BacktestEngine(
+        datafeed=HistoricalDataFeed(_make_bars_df()),
+        universe=UniverseEngine(min_history_bars=1, lookback_bars=1, min_avg_volume=0, lag_bars=0),
+        strategy=strategy,
+        risk=RiskEngine(max_positions=1, config={"risk": {"mode": "r_fixed", "r_per_trade": 0.01, "stop": {}}}),
+        execution=ExecutionModel(fee_model=FeeModel(maker_fee_bps=0, taker_fee_bps=0), slippage_model=SlippageModel(k=0), delay_bars=1),
+        portfolio=Portfolio(initial_cash=10000, max_leverage=2),
+        decisions_writer=JsonlWriter(tmp_path / "decisions.jsonl"),
+        fills_writer=JsonlWriter(tmp_path / "fills.jsonl"),
+        trades_writer=TradesCsvWriter(tmp_path / "trades.csv"),
+        equity_path=tmp_path / "equity.csv",
+        config={"data": {"signal_generation_end_ts": end.isoformat()}} if bounded else {},
+    )
+    engine.run()
+    assert len(strategy.calls) == (3 if bounded else 5)
+    if bounded:
+        assert all(ts < end for ts in strategy.calls)
+    fills = [json.loads(line) for line in (tmp_path / "fills.jsonl").read_text().splitlines()]
+    assert any(pd.Timestamp(fill["ts"]) == end for fill in fills)
+    equity = pd.read_csv(tmp_path / "equity.csv")
+    assert pd.to_datetime(equity.ts, utc=True).max() == pd.Timestamp("2024-01-05T00:00:00Z")
+    summary = json.loads((tmp_path / "decision_logging_summary.json").read_text())
+    assert summary["outcome_tail_bar_count"] == (2 if bounded else 0)
+    assert summary["strategy_callback_count"] == len(strategy.calls)
+    if bounded:
+        from scripts.run_alpha_research_assignment import verify_smoke_callback_boundary
+        receipt = verify_smoke_callback_boundary(tmp_path, end.isoformat())
+        assert receipt["outcome_tail_bar_count"] == 2
+        assert receipt["scientific_certification"] is False

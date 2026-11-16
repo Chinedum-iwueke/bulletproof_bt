@@ -51,9 +51,22 @@ tail rows from signal decisions; runner and evaluator tests must verify that.
 The assignment runner now computes its smoke representation splits and leakage
 audit only from completed decisions inside the frozen smoke interval. It retains
 the caller's complete frame for outcome construction. Regression tests cover
-one-, four- and twelve-bar tails. This does not yet prove every native strategy
-suppresses new signals during the tail; full commissioning still requires that
-runner-level evidence.
+one-, four- and twelve-bar tails. The native engine now supports an explicit
+`data.signal_generation_end_ts`: at and after that source timestamp it does not
+invoke strategy callbacks, while pending fills and portfolio accounting continue.
+The assignment bridge derives this cutoff from the exclusive completed-decision
+boundary minus one source minute, not one research bar. Unconfigured historical
+runs retain their callback behavior.
+
+Each smoke variant must produce observed callback and tail-bar counts, its last
+callback timestamp and its effective cutoff in `decision_logging_summary.json`.
+The bridge checks those observations before retaining
+`smoke-callback-boundary.json`; absent tail processing, invalid timestamps or a
+callback at/after the cutoff fail commissioning. Engine regressions demonstrate
+pending fills in the tail, and a public `run_backtest` regression checks override
+propagation and accounting through the final bar. These are fixture-based runner
+proofs, not a successful real-candidate run or scientific certification. They
+also do not prove the correctness of each strategy's target equation or exits.
 It establishes runner integration, representation consumption and artifact
 retention. Insufficient scientific support can be an expected result. Smoke never
 qualifies a strategy or replaces full scientific evaluation.

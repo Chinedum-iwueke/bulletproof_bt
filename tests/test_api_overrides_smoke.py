@@ -4,8 +4,29 @@ from pathlib import Path
 import json
 
 import yaml
+import pandas as pd
 
 from bt.api import run_backtest, run_grid
+
+
+def test_public_runner_preserves_smoke_callback_boundary(tmp_path: Path) -> None:
+    from scripts.run_alpha_research_assignment import verify_smoke_callback_boundary
+
+    frame = pd.read_csv("data/curated/sample.csv")
+    times = sorted(pd.to_datetime(frame["ts"], utc=True).unique())
+    boundary = pd.Timestamp(times[len(times) // 2]).isoformat()
+    override_path = tmp_path / "smoke-boundary.yaml"
+    override_path.write_text(yaml.safe_dump({"data": {"signal_generation_end_ts": boundary}}))
+    run_dir = Path(run_backtest(
+        config_path="configs/engine.yaml", data_path="data/curated/sample.csv",
+        out_dir=str(tmp_path / "runs"), override_paths=[str(override_path)],
+        run_name="smoke_boundary",
+    ))
+    receipt = verify_smoke_callback_boundary(run_dir, boundary)
+    assert receipt["strategy_callback_count"] == len(times) // 2
+    assert receipt["outcome_tail_bar_count"] == len(times) - len(times) // 2
+    equity = pd.read_csv(run_dir / "equity.csv")
+    assert pd.to_datetime(equity["ts"], utc=True).max() == times[-1]
 
 
 def test_run_backtest_override_written_to_config_used(tmp_path: Path) -> None:

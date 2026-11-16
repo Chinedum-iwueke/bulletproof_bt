@@ -154,6 +154,16 @@ class BacktestEngine:
         data_cfg = config.get("data") if isinstance(config.get("data"), dict) else {}
         analysis_start = data_cfg.get("analysis_start_ts") if isinstance(data_cfg, dict) else None
         self._analysis_start_ts = pd.Timestamp(analysis_start).tz_convert("UTC") if analysis_start else None
+        signal_end = data_cfg.get("signal_generation_end_ts")
+        self._signal_generation_end_ts = pd.Timestamp(signal_end).tz_convert("UTC") if signal_end else None
+        if self._signal_generation_end_ts is not None and pd.isna(self._signal_generation_end_ts):
+            raise ValueError("signal generation end must be a valid timestamp")
+        if self._signal_generation_end_ts is not None and self._analysis_start_ts is not None and self._signal_generation_end_ts <= self._analysis_start_ts:
+            raise ValueError("signal generation must end after analysis starts")
+        self._decision_summary["signal_generation_end_ts"] = self._signal_generation_end_ts.isoformat() if self._signal_generation_end_ts is not None else None
+        self._decision_summary["strategy_callback_count"] = 0
+        self._decision_summary["last_strategy_callback_ts"] = None
+        self._decision_summary["outcome_tail_bar_count"] = 0
         research_cfg = config.get("research") if isinstance(config.get("research"), dict) else {}
         self._research_metadata = {
             "identity_research_tier": research_cfg.get("research_tier"),
@@ -741,7 +751,16 @@ class BacktestEngine:
                     "warmup": in_warmup,
                     "analysis_start_ts": self._analysis_start_ts,
                 }
-                signals = self._strategy.on_bars(ts, bars_by_symbol, strategy_tradeable, self._ctx_with_positions(ctx))
+                # Outcome bars settle existing work; they cannot generate fresh
+                # strategy decisions, even when a strategy ignores tradeable.
+                in_outcome_tail = self._signal_generation_end_ts is not None and ts >= self._signal_generation_end_ts
+                if in_outcome_tail:
+                    self._decision_summary["outcome_tail_bar_count"] += 1
+                    signals = []
+                else:
+                    self._decision_summary["strategy_callback_count"] += 1
+                    self._decision_summary["last_strategy_callback_ts"] = pd.Timestamp(ts).isoformat()
+                    signals = self._strategy.on_bars(ts, bars_by_symbol, strategy_tradeable, self._ctx_with_positions(ctx))
                 if self._audit is not None and self._audit.enabled:
                     self._audit.mark_layer_executed("alignment_audit")
                     for violation in inspect_alignment(ts=ts, bars_by_symbol=bars_by_symbol):
