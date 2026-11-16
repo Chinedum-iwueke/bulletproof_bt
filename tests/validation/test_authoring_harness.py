@@ -207,6 +207,30 @@ def test_assertion_rejects_any_outcome_shortcut(tmp_path):
         check(terminal(tmp_path, "invalid"), tmp_path, "positive")
 
 
+def test_native_scientific_terminal_is_not_trade_log_holdout(tmp_path):
+    result = terminal(tmp_path, "invalid")
+    trial = result["publication_envelope"]["trial"]
+    trial["hypothesis_evaluation"] = trial.pop("held_out_evaluation")
+    trial["held_out_evaluation"] = None
+    report = check(result, tmp_path, "invalid")
+    assert report["outcome"] == "invalid"
+    assert report["scientific_certification"] is False
+
+
+def test_missing_scientific_and_trade_terminal_fails_closed(tmp_path):
+    result = terminal(tmp_path)
+    result["publication_envelope"]["trial"]["held_out_evaluation"] = None
+    with pytest.raises(HarnessError, match="evidence is missing"):
+        check(result, tmp_path)
+
+
+def test_malformed_native_terminal_does_not_fall_back_to_trade_score(tmp_path):
+    result = terminal(tmp_path)
+    result["publication_envelope"]["trial"]["hypothesis_evaluation"] = []
+    with pytest.raises(HarnessError, match="evidence is missing"):
+        check(result, tmp_path)
+
+
 def test_assertion_rejects_closed_positive_selection(tmp_path):
     result = terminal(tmp_path, "positive")
     result["publication_envelope"]["trial"]["held_out_evaluation"][

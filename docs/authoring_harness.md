@@ -71,8 +71,8 @@ the same observations embedded in 4,561 one-minute rows. Selecting the new
 authoritative decision frame restored exact compiler-frame equality and all 18
 targets. This verifies the clock boundary only; the candidate still needs a
 source-bound implementation correction, four-outcome harness tests, independent
-review and real-data execution. The new interface is locally tested, not yet
-released into the mandate's pinned Bulletproof source.
+review and real-data execution. The interface was released in `5bac465` and
+bound to commissioning mandate R7; this is not candidate certification.
 
 - The worker observes actual native-runner returns, one completed smoke helper,
   and four completed `run_scientific_case` outcomes before independent review.
@@ -88,6 +88,14 @@ released into the mandate's pinned Bulletproof source.
   exercise rejection rules. Those unit tests are not native-runner evidence.
 
 ## Current Validation Status
+
+Native scientific results are retained in `trial.hypothesis_evaluation`; their
+trade-log `held_out_evaluation` is deliberately null. The terminal assertion
+reads the native scientific evidence first and only uses the trade-log field
+for legacy results without native evidence. Missing or malformed evidence still
+fails closed. This distinction was reproduced from a completed four-variant
+SPX/BTC synthetic smoke execution; rechecking its retained artifact hashes passed
+with an honest invalid-support result. It is not real-data certification.
 
 Harness rejection rules and the worker instrumentation have focused regression
 coverage. Successful real-candidate four-outcome runs, independent review, full

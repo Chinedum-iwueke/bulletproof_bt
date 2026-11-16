@@ -530,7 +530,14 @@ def assert_terminal_case(
         or result.get("disposition") != "commissioning_complete"
     ):
         raise HarnessError("fixture result must have no qualification authority")
-    heldout = envelope.get("trial", {}).get("held_out_evaluation", {})
+    trial = envelope.get("trial", {})
+    # Native scientific evaluators retain their result separately from the
+    # trade-log held-out score, which is deliberately null for these strategies.
+    heldout = trial.get("hypothesis_evaluation")
+    if heldout is None:
+        heldout = trial.get("held_out_evaluation")
+    if not isinstance(heldout, dict):
+        raise HarnessError("native terminal outcome evidence is missing")
     if heldout.get("outcome") != expected_outcome:
         raise HarnessError("native terminal outcome differs from expected case")
     if expected_outcome == "positive" and (
