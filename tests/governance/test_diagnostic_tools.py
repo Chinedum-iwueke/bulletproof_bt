@@ -122,3 +122,15 @@ def test_dgp_order_does_not_change_random_streams():
     first = run(request, catalog)['result']['results']
     request['payload']['design']['calibration']['dgp_ids'].reverse()
     assert first == list(reversed(run(request, catalog)['result']['results']))
+
+
+def test_structured_design_never_runs_the_legacy_marginal_probe(monkeypatch):
+    from tests.governance.test_calibration_consistency import experiment_fixture
+    from bt.governance import diagnostic_tools
+    experiment, design, cal = experiment_fixture()
+    request, catalog = calibration()
+    request['payload']['design'].update(experiment=experiment, calibration_design=design, calibration=cal)
+    monkeypatch.setattr(diagnostic_tools, '_calibrate', lambda *_: pytest.fail('Wrong executor must not run'))
+    assert run(request, catalog)['result']['reason'] == 'structured_calibration_executor_unavailable'
+    request['payload']['design']['calibration_design'] = {}
+    assert run(request, catalog)['result']['status'] == 'requires_method_correction'

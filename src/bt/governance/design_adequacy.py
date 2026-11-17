@@ -14,11 +14,14 @@ def assess_design_adequacy(contract, *, subject_digest, source_commit):
     fields = {"schema_version", "estimand", "estimator_id", "meaningful_effect",
               "dependence_assumptions", "multiplicity", "eligibility_policy",
               "undefined_replicate_policy", "calibration"}
+    structured = isinstance(contract, dict) and 'experiment' in contract
+    if structured:
+        fields |= {'experiment', 'calibration_design'}
     if not isinstance(contract, dict) or set(contract) != fields:
         raise RequirementsError("design adequacy fields differ")
     if contract["schema_version"] != "design-adequacy-contract-v1":
         raise RequirementsError("unsupported design adequacy version")
-    for name in fields - {"schema_version", "meaningful_effect", "calibration"}:
+    for name in fields - {"schema_version", "meaningful_effect", "calibration", 'experiment', 'calibration_design'}:
         if not isinstance(contract[name], str) or not 1 <= len(contract[name].strip()) <= 4000:
             raise RequirementsError("missing or oversized design statement: " + name)
     effect = contract["meaningful_effect"]
@@ -61,4 +64,15 @@ def assess_design_adequacy(contract, *, subject_digest, source_commit):
             "actual_compute_cost_per_replicate", "null_size_interval_coverage_and_power"],
         "market_data_used": False, "scientific_certification": False, "execution_authority": False,
     }
+    if structured:
+        from bt.governance.calibration_consistency import assess_consistency
+        findings = assess_consistency(contract['experiment'], contract['calibration_design'], calibration)
+        result['consistency'] = {'status': 'repair_required' if findings else 'structurally_consistent',
+                                 'finding_count': len(findings), 'findings': findings[:64],
+                                 'scientific_validity': 'unverified'}
+        if findings:
+            result['status'] = 'requires_method_correction'
+        result['unverified_obligations'] += ['declared_dgp_execution_parity', 'joint_distribution_scientific_validity']
+    else:
+        result['consistency'] = {'status': 'unverified_legacy_prose', 'scientific_validity': 'unverified'}
     return result | {"report_digest": fingerprint(result)}

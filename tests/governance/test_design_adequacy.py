@@ -27,9 +27,24 @@ def test_complete_contract_is_not_scientific_approval():
     assert result['calibration_work_units'] == 39800
     assert result['execution_authority'] is result['scientific_certification'] is False
     assert result['status'] == 'requires_independent_review_and_native_calibration'
+    assert result['consistency']['status'] == 'unverified_legacy_prose'
     changed = contract()
     changed['calibration']['seed'] += 1
     assert result['report_digest'] != assess(changed)['report_digest']
+
+
+def test_structured_native_diagnostic_returns_repair_then_readiness_not_approval():
+    from test_calibration_consistency import experiment_fixture
+    experiment, design, calibration = experiment_fixture()
+    value = contract() | dict(experiment=experiment, calibration_design={}, calibration=calibration)
+    failed = assess(value)
+    assert failed['status'] == 'requires_method_correction'
+    assert failed['consistency']['findings'][0]['code'] == 'missing_design'
+    value['calibration_design'] = design
+    ready = assess(value)
+    assert ready['consistency']['status'] == 'structurally_consistent'
+    assert ready['scientific_certification'] is False
+    assert ready['execution_authority'] is False
 
 
 @pytest.mark.parametrize('field', list(contract()))
