@@ -42,6 +42,26 @@ invent eligibility receipts, observed event support or permission budgets.
 
 ## Two Validation Modes
 
+### Event-Support Planning
+
+Identical `(gate, partition, quantile, threshold_policy)` entries are assessed
+once. Reports retain input, unique and duplicate counts; distinct gates,
+partitions, thresholds and tail directions remain distinct. Validation precedes
+deduplication, so a malformed repeated entry still fails. Input contracts are not
+mutated. This makes shared support checks across variants idempotent, without
+changing variant budgets or any event minimum.
+
+Each assessment reports `minimum_bars_for_nominal_event_count`, the ceiling of
+the event minimum divided by the declared tail mass. For example, 40 events in
+a 5% tail require at least 800 nominal bars, before exclusions. This is a planning
+diagnostic, not observed support or statistical power. Increasing a frozen split
+minimum still requires a reviewed successor; the planner does not alter it.
+
+Local replay of the retained SPX assignment reduced 24 entries to 18 distinct
+checks and removed its duplicate-entry exception. It still deferred the original
+scientific window and proposed a coverage successor. This is offline validation
+of modified source, not deployment, approval or a successful backtest.
+
 **Smoke** has feature warmup, a bounded decision interval of at most 31 days,
 and a separate target-horizon tail. Required coverage and compute include all
 three; the tail does not increase the decision budget. The execution window

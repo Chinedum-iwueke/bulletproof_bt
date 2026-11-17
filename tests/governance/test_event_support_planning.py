@@ -57,6 +57,35 @@ def test_heldout_nominal_shortfall_is_not_an_impossibility_claim():
     assert item["fit_population_upper_bound"] is None
     assert item["nominal_events_before_exclusions"] == 18.25
     assert item["nominal_shortfall_requires_review"]
+    assert item["minimum_bars_for_nominal_event_count"] == 800
+
+
+def test_identical_support_entries_are_idempotent_without_mutating_input():
+    design = {"gate": "events", "partition": "test", "quantile": .95,
+              "threshold_policy": "fixed_training_linear_strict_upper_tail"}
+    spec = {"quantile_support_plan": [design, deepcopy(design), {**design, "quantile": .9}]}
+    before = deepcopy(spec)
+    req = {"minimum_event_support": {"events": 40}, "research_bar_minutes": 120}
+    plan = {"partitions": {"test": {"start": "2025-01-01T00:00:00Z", "end": "2025-03-01T08:00:00Z"}}}
+    result = assess_event_support(spec, req, plan)
+    single = assess_event_support({"quantile_support_plan": [design, {**design, "quantile": .9}]}, req, plan)
+    assert result["assessments"] == single["assessments"]
+    assert result["blockers"] == single["blockers"]
+    assert result["duplicate_design_count"] == 1
+    assert result["input_design_count"] == 3 and result["unique_design_count"] == 2
+    assert spec == before
+    assert result["execution_authority"] is False
+
+
+def test_deduplication_does_not_hide_invalid_or_distinct_designs():
+    design = {"gate": "events", "partition": "test", "quantile": .95,
+              "threshold_policy": "fixed_training_linear_strict_upper_tail"}
+    req = {"minimum_event_support": {"events": 40}, "research_bar_minutes": 120}
+    result = assess_event_support({"quantile_support_plan": [design, {**design, "partition": "validation"},
+        {**design, "threshold_policy": "fixed_training_linear_strict_lower_tail"}]}, req, {})
+    assert result["unique_design_count"] == 3
+    with pytest.raises(RequirementsError):
+        assess_event_support({"quantile_support_plan": [design, {**design, "extra": 1}]}, req, {})
 
 
 def test_missing_design_makes_no_support_claim():

@@ -11,6 +11,7 @@ def assess_event_support(specification, requirements, scientific_plan):
         raise RequirementsError("quantile support designs must be a bounded list")
     assessments, blockers = [], []
     seen = set()
+    duplicate_count = 0
     for design in designs:
         if not isinstance(design, dict) or set(design) != {"gate", "partition", "quantile", "threshold_policy"}:
             raise RequirementsError("quantile support design fields differ")
@@ -26,7 +27,8 @@ def assess_event_support(specification, requirements, scientific_plan):
             raise RequirementsError("invalid quantile support design")
         key = (gate, partition, design["quantile"], design["threshold_policy"])
         if key in seen:
-            raise RequirementsError("duplicate quantile support design")
+            duplicate_count += 1
+            continue
         seen.add(key)
         parts = scientific_plan.get("partitions", {})
         if partition not in parts:
@@ -46,12 +48,15 @@ def assess_event_support(specification, requirements, scientific_plan):
         assessments.append({
             **design, "available_partition_bars": rows, "required_events": required,
             "nominal_events_before_exclusions": float(nominal),
+            "minimum_bars_for_nominal_event_count": int((Decimal(required) / tail_mass).to_integral_value(rounding=ROUND_CEILING)),
             "fit_population_upper_bound": hard_cap,
             "nominal_shortfall_requires_review": nominal < required,
             "status": "impossible_under_declared_policy" if impossible else "requires_independent_review_and_observation",
         })
     return {
         "schema_version": "event-support-planning-v1", "assessments": assessments,
+        "input_design_count": len(designs), "unique_design_count": len(seen),
+        "duplicate_design_count": duplicate_count,
         "blockers": blockers, "observed_event_support": False,
         "statistical_power_established": False, "execution_authority": False,
         "scope": "declared_fixed_training_quantile_only" if designs else "not_declared_no_capacity_claim",
