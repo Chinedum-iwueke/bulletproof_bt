@@ -50,6 +50,16 @@ def plan_requirements(evidence, *, source_commit):
         requirements, (successor_plans or plans)["scientific"],
     )
     reasons.extend(support["blockers"])
+    diagnostic = None
+    if "diagnostic_request" in evidence:
+        from bt.governance.diagnostic_tools import run_diagnostic
+        request = evidence["diagnostic_request"]
+        if request["subject_digest"] != fingerprint(evidence["discovery_candidate"]):
+            raise ValueError("diagnostic subject differs from candidate")
+        diagnostic = run_diagnostic(request, runtime_source_commit=source_commit,
+            evidence_catalog=evidence.get("diagnostic_evidence_catalog", {}))
+        if diagnostic["result"].get("status") == "await_engineering":
+            reasons.append("diagnostic:await_engineering")
     report = {
         "schema_version": "native-requirements-feasibility-v1",
         "input_digest": fingerprint(evidence),
@@ -69,4 +79,6 @@ def plan_requirements(evidence, *, source_commit):
         "scientific_certification": False,
         "execution_authority": False,
     }
+    if diagnostic is not None:
+        report["native_diagnostic"] = diagnostic
     return report | {"report_digest": fingerprint(report)}
