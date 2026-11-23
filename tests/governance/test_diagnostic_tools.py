@@ -86,6 +86,28 @@ def test_unsupported_estimator_and_excessive_work_never_execute():
     with pytest.raises(RequirementsError): run(request, catalog)
 
 
+def test_large_declaration_cannot_raise_execution_ceiling(monkeypatch):
+    import bt.governance.diagnostic_tools as tools
+    request, catalog = calibration()
+    request['payload']['design']['calibration'].update(
+        outer_replicates=104, inner_replicates=10000,
+        max_work_units=266_240_000)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('Execution began before the work ceiling check')
+
+    monkeypatch.setattr(tools.random, 'Random', forbidden)
+    monkeypatch.setattr(tools, 'paired_bootstrap', forbidden)
+    with pytest.raises(RequirementsError, match='admitted work budget'):
+        run(request, catalog)
+
+    request['tool'] = 'design_adequacy_v1'
+    request['payload'] = request['payload']['design']
+    receipt = run(request, catalog)
+    assert receipt['execution_authority'] is False
+    assert receipt['scientific_certification'] is False
+
+
 def test_native_planning_carries_diagnostic_and_defers_unavailable_tool():
     e = evidence()
     source = 'a'*40
@@ -124,10 +146,12 @@ def test_dgp_order_does_not_change_random_streams():
     assert first == list(reversed(run(request, catalog)['result']['results']))
 
 
-def test_structured_design_never_runs_the_legacy_marginal_probe(monkeypatch):
+@pytest.mark.parametrize('declared_budget', [1000000, 266240000])
+def test_structured_design_never_runs_the_legacy_marginal_probe(monkeypatch, declared_budget):
     from tests.governance.test_calibration_consistency import experiment_fixture
     from bt.governance import diagnostic_tools
     experiment, design, cal = experiment_fixture()
+    cal['max_work_units'] = declared_budget
     request, catalog = calibration()
     request['payload']['design'].update(experiment=experiment, calibration_design=design, calibration=cal)
     monkeypatch.setattr(diagnostic_tools, '_calibrate', lambda *_: pytest.fail('Wrong executor must not run'))

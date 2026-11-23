@@ -74,3 +74,21 @@ def test_compute_and_reference_guards():
             c['meaningful_effect']['evidence_digests'] = ['not-a-receipt']
         with pytest.raises(RequirementsError):
             assess(c)
+
+
+@pytest.mark.parametrize('budget', [266_240_000, 10**15])
+def test_large_prospective_budget_is_not_execution_authority(budget):
+    value = contract()
+    value['calibration']['max_work_units'] = budget
+    result = assess(value)
+    assert result['execution_authority'] is False
+    assert result['scientific_certification'] is False
+    assert result['status'] == 'requires_independent_review_and_native_calibration'
+
+
+@pytest.mark.parametrize('budget', [10**15 + 1, True, 1.5, float('inf')])
+def test_prospective_budget_remains_bounded_integer(budget):
+    value = contract()
+    value['calibration']['max_work_units'] = budget
+    with pytest.raises(RequirementsError, match='max_work_units'):
+        assess(value)

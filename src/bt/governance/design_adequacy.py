@@ -4,6 +4,10 @@ import re
 
 from bt.governance.data_requirements import RequirementsError, fingerprint
 
+# Same finite declaration bound as the per-unit assurance ledger. Execution
+# budgets are enforced separately by the diagnostic executor and its caller.
+MAX_DECLARED_WORK_UNITS = 10**15
+
 
 def assess_design_adequacy(contract, *, subject_digest, source_commit, evidence_catalog=None):
     """Validate a bounded proposed calibration contract without running it."""
@@ -46,7 +50,7 @@ def assess_design_adequacy(contract, *, subject_digest, source_commit, evidence_
             "seed", "outer_replicates", "inner_replicates", "max_work_units", "dgp_ids"}:
         raise RequirementsError("explicit calibration budget required")
     for name, maximum in (("seed", 2**32-1), ("outer_replicates", 10000),
-                          ("inner_replicates", 10000), ("max_work_units", 10_000_000)):
+                          ("inner_replicates", 10000), ("max_work_units", MAX_DECLARED_WORK_UNITS)):
         value = calibration[name]
         if type(value) is not int or not (0 if name == "seed" else 1) <= value <= maximum:
             raise RequirementsError("invalid calibration bound: " + name)
