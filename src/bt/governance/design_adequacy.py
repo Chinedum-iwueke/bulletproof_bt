@@ -5,7 +5,7 @@ import re
 from bt.governance.data_requirements import RequirementsError, fingerprint
 
 
-def assess_design_adequacy(contract, *, subject_digest, source_commit):
+def assess_design_adequacy(contract, *, subject_digest, source_commit, evidence_catalog=None):
     """Validate a bounded proposed calibration contract without running it."""
     if not isinstance(subject_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", subject_digest):
         raise RequirementsError("exact subject digest required")
@@ -15,13 +15,18 @@ def assess_design_adequacy(contract, *, subject_digest, source_commit):
               "dependence_assumptions", "multiplicity", "eligibility_policy",
               "undefined_replicate_policy", "calibration"}
     structured = isinstance(contract, dict) and 'experiment' in contract
+    assured = isinstance(contract, dict) and contract.get('schema_version') == 'design-adequacy-contract-v2'
+    if assured:
+        fields.add('assurance')
     if structured:
         fields |= {'experiment', 'calibration_design'}
     if not isinstance(contract, dict) or set(contract) != fields:
         raise RequirementsError("design adequacy fields differ")
-    if contract["schema_version"] != "design-adequacy-contract-v1":
+    if contract["schema_version"] not in {"design-adequacy-contract-v1", "design-adequacy-contract-v2"}:
         raise RequirementsError("unsupported design adequacy version")
-    for name in fields - {"schema_version", "meaningful_effect", "calibration", 'experiment', 'calibration_design'}:
+    if assured and not structured:
+        raise RequirementsError('assured design requires a frozen experiment')
+    for name in fields - {"schema_version", "meaningful_effect", "calibration", 'experiment', 'calibration_design', 'assurance'}:
         if not isinstance(contract[name], str) or not 1 <= len(contract[name].strip()) <= 4000:
             raise RequirementsError("missing or oversized design statement: " + name)
     effect = contract["meaningful_effect"]
@@ -67,6 +72,20 @@ def assess_design_adequacy(contract, *, subject_digest, source_commit):
     if structured:
         from bt.governance.calibration_consistency import assess_consistency
         findings = assess_consistency(contract['experiment'], contract['calibration_design'], calibration)
+        if assured:
+            from bt.governance.method_assurance import assess_assurance
+            assurance_findings, totals = assess_assurance(contract['assurance'], evidence_catalog or {})
+            findings += assurance_findings
+            assurance = contract['assurance']
+            ledger = assurance.get('workload', {}) if isinstance(assurance, dict) else {}
+            caps = ledger.get('caps', {}) if isinstance(ledger, dict) else {}
+            if not isinstance(caps, dict) or caps.get('statistic_evaluation') != calibration['max_work_units']:
+                findings.append(dict(code='work_budget_binding', path='assurance.workload.caps',
+                    message='statistic_evaluation cap must equal the declared calibration max_work_units.',
+                    owner='method_designer', disposition='repair'))
+            result['declared_work_by_unit'] = totals
+            result['unverified_obligations'] += ['definition_semantics_and_dependency_completeness',
+                'work_factor_completeness_and_runtime_enforcement']
         result['consistency'] = {'status': 'repair_required' if findings else 'structurally_consistent',
                                  'finding_count': len(findings), 'findings': findings[:64],
                                  'scientific_validity': 'unverified'}

@@ -12,10 +12,10 @@ from bt.governance.event_support_planning import assess_event_support
 from bt.governance.residual_bootstrap import paired_bootstrap
 
 TOOLS = {
-    "design_adequacy_v1": ["design_adequacy.py", "calibration_consistency.py", "data_requirements.py"],
+    "design_adequacy_v1": ["design_adequacy.py", "calibration_consistency.py", "method_assurance.py", "data_requirements.py"],
     "event_support_v1": ["event_support_planning.py", "data_requirements.py"],
     "requirements_feasibility_v1": ["requirements_feasibility.py", "data_requirements.py", "event_support_planning.py"],
-    "residual_calibration_v1": ["residual_bootstrap.py", "design_adequacy.py", "calibration_consistency.py", "data_requirements.py"],
+    "residual_calibration_v1": ["residual_bootstrap.py", "design_adequacy.py", "calibration_consistency.py", "method_assurance.py", "data_requirements.py"],
 }
 DGPS = {"iid_null_v1": (0., False), "ar_null_v1": (.6, False), "iid_shift_v1": (0., True)}
 
@@ -129,7 +129,8 @@ def run_diagnostic(request, *, runtime_source_commit, evidence_catalog, disabled
         files = TOOLS[tool]
         if tool in {"design_adequacy_v1", "residual_calibration_v1"}:
             design = payload if tool == "design_adequacy_v1" else payload.get("design") if isinstance(payload, dict) else None
-            assessment = assess_design_adequacy(design, subject_digest=request["subject_digest"], source_commit=runtime_source_commit)
+            assessment = assess_design_adequacy(design, subject_digest=request["subject_digest"], source_commit=runtime_source_commit,
+                                              evidence_catalog=evidence_catalog)
             if any(ref not in evidence_catalog for ref in design["meaningful_effect"]["evidence_digests"]):
                 raise RequirementsError("missing justification evidence")
             if tool == 'design_adequacy_v1' or assessment['status'] == 'requires_method_correction':
