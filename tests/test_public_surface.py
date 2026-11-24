@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import importlib
+from pathlib import Path
+import subprocess
 import sys
 
 
@@ -23,17 +24,34 @@ def test_bt_public_api_exports():
 
 
 def test_import_bt_is_lightweight():
-    for module_name in HEAVY_MODULES:
-        sys.modules.pop(module_name, None)
+    # A cold import needs a new interpreter, not eviction of collected tests'
+    # module objects and registries from the shared pytest interpreter.
+    source = Path(__file__).resolve().parents[1] / "src"
+    code = (
+        "import sys\n"
+        f"sys.path.insert(0, {str(source)!r})\n"
+        f"heavy_modules = {HEAVY_MODULES!r}\n"
+        "assert all(name not in sys.modules for name in heavy_modules)\n"
+        "import bt\n"
+        "assert all(name not in sys.modules for name in heavy_modules)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", code],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
-    for module_name in list(sys.modules):
-        if module_name == "bt" or module_name.startswith("bt."):
-            sys.modules.pop(module_name, None)
 
-    importlib.import_module("bt")
+def test_lightweight_import_preserves_parent_module_identity():
+    from bt.contracts import research_specs_v2
 
-    for module_name in HEAVY_MODULES:
-        assert module_name not in sys.modules
+    registry = research_specs_v2.STRATEGY_REGISTRY
+    test_import_bt_is_lightweight()
+    from bt.contracts import research_specs_v2 as after
+
+    assert after is research_specs_v2
+    assert after.STRATEGY_REGISTRY is registry
+    assert sys.modules[research_specs_v2.__name__] is research_specs_v2
 
 
 def test_run_backtest_still_works_via_bt_namespace(tmp_path):
