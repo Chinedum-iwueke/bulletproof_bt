@@ -22,6 +22,27 @@ Do not weaken any Bulletproof_bt truth guarantees:
   `scripts/validate_experiment_truth.py` before its artifacts can feed verdicts,
   state discovery, terminal cards, or research memory.
 
+## Dataset Identity Boundaries
+
+Use `bt.governance.dataset_bindings.verify_dataset_binding_identities` for
+in-memory dataset-binding comparison. It enforces exact basket membership,
+unique instruments, source-digest shape and every declared identity field.
+Catch `DatasetBindingError` at the evaluator boundary and return the documented
+invalid/failed terminal outcome; do not silently drop malformed members.
+
+The expected bindings must come from the independently verified immutable
+contract. Never derive the expected bindings or trusted digest from the receipt
+being validated. Matching two caller-controlled objects is not evidence of trust.
+The helper does not admit data, verify listing history, hash source files or grant
+execution authority. The runner's `verify_trusted_dataset_bindings` remains
+responsible for matching materialized bytes to the verified identities.
+
+Test valid reordered multi-asset bindings, missing/extra/duplicate members,
+missing/changed declared fields, malformed members and unhashable identifiers.
+Keep the expected contract fixed in negative tests; separately test malformed
+expected contracts. Do not replace these checks with a set of source digests:
+set conversion loses multiplicity and does not verify provenance fields.
+
 ## Required Clarifications Before Generating Code
 
 If a hypothesis card is ambiguous, ask or make an explicit conservative choice

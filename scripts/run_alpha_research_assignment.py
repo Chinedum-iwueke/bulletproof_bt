@@ -23,6 +23,10 @@ import pandas as pd
 import yaml
 
 from bt.data.resample import timeframe_minutes
+from bt.governance.dataset_bindings import (
+    DatasetBindingError,
+    verify_dataset_binding_identities,
+)
 from bt.evaluation.alpha_research import (
     complete_timeframe_bars,
     held_out_trade_evaluation,
@@ -215,70 +219,14 @@ def verify_trusted_dataset_bindings(
     assignment: dict[str, Any], expected_bindings: list[dict[str, Any]]
 ) -> None:
     """Replay a contract's evidence identities against the materialized files."""
-    bindings = assignment.get("dataset_bindings")
-    if not isinstance(bindings, list) or len(bindings) != len(expected_bindings):
-        raise BridgeError("execution requires every trusted dataset binding")
-    def indexed(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-        result = {}
-        for original in items:
-            item = dict(original)
-            symbol = item.get("instrument")
-            plural = item.get("instruments")
-            if symbol is None and isinstance(plural, list) and len(plural) == 1:
-                symbol = plural[0]
-            if (
-                not isinstance(symbol, str) or not symbol
-                or (plural is not None and plural != [symbol])
-                or symbol in result
-            ):
-                raise BridgeError("trusted dataset basket identity mismatch")
-            item["instrument"] = symbol
-            item["instruments"] = [symbol]
-            result[symbol] = item
-        return result
-
-    actual = indexed(bindings)
-    expected_by_symbol = indexed(expected_bindings)
-    if (
-        None in actual
-        or None in expected_by_symbol
-        or set(actual) != set(expected_by_symbol)
-    ):
-        raise BridgeError("trusted dataset basket identity mismatch")
-    for symbol, expected in expected_by_symbol.items():
-        item = actual.get(symbol, {})
-        normalized = dict(item)
-        if (
-            "partition_digest" not in normalized
-            and isinstance(normalized.get("partition_digests"), list)
-            and len(normalized["partition_digests"]) == 1
-        ):
-            normalized["partition_digest"] = normalized["partition_digests"][0]
-        if "partition_digests" in expected:
-            partitions = normalized.get("partition_digests")
-            if (
-                not isinstance(partitions, list)
-                or partitions != expected["partition_digests"]
-                or not partitions
-                or any(not isinstance(value, str) or not value for value in partitions)
-            ):
-                raise BridgeError(
-                    f"trusted immutable partition binding mismatch: {symbol}"
-                )
-            singular = normalized.get("partition_digest")
-            if singular is not None and (
-                len(partitions) != 1 or singular != partitions[0]
-            ):
-                raise BridgeError(
-                    f"trusted singular/plural partition binding mismatch: {symbol}"
-                )
-        # Paths are host-local; every other declared identity is immutable,
-        # including producer IDs, builder commits and output-schema evidence.
-        required = [key for key in expected if key != "dataset_path"]
-        if any(normalized.get(key) != expected[key] for key in required):
-            raise BridgeError(f"trusted immutable evidence binding mismatch: {symbol}")
+    bindings = assignment.get("dataset_bindings") if isinstance(assignment, dict) else None
+    try:
+        actual = verify_dataset_binding_identities(bindings, expected_bindings)
+    except DatasetBindingError as exc:
+        raise BridgeError(str(exc)) from exc
+    for symbol, normalized in actual.items():
         path = Path(str(normalized.get("dataset_path", "")))
-        if not path.is_file() or file_digest(path) != str(expected["dataset_digest"]):
+        if not path.is_file() or file_digest(path) != normalized["dataset_digest"]:
             raise BridgeError(
                 f"trusted materialized dataset content mismatch: {symbol}"
             )

@@ -235,6 +235,33 @@ def test_trusted_binding_rejects_duplicate_symbols_before_dictionary_collapse(tm
         )
 
 
+@pytest.mark.parametrize("malformed", [None, {}, "binding", [], [None], [42], [["pair"]]])
+@pytest.mark.parametrize("side", ["expected", "actual"])
+def test_trusted_binding_malformed_collections_fail_explicitly(malformed, side):
+    valid = [{"instrument": "ETHUSDT", "dataset_digest": "a" * 64}]
+    expected = malformed if side == "expected" else valid
+    actual = malformed if side == "actual" else valid
+    with pytest.raises(BridgeError):
+        verify_trusted_dataset_bindings({"dataset_bindings": actual}, expected)
+
+
+@pytest.mark.parametrize("source_digest", [None, [], {}, "", "g" * 64, "a" * 63])
+@pytest.mark.parametrize("side", ["expected", "actual"])
+def test_trusted_binding_invalid_source_identity_fails_explicitly(source_digest, side):
+    valid = {"instrument": "SOLUSDT", "dataset_digest": "a" * 64}
+    bad = {**valid, "dataset_digest": source_digest}
+    with pytest.raises(BridgeError, match="SHA-256 source identity"):
+        verify_trusted_dataset_bindings(
+            {"dataset_bindings": [bad if side == "actual" else valid]},
+            [bad if side == "expected" else valid],
+        )
+
+
+def test_trusted_binding_rejects_empty_self_consistent_basket():
+    with pytest.raises(BridgeError, match="every trusted dataset binding"):
+        verify_trusted_dataset_bindings({"dataset_bindings": []}, [])
+
+
 def assignment():
     return {
         "base_ref": "a" * 40,
