@@ -1,7 +1,41 @@
 from pathlib import Path
 from types import SimpleNamespace
+import json
+import sys
 import pandas as pd
 import pytest
+
+
+@pytest.mark.parametrize('stage', ['prepare_execution', 'unknown'])
+def test_non_execution_stages_never_dispatch_market_runner(tmp_path, monkeypatch, stage):
+    import scripts.run_alpha_research_assignment as runner
+    import bt.governance.released_execution as preparation
+
+    assignment = dict(stage=stage, base_ref='a'*40, dataset_path=str(tmp_path/'panel.parquet'),
+        dataset_digest='b'*64, question='A bounded prospective question', campaign_digest='c'*64)
+    assignment['question_digest'] = runner.digest({'question':assignment['question']})
+    path = tmp_path/'assignment.json'
+    path.write_text(json.dumps(assignment))
+    receipt = tmp_path/'receipt.json'
+    monkeypatch.setattr(sys, 'argv', ['runner', '--assignment', str(path), '--repository-root', str(tmp_path),
+        '--output', str(tmp_path/'output'), '--receipt', str(receipt)])
+    monkeypatch.setattr(runner.subprocess, 'run', lambda *args, **kwargs: SimpleNamespace(stdout='a'*40))
+    monkeypatch.setattr(runner, 'file_digest', lambda path: 'b'*64)
+    def forbidden(*args, **kwargs):
+        pytest.fail('Preparation or an unknown stage dispatched a market-data runner')
+    monkeypatch.setattr(runner, 'execute_registered', forbidden)
+    monkeypatch.setattr(preparation, 'prepare_released_qualification', lambda *args, **kwargs:
+        dict(disposition='released_execution_card_prepared', execution_authority=False))
+    if stage == 'unknown':
+        with pytest.raises(SystemExit, match='unsupported alpha research stage'):
+            runner.main()
+        assert not receipt.exists()
+    else:
+        assert runner.main() == 0
+        result = json.loads(receipt.read_text())
+        assert result['stage'] == stage
+        assert result['execution_authority'] is False
+        assert 'alpha_campaign_attempt' not in result
 
 from bt.evaluation.alpha_research import (
     complete_five_minute_bars,

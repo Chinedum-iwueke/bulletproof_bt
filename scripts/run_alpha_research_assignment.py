@@ -3616,7 +3616,11 @@ def main() -> int:
             ),
             "qualification": qualification,
         }
-    else:
+    elif stage == "prepare_execution":
+        from bt.governance.released_execution import prepare_released_qualification
+
+        result = prepare_released_qualification(assignment, repository_root=repository)
+    elif stage == "execute":
         try:
             result = execute_registered(
                 assignment, repository, args.output, max_workers=args.max_workers
@@ -3628,6 +3632,8 @@ def main() -> int:
                 result = engineering_required(assignment, args.output, str(exc))
             else:
                 raise
+    else:
+        raise SystemExit("unsupported alpha research stage")
     receipt = {
         "schema_version": "alpha003-governed-receipt-v1.0.0",
         "stage": stage,
