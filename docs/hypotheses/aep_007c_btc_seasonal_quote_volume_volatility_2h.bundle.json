@@ -1,0 +1,45 @@
+{
+  "schema_version": "immutable-engineering-bundle-v1",
+  "milestone": "AEP-007C",
+  "work_item": "btc-volume-volatility-accepted-method",
+  "accepted_method_handoff_digest": "ac80159f59f89c4555c34c41acf4456b851e01fe312eff310a4456150c2ad9bd",
+  "accepted_method_proposal_digest": "532cf1f5331e39dff121e4224b9188d66b4b37229ad8aadaa1522cceef87aecb",
+  "accepted_evidence_sha256": "57d90ff8554b226ff8685928d2738b7690af4a931bfc548b3cc534c18dae99b4",
+  "source_commit": "d232ee753f967760ce3d753abff607ee2232ce62",
+  "accepted_representation_plan_digest": "06334f51b04604847ff509e259bdbea335f0b54a78926cc30b1aee98c7333146",
+  "runtime_representation_plan_digest": "206555a30e397a1549f13c7b234c8ba9ed10b36bc9cd7439f1585edc65d850bd",
+  "source_set_digest": "4c8c6bc40f0f543f842a7e89ee45c8483b38b20e9990beb683b962ec039b4e1b",
+  "source_set_digest_method": "sha256(canonical-json(sorted path-to-sha256 mapping) + newline)",
+  "patch_sha256": "08f057fa2f4aaa129282a5007fe03fa5ba31827f89c9bf155d63f75adc7b2a24",
+  "patch_digest_method": "sha256(git diff for tracked scripts/runner then strategy/__init__, followed by git diff --no-index /dev/null in strategy, YAML, docs, tests order; bundle excluded to avoid self-reference)",
+  "files": {
+    "src/bt/strategy/__init__.py": "98d78324f959ba1b256b76796e68310310d6b559e9252154fbd07d212366e1e7",
+    "scripts/run_alpha_research_assignment.py": "67aeb6525cac27abb06f5844848c0d5837b8a897f88829923b53c9c8699a7dcb",
+    "src/bt/strategy/btc_seasonal_quote_volume_volatility_2h.py": "2948ad4dc8a5af1008e4d5b0540631e5a0fa233df06cc4d86510cf6754aa9400",
+    "research/hypotheses/aep_007c_btc_seasonal_quote_volume_volatility_2h.yaml": "af67c77bfc98f36d2dfe035d9a23fa5f526e285d1a3a7cdafc10abfedcbdef53",
+    "docs/hypotheses/aep_007c_btc_seasonal_quote_volume_volatility_2h.md": "1f925d832d1df35493275f096fb458d7b2e0cbe7caea12d09b5a0f80b455d8b8",
+    "tests/test_btc_volume_volatility_accepted_method.py": "15174c0a3c96f1b64be83427d2715386729b6a0c22dda85701c1cdab6063d540"
+  },
+  "validation": {
+    "author_diagnostics": "python -m pytest tests/test_btc_volume_volatility_accepted_method.py -q: 28 passed in 289.78s; current post-repair author run; not_authoritative_not_a_receipt",
+    "external_focused_receipt": {
+      "receipt_id": "557319608972c9ad5c3d224f157da83dd0cc8a0f5af5ad302b2d61d4113c4b07",
+      "bound_code_digest": "93fd128486f2fd7f59cd7b22aecd41a06ba4997e6bbd097df4702868e7daad6b",
+      "status": "superseded_by_current_repair"
+    },
+    "accepted_evidence_hash": "author_verified",
+    "complete_repository_suite": "delegated_to_governed_outer_validator"
+  },
+  "independent_review": {
+    "latest_receipt_id": "3aacf9408f321239ab32108a5db697c73f9920fa6028cc4049866f1299ac0593",
+    "latest_verdict": "rejected_superseded_by_current_repair",
+    "current_status": "pending_fresh_external_authoritative_receipt",
+    "scope": "independent implementation review required before governed repository validation"
+  },
+  "governed_repository_validation": {"status": "pending_external_authoritative_receipt"},
+  "execution": {
+    "market_data_backtest": false,
+    "calibration": false,
+    "scientific_certification": false
+  }
+}

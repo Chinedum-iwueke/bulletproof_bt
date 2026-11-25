@@ -13,11 +13,12 @@ import re
 import shutil
 import sqlite3
 import subprocess
+from itertools import product
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import get_context
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import pandas as pd
 import yaml
@@ -157,7 +158,9 @@ def validate_strategy_intent_evaluation(
         raise BridgeError(
             "strategy intent evaluator did not retain every exact variant"
         )
-    allowed_outcomes = {"positive", "negative", "invalid", "failed", "test_open"}
+    allowed_outcomes = {
+        "positive", "negative", "invalid", "failed", "inconclusive", "test_open"
+    }
     for item in candidates:
         if (
             item.get("outcome") not in allowed_outcomes
@@ -472,26 +475,71 @@ def validate_overlap_admission_receipt(
     window_end: Any,
 ) -> None:
     """Replay a DATA-002/003 overlap receipt carried by the authenticated assignment."""
-    if not isinstance(receipt, dict):
+    required_keys = {
+        "schema_version", "authority", "dataset_bindings", "instruments",
+        "minimum_contiguous_days", "admitted_start", "admitted_end", "record_digest",
+    }
+
+    def json_value_valid(value: Any) -> bool:
+        if value is None or isinstance(value, (str, bool, int)):
+            return not isinstance(value, int) or isinstance(value, bool) or abs(value) <= 2**53
+        if isinstance(value, float):
+            return math.isfinite(value)
+        if isinstance(value, list):
+            return all(json_value_valid(item) for item in value)
+        if isinstance(value, dict):
+            return all(
+                isinstance(key, str) and json_value_valid(item)
+                for key, item in value.items()
+            )
+        return False
+
+    if (not isinstance(receipt, dict) or set(receipt) != required_keys
+            or not json_value_valid(receipt)):
         raise BridgeError("basket overlap admission receipt must be an object")
     document = {key: value for key, value in receipt.items() if key != "record_digest"}
-    expected_bindings = [
-        {
-            "instrument": item["instrument"],
-            "dataset_build_id": item["dataset_build_id"],
-            "dataset_digest": item["dataset_digest"],
-        }
-        for item in bindings
-    ]
+    try:
+        expected_bindings = [
+            {
+                "instrument": item["instrument"],
+                "dataset_build_id": item["dataset_build_id"],
+                "dataset_digest": item["dataset_digest"],
+            }
+            for item in bindings
+        ]
+        admitted_start = pd.Timestamp(receipt["admitted_start"])
+        admitted_end = pd.Timestamp(receipt["admitted_end"])
+        expected_start = pd.Timestamp(window_start)
+        expected_end = pd.Timestamp(window_end)
+        minimum_days = receipt["minimum_contiguous_days"]
+        identifiers = [
+            (item["instrument"], item["dataset_build_id"], item["dataset_digest"])
+            for item in expected_bindings
+        ]
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        raise BridgeError("basket overlap admission receipt is malformed") from exc
+    if (
+        not all(isinstance(value, str) and value for item in identifiers for value in item)
+        or len(set(identifiers)) != len(identifiers)
+        or not isinstance(instruments, list)
+        or not all(isinstance(item, str) and item for item in instruments)
+        or len(set(instruments)) != len(instruments)
+        or not isinstance(minimum_days, int)
+        or isinstance(minimum_days, bool)
+        or any(ts.tzinfo is None or str(ts.tz) != "UTC" for ts in (
+            admitted_start, admitted_end, expected_start, expected_end
+        ))
+    ):
+        raise BridgeError("basket overlap admission receipt is malformed")
     if (
         receipt.get("schema_version") != "alpha-basket-overlap-admission-v1.0.0"
         or receipt.get("authority") != "DATA-002/003"
         or receipt.get("record_digest") != digest(document)
         or receipt.get("dataset_bindings") != expected_bindings
         or receipt.get("instruments") != instruments
-        or int(receipt.get("minimum_contiguous_days", 0)) < 365
-        or pd.Timestamp(receipt.get("admitted_start")) > pd.Timestamp(window_start)
-        or pd.Timestamp(receipt.get("admitted_end")) < pd.Timestamp(window_end)
+        or minimum_days < 365
+        or admitted_start > expected_start
+        or admitted_end < expected_end
     ):
         raise BridgeError("basket overlap admission receipt is invalid or out of scope")
 
@@ -1703,6 +1751,172 @@ def independent_review_required(
     }
 
 
+def _execute_registered_synthetic_fixture(
+    assignment: dict[str, Any], repository: Path, output: Path,
+) -> dict[str, Any]:
+    """Exercise registered dispatch/persistence using synthetic source bars only.
+
+    This bounded test interface has no execution, calibration, certification, or
+    publication authority.  It deliberately uses the same registered contract,
+    materializer, strategy factory, evaluator resolver, and canonical artifacts
+    as the governed path.
+    """
+    if assignment.get("execution_authority") is not False:
+        raise BridgeError("synthetic registered fixture must deny execution authority")
+    if assignment.get("scientific_certification") is not False:
+        raise BridgeError("synthetic registered fixture cannot certify science")
+    identity = str(assignment.get("hypothesis_id") or hypothesis_identity(
+        assignment["question"]
+    ))
+    sources = [
+        path for path in sorted((repository / "research/hypotheses").glob("*.yaml"))
+        if identity.casefold() in {
+            HypothesisContract.from_yaml(path).schema.metadata.hypothesis_id.casefold(),
+            HypothesisContract.from_yaml(path).schema.metadata.title.casefold(),
+            path.stem.casefold(),
+        }
+    ]
+    if len(sources) != 1:
+        raise BridgeError("synthetic fixture must resolve one registered hypothesis")
+    contract_document = yaml.safe_load(sources[0].read_text(encoding="utf-8"))
+    evaluator = resolve_strategy_intent_evaluator(contract_document, repository)
+    if evaluator is None:
+        raise BridgeError("registered synthetic fixture lacks native evaluator")
+    panels = assignment.get("synthetic_source_panels")
+    if not isinstance(panels, Mapping) or set(panels) != {"BTCUSDT"}:
+        raise BridgeError("synthetic fixture requires one BTCUSDT source panel")
+    source_panel = panels["BTCUSDT"]
+    if not isinstance(source_panel, pd.DataFrame):
+        raise BridgeError("synthetic source panel must be a dataframe")
+    source_digest = hashlib.sha256(
+        pd.util.hash_pandas_object(source_panel, index=True).to_numpy(dtype="uint64").tobytes()
+    ).hexdigest()
+    if assignment.get("synthetic_source_digest") != source_digest:
+        raise BridgeError("synthetic source digest mismatch")
+    materialized = materialize_adaptive_representation(
+        contract_document["representation_plan"], {"BTCUSDT": source_panel.copy()}
+    )
+    adaptive_frame = materialized.frame
+    frame_digest = hashlib.sha256(
+        json.dumps(list(adaptive_frame.columns), separators=(",", ":")).encode("utf-8")
+        + b"\0" + pd.util.hash_pandas_object(adaptive_frame, index=True)
+        .to_numpy(dtype="uint64").tobytes()
+    ).hexdigest()
+    dispatch_body = {"schema_version": "adaptive-frame-dispatch-receipt-v1",
+                     "producer_receipt_digest": materialized.receipt["receipt_digest"],
+                     "frame_value_digest": frame_digest}
+    dispatch_receipt = {**dispatch_body, "receipt_digest": hashlib.sha256(
+        json.dumps(dispatch_body, sort_keys=True, separators=(",", ":")).encode("ascii")
+    ).hexdigest()}
+    if assignment.get("synthetic_corrupt_after_dispatch") is True:
+        adaptive_frame = adaptive_frame.copy()
+        adaptive_frame.iloc[0, adaptive_frame.columns.get_loc(
+            "btcusdt_log_return_2h"
+        )] = 123.0
+    immutable_contract = contract_document["immutable_contract"]
+    bindings = [dict(item) for item in immutable_contract["dataset_bindings"]]
+    bindings[0].update({
+        "dataset_digest": source_digest,
+        "partition_digests": [source_digest],
+    })
+    immutable_contract["dataset_bindings"] = bindings
+    membership_body = {
+        "schema_version": "point-in-time-membership-receipt-v1",
+        "venue": "bybit", "instrument": "BTCUSDT",
+        "listing_verified": True, "membership_verified": True,
+        "valid_from": "2023-01-01T00:00:00Z",
+        "valid_through": "2027-01-01T00:00:00Z",
+        "evidence_digest": source_digest,
+        "dataset_bindings_digest": hashlib.sha256(json.dumps(
+            bindings, sort_keys=True, separators=(",", ":")
+        ).encode("ascii")).hexdigest(),
+        "authority": "admitted_point_in_time_source_receipt",
+    }
+    membership_receipt = {**membership_body, "receipt_digest": hashlib.sha256(
+        json.dumps(membership_body, sort_keys=True, separators=(",", ":")).encode("ascii")
+    ).hexdigest()}
+    immutable_contract["point_in_time_membership_receipt_digest"] = \
+        membership_receipt["receipt_digest"]
+    evaluator_module = importlib.import_module(evaluator.__module__)
+    eligibility_issuer = getattr(
+        evaluator_module, "admit_point_in_time_eligibility", None
+    )
+    if eligibility_issuer is None:
+        raise BridgeError("registered synthetic fixture lacks native eligibility admission")
+    point_in_time_eligibility = eligibility_issuer(
+        membership_receipt, immutable_contract,
+        verified_dataset_bindings_digest=membership_body["dataset_bindings_digest"],
+    )
+    if point_in_time_eligibility is None:
+        raise BridgeError("registered synthetic fixture eligibility admission failed")
+    scientific = contract_document["immutable_contract"]["validation_plans"]["scientific"]
+    evaluation = evaluator(
+        frame=pd.DataFrame(), decision_frame=adaptive_frame.copy(),
+        adaptive_frame=adaptive_frame.copy(),
+        parameter_grid=contract_document["parameter_grid"],
+        validation_start=scientific["partitions"]["validation"]["start"],
+        validation_end=scientific["partitions"]["validation"]["end"],
+        test_start=scientific["partitions"]["test"]["start"],
+        test_end=scientific["partitions"]["test"]["end"],
+        representation_plan_digest=contract_document["execution_semantics"]["adaptive_representation_plan_digest"],
+        adaptive_representation_receipt=materialized.receipt,
+        adaptive_frame_digest=frame_digest,
+        adaptive_dispatch_receipt=dispatch_receipt,
+        point_in_time_eligibility=point_in_time_eligibility,
+        immutable_contract=immutable_contract,
+        costs=contract_document["costs"],
+    )
+    output.mkdir(parents=True, exist_ok=True)
+    candidates = evaluation.get("selection_candidates", [])
+    candidate_by_variant = {
+        f"q{int(item['parameters']['volume_surprise_quantile'] * 100)}_L{item['parameters']['seasonal_reference_days']}": item
+        for item in candidates if isinstance(item, Mapping)
+        and isinstance(item.get("parameters"), Mapping)
+    }
+    held_by_variant = {
+        f"q{int(item['parameters']['volume_surprise_quantile'] * 100)}_L{item['parameters']['seasonal_reference_days']}": item
+        for item in evaluation.get("held_out_evaluation", {}).get("variant_evaluations", [])
+        if isinstance(item, Mapping) and isinstance(item.get("parameters"), Mapping)
+    }
+    for params in product(
+        contract_document["parameter_grid"]["volume_surprise_quantile"],
+        contract_document["parameter_grid"]["seasonal_reference_days"],
+    ):
+        variant_id = f"q{int(params[0] * 100)}_L{params[1]}"
+        run_dir = output / "runs" / variant_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        candidate = candidate_by_variant.get(variant_id, {
+            "parameters": {"volume_surprise_quantile": params[0],
+                           "seasonal_reference_days": params[1],
+                           "prior_volatility_bars": 12,
+                           "uncertainty_block_length": 12},
+            "outcome": "failed", "passed": False, "metrics": {},
+            "reason": evaluation.get("error", "registered_evaluator_failed"),
+        })
+        artifact = {**candidate,
+                    "schema_version": "registered-variant-evaluation-v1",
+                    "variant_id": variant_id,
+                    "method_proposal_digest": contract_document["immutable_contract"]["accepted_method_proposal_digest"],
+                    "source_bindings_digest": membership_body["dataset_bindings_digest"],
+                    "synthetic_source_digest": source_digest,
+                    "scientific_certification": False,
+                    "execution_authority": False}
+        artifact["held_out_evaluation"] = held_by_variant.get(variant_id)
+        (run_dir / "strategy_intent_validation_evaluation.json").write_bytes(
+            canonical(artifact) + b"\n"
+        )
+    (output / "strategy_intent_evaluation.json").write_bytes(
+        canonical(evaluation["held_out_evaluation"]) + b"\n"
+    )
+    (output / "registered-evaluation.json").write_bytes(canonical(evaluation) + b"\n")
+    result = {"disposition": "synthetic_registered_runner_complete",
+              "scientific_certification": False, "execution_authority": False,
+              "terminal_outcome": evaluation["held_out_evaluation"]["outcome"],
+              "variant_artifact_count": 4, "source_digest": source_digest}
+    (output / "synthetic-registered-runner-result.json").write_bytes(canonical(result) + b"\n")
+    return result
+
+
 def execute_registered(
     assignment: dict[str, Any], repository: Path, output: Path, *, max_workers: int = 1
 ) -> dict[str, Any]:
@@ -1799,8 +2013,6 @@ def execute_registered(
         )
         contract = HypothesisContract.from_yaml(contract_path)
     variants = contract.to_run_specs()
-    if len(variants) > assignment["max_variants"]:
-        raise BridgeError("qualified strategy exceeds the immutable variant budget")
     is_eth_relative = (
         contract.schema.metadata.hypothesis_family == "eth_relative_liquidity_reversal"
     )
@@ -1812,6 +2024,27 @@ def execute_registered(
     )
     intent_evaluator = resolve_strategy_intent_evaluator(contract_document, repository)
     is_strategy_intent = intent_evaluator is not None
+    if intent_evaluator is not None:
+        evaluator_module = importlib.import_module(intent_evaluator.__module__)
+        variant_materializer = getattr(
+            evaluator_module, "registered_variant_parameters", None
+        )
+        if callable(variant_materializer):
+            registered_params = variant_materializer(contract.schema.parameter_grid)
+            variants_by_params = {
+                canonical_hash(variant["params"]): variant for variant in variants
+            }
+            registered_keys = [canonical_hash(params) for params in registered_params]
+            if (
+                len(set(registered_keys)) != len(registered_keys)
+                or set(registered_keys) != set(variants_by_params)
+            ):
+                raise BridgeError(
+                    "registered evaluator variant identities differ from contract grid"
+                )
+            variants = [variants_by_params[key] for key in registered_keys]
+    if len(variants) > assignment["max_variants"]:
+        raise BridgeError("qualified strategy exceeds the immutable variant budget")
     is_observation_only = observation_only_contract(contract_document)
     if is_xrp_signed_volatility:
         immutable = contract_document["immutable_contract"]
@@ -1856,6 +2089,19 @@ def execute_registered(
         for binding in contract_bindings
     )):
         verify_trusted_dataset_bindings(assignment, contract_bindings)
+    point_in_time_eligibility = None
+    if is_strategy_intent:
+        evaluator_module = importlib.import_module(intent_evaluator.__module__)
+        eligibility_issuer = getattr(
+            evaluator_module, "admit_point_in_time_eligibility", None
+        )
+        if eligibility_issuer is None:
+            raise BridgeError("strategy intent lacks native eligibility admission")
+        point_in_time_eligibility = eligibility_issuer(
+            assignment.get("point_in_time_membership_receipt"),
+            contract_document["immutable_contract"],
+            verified_dataset_bindings_digest=digest(contract_bindings),
+        )
 
     execution_semantics = contract.schema.execution_semantics
     from bt.governance.data_requirements import verify_execution_plan, RequirementsError
@@ -1883,12 +2129,29 @@ def execute_registered(
     )
     adaptive_receipt = None
     adaptive_frame = None
+    adaptive_dispatch_receipt = None
     materialized_payload_receipt = None
     if assignment.get("representation_plan") is not None:
         materialized = materialize_adaptive_representation(
             assignment["representation_plan"], source_panels
         )
         adaptive_frame = materialized.frame
+        dispatch_body = {
+            "schema_version": "adaptive-frame-dispatch-receipt-v1",
+            "producer_receipt_digest": materialized.receipt.get("receipt_digest"),
+            "frame_value_digest": hashlib.sha256(
+                json.dumps(list(adaptive_frame.columns), separators=(",", ":")).encode("utf-8")
+                + b"\0"
+                + pd.util.hash_pandas_object(adaptive_frame, index=True)
+                .to_numpy(dtype="uint64").tobytes()
+            ).hexdigest(),
+        }
+        adaptive_dispatch_receipt = {
+            **dispatch_body,
+            "receipt_digest": hashlib.sha256(
+                json.dumps(dispatch_body, sort_keys=True, separators=(",", ":")).encode("ascii")
+            ).hexdigest(),
+        }
         materialized.frame.to_parquet(
             output / "adaptive-representation.parquet", index=False
         )
@@ -2203,13 +2466,44 @@ def execute_registered(
                 representation_plan_digest=(
                     adaptive_receipt.get("plan_digest") if adaptive_receipt else None
                 ),
+                adaptive_representation_receipt=adaptive_receipt,
+                adaptive_frame_digest=(
+                    hashlib.sha256(
+                        json.dumps(list(adaptive_frame.columns), separators=(",", ":")).encode("utf-8")
+                        + b"\0"
+                        + pd.util.hash_pandas_object(adaptive_frame, index=True)
+                        .to_numpy(dtype="uint64").tobytes()
+                    ).hexdigest()
+                    if adaptive_frame is not None else None
+                ),
+                adaptive_dispatch_receipt=adaptive_dispatch_receipt,
+                point_in_time_eligibility=point_in_time_eligibility,
                 immutable_contract=contract_document["immutable_contract"],
                 costs=contract_document.get("costs", {}),
             ),
             variants,
         )
         validation = intent_grid["selection_candidates"]
+        held_variants = intent_grid["held_out_evaluation"].get(
+            "variant_evaluations", []
+        )
+        held_by_parameters = {
+            canonical_hash(item.get("parameters", {})): item
+            for item in held_variants
+        }
         for item in validation:
+            item["method_proposal_digest"] = contract_document["immutable_contract"].get(
+                "accepted_method_proposal_digest"
+            )
+            item["source_bindings_digest"] = digest(
+                contract_document["immutable_contract"].get("dataset_bindings", [])
+            )
+            item["representation_receipt_digest"] = (
+                adaptive_receipt.get("receipt_digest") if adaptive_receipt else None
+            )
+            item["held_out_evaluation"] = held_by_parameters.get(
+                canonical_hash(item.get("parameters", {}))
+            )
             item["record_digest"] = digest(
                 {key: value for key, value in item.items() if key != "record_digest"}
             )
@@ -2856,10 +3150,19 @@ def execute_registered(
         metrics["selection_bias_audit"] = selection_audit
     required_metrics = tuple(contract_document.get("evaluation", {}).get("metrics", ()))
     missing_metrics = sorted(set(required_metrics) - set(metrics))
-    if missing_metrics:
+    per_variant_scientific_metrics = is_strategy_intent and bool(validation)
+    terminal_without_estimand = is_strategy_intent and evaluation_artifact.get(
+        "outcome"
+    ) in {"invalid", "failed", "inconclusive"}
+    if missing_metrics and not per_variant_scientific_metrics:
         raise BridgeError(
             f"declared evaluation metrics were not produced: {missing_metrics}"
         )
+    if per_variant_scientific_metrics:
+        metrics["terminal_outcome"] = evaluation_artifact["outcome"]
+        metrics["per_variant_scientific_metrics"] = required_metrics
+        if terminal_without_estimand:
+            metrics["unavailable_scientific_metrics"] = missing_metrics
     started_at = datetime.fromtimestamp(run_dir.stat().st_mtime, tz=UTC)
     ended_at = datetime.now(UTC)
     independent_review_complete = governed_review_verified(assignment, qualification)

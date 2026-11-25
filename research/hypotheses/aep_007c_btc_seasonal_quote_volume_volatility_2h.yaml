@@ -1,0 +1,171 @@
+metadata:
+  hypothesis_id: &id AEP-007C-BTC-SEASONAL-QUOTE-VOLUME-VOLATILITY-2H
+  title: &title BTC seasonal quote-volume surprise and next-4h realized volatility
+  description: &question Does a high point-in-time BTCUSDT completed-2h quote-volume surprise, standardized against prior observations from the same UTC two-hour bucket, predict higher BTCUSDT realized volatility over the next two contiguous completed 2h bars?
+  research_layer: ALPHA
+  hypothesis_family: btc_seasonal_quote_volume_future_volatility
+  version: 1.0.0
+  author: bulletproof_bt
+  created_at: '2026-11-23T00:00:00Z'
+hypothesis_id: *id
+title: *title
+description: *question
+research_layer: ALPHA
+hypothesis_family: btc_seasonal_quote_volume_future_volatility
+version: 1.0.0
+status: draft
+immutable_contract:
+  question: *question
+  accepted_method_proposal_digest: 532cf1f5331e39dff121e4224b9188d66b4b37229ad8aadaa1522cceef87aecb
+  accepted_method_handoff_digest: ac80159f59f89c4555c34c41acf4456b851e01fe312eff310a4456150c2ad9bd
+  accepted_evidence_sha256: 57d90ff8554b226ff8685928d2738b7690af4a931bfc548b3cc534c18dae99b4
+  accepted_representation_plan_digest: 06334f51b04604847ff509e259bdbea335f0b54a78926cc30b1aee98c7333146
+  source_commit: d232ee753f967760ce3d753abff607ee2232ce62
+  dataset_bindings:
+    - dataset_build_id: 25d9958c-71b6-4c2b-949a-3c0433f70f38
+      dataset_digest: 9a211d8818c5ab8ec82ad5a7d38957e63eb387ea83d4b00541922a0eeca4aacb
+      catalog_digest: 4f007cc5c0a77dfc3a338508b49a849e7fd953c66f33d2cf5c6af67dee594141
+      manifest_digest: 4b4cfb5af9058454fe2a4a3a5d8cbd63f44b77b7cec9157292fb27f0d7a410b4
+      producer_receipt_digest: 1d08a9002cf71a44905dd6f9d666504b9b05cdb562b4773b40229b0d6dae7266
+      lake_governance_digest: 7af91738a385c79c0397520696641c962c7080df8cfba0ae594c5eb75604f71f
+      partition_digests: [9a211d8818c5ab8ec82ad5a7d38957e63eb387ea83d4b00541922a0eeca4aacb]
+      venue: bybit
+      instrument: BTCUSDT
+  instruments: [BTCUSDT]
+  venue: bybit
+  source_timeframe: 1m
+  research_timeframe: 2h
+  resampling_policy: left_closed_left_labeled_complete_bars
+  required_fields: [ts, open, high, low, close, volume, quote_volume]
+  validation_plans:
+    smoke:
+      plan_digest: 57d9a71d4ea536c845952a82755c377768b8195c839c193a045d123be7685a97
+      required_bars_per_asset: 2402
+      partitions:
+        feature_warmup: {start: '2025-10-30T16:00:00Z', end: '2026-04-28T16:00:00Z'}
+        smoke: {start: '2026-04-28T16:00:00Z', end: '2026-05-18T16:00:00Z'}
+        target_tail: {start: '2026-05-18T16:00:00Z', end: '2026-05-18T20:00:00Z'}
+    scientific:
+      plan_digest: abce5cb33cd22d5fb55e64b80deacfe13838695161f3986eadd157d562899dea
+      required_bars_per_asset: 6540
+      partitions:
+        feature_warmup: {start: '2024-11-19T20:00:00Z', end: '2025-05-18T20:00:00Z'}
+        training: {start: '2025-05-18T20:00:00Z', end: '2025-12-27T12:00:00Z'}
+        validation: {start: '2025-12-27T18:00:00Z', end: '2026-03-08T14:00:00Z'}
+        test: {start: '2026-03-08T20:00:00Z', end: '2026-05-18T16:00:00Z'}
+        target_tail: {start: '2026-05-18T16:00:00Z', end: '2026-05-18T20:00:00Z'}
+representation_plan:
+  schema_version: adaptive-representation-plan-v1.0.0
+  candidate_key: btc-seasonal-volume-surprise-future-volatility-2h
+  instruments: [BTCUSDT]
+  basket_members:
+    - {instrument: BTCUSDT, role: primary, legacy_groups: [stable], selection_rationale: The frozen question and every predictor control and target are BTCUSDT-specific.}
+  source_timeframe: 1m
+  research_timeframe: 2h
+  resampling_policy: left_closed_left_labeled_complete_bars
+  transformation_rationale: Preserve exact complete 2h BTC OHLCV inputs; the evaluator owns prior-only seasonal state, the root-sum-squares volatility control and future target.
+  rejected_alternatives: [Other instruments change the frozen question, Other clocks change the seasonal buckets and target, Raw quote volume is retained only as the registered rival]
+  selection_data_boundary: metadata_predictors_only_no_targets
+  outcome_data_consulted: false
+  transformations:
+    - {operation: log1p, input_fields: [BTCUSDT__quote_volume], output_field: btcusdt_log1p_quote_volume_2h, parameters: {}, fit_policy: stateless, rationale: Frozen activity input for seasonal surprise and the rival event.}
+    - {operation: log_return, input_fields: [BTCUSDT__close], output_field: btcusdt_log_return_2h, parameters: {periods: 1}, fit_policy: stateless, rationale: Completed close-to-close return for controls and the future target.}
+    - {operation: realized_volatility, input_fields: [btcusdt_log_return_2h], output_field: btcusdt_prior_24h_realized_volatility, parameters: {window: 12, lag: 1}, fit_policy: stateless, rationale: Diagnostic producer field only; the native evaluator reconstructs the accepted prior-only sqrt-sum-of-12-squared-returns control from exact-grid returns.}
+    - {operation: spread, input_fields: [BTCUSDT__high, BTCUSDT__low], output_field: btcusdt_high_low_spread_2h, parameters: {}, fit_policy: stateless, rationale: First stage of the exact completed-bar range control.}
+    - {operation: ratio, input_fields: [btcusdt_high_low_spread_2h, BTCUSDT__close], output_field: btcusdt_range_over_close_2h, parameters: {}, fit_policy: stateless, rationale: Implements the frozen high-low range divided by close control.}
+    - {operation: identity, input_fields: [BTCUSDT__quote_volume], output_field: btcusdt_quote_volume_2h, parameters: {}, fit_policy: stateless, rationale: Retains USD turnover for the liquidity gate.}
+    - {operation: identity, input_fields: [BTCUSDT__volume], output_field: btcusdt_volume_2h, parameters: {}, fit_policy: stateless, rationale: Retains base volume for finite nonnegative quality checks.}
+parameter_grid:
+  volume_surprise_quantile: [0.90, 0.95]
+  seasonal_reference_days: [90, 180]
+  prior_volatility_bars: [12]
+  uncertainty_block_length: [12]
+grid_contract: {maximum_parameters: 4, maximum_variants: 4, frozen_before_outcomes: true, stopping_rule: exhaustive}
+entry: {strategy: btc_seasonal_quote_volume_volatility_2h, timeframe: 2h, signal_timeframe: 2h, base_execution_timeframe: 1m, order_timing: research_observation_only_no_orders, direction: none}
+exit: {target: next_two_contiguous_completed_2h_log_return_realized_volatility, time_exit_minutes: 240, stop_kind: none_research_observation_only}
+sizing: {mode: fixed_notional_pct_equity, notional_pct_equity: 0.0}
+risk: {authority: engine, max_positions: 0, max_notional_pct_equity: 0.0, max_gross_notional_pct_equity: 0.0, max_leverage: 0.0, pyramiding: false, flips: false}
+costs: {authority: engine, taker_fee_bps: 0.0, slippage_bps: 0.0, spread_bps: 0.0, delay_bars: 0}
+execution_semantics:
+  signal_timeframe: 2h
+  base_execution_timeframe: 1m
+  base_data_frequency_expected: 1m
+  exit_monitoring_timeframe: 1m
+  stop_model: none_research_observation_only
+  stop_update_policy: none
+  tp_update_policy: none
+  hold_time_unit: exactly_two_contiguous_completed_2h_bars
+  atr_source_timeframe: 2h
+  adaptive_representation_plan_digest: 206555a30e397a1549f13c7b234c8ba9ed10b36bc9cd7439f1585edc65d850bd
+  adaptive_representation_fields: [btcusdt_log1p_quote_volume_2h, btcusdt_log_return_2h, btcusdt_prior_24h_realized_volatility, btcusdt_high_low_spread_2h, btcusdt_range_over_close_2h, btcusdt_quote_volume_2h, btcusdt_volume_2h]
+  signal_bar_policy: strict_completed_bar_only
+  target_tail_policy: resolves_prior_targets_no_fresh_decisions
+  required_extra_columns: [btcusdt_log1p_quote_volume_2h, btcusdt_log_return_2h, btcusdt_prior_24h_realized_volatility, btcusdt_high_low_spread_2h, btcusdt_range_over_close_2h, btcusdt_quote_volume_2h, btcusdt_volume_2h]
+  warmup_observations: 2160
+  warmup_timeframe: 2h
+  warmup_required_prior_observations: 13
+  warmup_required_prior_fields: [btcusdt_log1p_quote_volume_2h, btcusdt_log_return_2h, btcusdt_range_over_close_2h, btcusdt_quote_volume_2h, btcusdt_volume_2h]
+  warmup_official_required_fields: [btcusdt_log1p_quote_volume_2h, btcusdt_log_return_2h, btcusdt_range_over_close_2h, btcusdt_quote_volume_2h, btcusdt_volume_2h]
+evaluation:
+  metrics: [D_P, D_R, A, primary_interval_95, paired_interval_95, centered_bootstrap_p, Holm]
+  selection_metric: none_all_four_registered_variants_retained
+  validation_policy: no_replacement_method_selection
+  held_out_policy: evaluate_each_registered_variant_once_after_validation_family_is_frozen
+  outcome_retention: [positive, negative, invalid, failed, inconclusive]
+  support_minima: {training_rows: 2500, validation_rows: 850, test_rows: 850, training_events: 80, validation_events: 40, test_events: 40}
+  uncertainty: {replicates: 10000, primary_block_lengths: [12, 24], sensitivity_block_lengths: [24, 48], undefined_replicate_policy: invalidate_no_redraw}
+  calibration:
+    generative_equation: r[t+1]=theta_0+0.20*A[t]+0.25*V[t]+0.15*G[t]+0.10*R[t]+sum(gamma[j]*W[t,j],j=1..8)+E[t+1]
+    coefficient_roles: [theta_0_intercept, gamma_1_primary_q90_L90, gamma_2_primary_q90_L180, gamma_3_primary_q95_L90, gamma_4_primary_q95_L180, gamma_5_rival_q90_L90, gamma_6_rival_q90_L180, gamma_7_rival_q95_L90, gamma_8_rival_q95_L180]
+    continuous_history: single_warmup_training_validation_test_target_tail_history
+    innovation_law: {vector: [u_r, u_q, u_w, u_e], distribution: iid_multivariate_normal_over_t, mean: [0, 0, 0, 0], marginal_variances: [1, 1, 1, 1], off_diagonal_covariance: 0.25, burn_in_bars: 2160}
+    generative_method:
+      initialization: {close_0: 1.0, h_q_0: 0.0, h_w_0: 0.0, pre_burn_in_returns_controls_events: 0.0}
+      state_transitions: {h_q: "h_q[t]=phi*h_q[t-1]+sqrt(1-phi^2)*u_q[t]", h_w: "h_w[t]=phi*h_w[t-1]+sqrt(1-phi^2)*u_w[t]", phi: [0.38461538461538464, 0.6], quote_volume: "exp(20+h_q[t])", wick_driver: "exp(-4+h_w[t])"}
+      return: "r[t]=theta_0+0.20*a[t-1]+0.25*v[t-1]+0.15*g[t-1]+0.10*l[t-1]+sum(gamma[j]*W[t-1,j],j=1..8)+u_r[t]"
+      derived_ohlcv: {open: "close[t-1]", close: "close[t-1]*exp(r[t])", high: "max(open[t],close[t])*(1+w[t]/2)", low: "min(open[t],close[t])/(1+w[t]/2)", volume: "quote_volume[t]/close[t]"}
+      events: {variant_order: [q90_L90, q90_L180, q95_L90, q95_L180], primary: strict_training_linear_quantile_of_prior_only_same_UTC_bucket_surprise, rival: strict_training_linear_quantile_of_training_standardized_log_quote_volume, thresholds_frozen_in_validation_and_test: true}
+      outcome: "sqrt(r[t+1]^2+r[t+2]^2) from contiguous completed 2h bars"
+      conditioning: {eligible_rows: {training: 2500, validation: 850, test: 850}, primary_events: {training: 80, validation: 40, test: 40}, rival_events: {training: 80, validation: 40, test: 40}, post_generation_rank: 17, requires_listing_and_point_in_time_membership: true}
+    outer_replicates: 104
+    inner_replicates: 10000
+    accepted_precision_limitation_outer_replicates: 3
+    three_outer_replicates_qualify: false
+    status: not_executed
+    seed: 521010
+    solve_histories_per_scenario: 8190
+    verification_histories_per_scenario: 8190
+    full_functionals_per_scenario: 77
+    scenarios: [null_serial_deff_2_25, null_serial_deff_4, effect_0_75_serial_deff_2_25, effect_0_75_serial_deff_4]
+    philox_panels: [solve, verify, outer]
+    solver: {method: fixed_minimum_norm_newton, initial_coefficients: [0, 0, 0, 0, 0, 0, 0, 0, 0], updates: 4, damping: [1, 0.5, 0.25, 0.125], central_step: 0.00001, functionals_per_update: 19, final_candidate_functionals: 1, returned_iterate: b_4_evaluated_explicitly, required_final_jacobian_rank: 8, relative_svd_threshold: 0.00000001, maximum_target_residual: 0.005}
+    infeasibility: [rank_below_8, target_residual_above_0.005, conditioning_probability_zero, sigma_nonfinite_or_at_most_0.00000001]
+    verification: {maximum_contrast_error: 0.01, maximum_identity_error: 0.000000000001, minimum_sigma: 0.00000001, maximum_mc_se: 0.005}
+    registered_work: {complete_history: 65936, full_functional_evaluation: 308, ols_fit: 20445568, statistic_evaluation: 266240000}
+    work_caps: {complete_history: 65936, full_functional_evaluation: 320, ols_fit: 21233760, statistic_evaluation: 266240000}
+    terminal_states: [success, inconclusive, failed, capacity_blocked]
+    native_interface: {contract_function: calibration_contract, receipt_validator: validate_synthetic_calibration_receipt}
+  native_implementation: {path: src/bt/strategy/btc_seasonal_quote_volume_volatility_2h.py, function: evaluate_alpha_intent}
+falsification_criteria:
+  - Validation D_P must be positive with its dependence-aware 95% interval excluding zero and pass its four-variant Holm family.
+  - Paired A on identical timestamps must be positive and pass its separate four-variant Holm family.
+  - Doubled-block sensitivity must retain both signs and rejections.
+  - Every row, rank, continuity, liquidity and primary/rival support minimum is a validity gate, not negative evidence.
+logging:
+  required_fields: [decision_ts, seasonal_surprise, primary_event, rival_event, future_realized_volatility_4h, D_P, D_R, A, terminal_outcome]
+truth_contract:
+  version: '1.0'
+  profile: production
+  no_lookahead: true
+  strict_utc: true
+  missing_bars: no_decision
+  interpolation: forbidden
+  htf_completeness: closed_only
+  aux_join_direction: backward
+  execution_authority: engine
+  risk_authority: engine
+  accounting: engine_canonical_R
+  truth_gate_required: true
+  fast_path_generation: forbidden
+  research_memory_requires_certification: true
+authority: {capital: false, orders: false, production_promotion: false, self_approval: false, calibration_execution: false}
